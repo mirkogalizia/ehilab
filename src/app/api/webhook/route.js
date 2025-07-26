@@ -1,5 +1,5 @@
 import { collection, addDoc, Timestamp } from "firebase/firestore";
-import { db } from "../../../../firebase"; // usa il path relativo corretto
+import { db } from "../../../firebase"; // usa il path relativo corretto
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
