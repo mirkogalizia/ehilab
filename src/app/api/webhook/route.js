@@ -1,5 +1,5 @@
-import { db } from "@/firebase";
 import { collection, addDoc, Timestamp } from "firebase/firestore";
+import { db } from "../../../../firebase"; // usa il path relativo corretto
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
@@ -16,12 +16,19 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const data = await req.json();
-  const message = data?.value?.messages?.[0];
-  const contact = data?.value?.contacts?.[0];
-  const phoneNumberId = data?.value?.metadata?.phone_number_id;
+  try {
+    const data = await req.json();
+    console.log("📦 Payload ricevuto:", JSON.stringify(data, null, 2));
 
-  if (message && contact) {
+    const message = data?.value?.messages?.[0];
+    const contact = data?.value?.contacts?.[0];
+    const phoneNumberId = data?.value?.metadata?.phone_number_id;
+
+    if (!message || !contact || !phoneNumberId) {
+      console.warn("❗ Payload incompleto:", { message, contact, phoneNumberId });
+      return new Response("IGNORED", { status: 200 });
+    }
+
     const messageData = {
       from: message.from,
       name: contact.profile?.name || null,
@@ -30,17 +37,17 @@ export async function POST(req) {
       timestamp: Number(message.timestamp),
       type: message.type,
       message_id: message.id,
-      user_uid: null, // lo collegheremo dopo via query
+      user_uid: null,
       createdAt: Timestamp.now()
     };
 
-    try {
-      await addDoc(collection(db, "messages"), messageData);
-      console.log("✅ Messaggio salvato:", messageData);
-    } catch (err) {
-      console.error("❌ Errore salvataggio Firestore:", err);
-    }
-  }
+    console.log("📝 Salvo in Firestore:", messageData);
+    await addDoc(collection(db, "messages"), messageData);
+    console.log("✅ Messaggio salvato");
 
-  return new Response("EVENT_RECEIVED", { status: 200 });
+    return new Response("EVENT_RECEIVED", { status: 200 });
+  } catch (err) {
+    console.error("❌ Errore durante il salvataggio:", err);
+    return new Response("ERROR", { status: 500 });
+  }
 }
