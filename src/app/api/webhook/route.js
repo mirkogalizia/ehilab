@@ -32,7 +32,7 @@ export async function POST(req) {
     }
 
     // Cerca utente in base al phone_number_id
-    const usersRef = collection(db, "utenti");
+    const usersRef = collection(db, "users");
     const q = query(usersRef, where("phone_number_id", "==", phone_number_id));
     const querySnapshot = await getDocs(q);
 
