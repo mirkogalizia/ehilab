@@ -1,3 +1,6 @@
+import { db } from "@/firebase";
+import { collection, addDoc, Timestamp } from "firebase/firestore";
+
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const mode = searchParams.get("hub.mode");
@@ -13,9 +16,31 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
-  const body = await req.json();
-  console.log("📩 WHATSAPP EVENT:", JSON.stringify(body, null, 2));
+  const data = await req.json();
+  const message = data?.value?.messages?.[0];
+  const contact = data?.value?.contacts?.[0];
+  const phoneNumberId = data?.value?.metadata?.phone_number_id;
 
-  // TODO: salva in Firestore, inoltra, ecc.
+  if (message && contact) {
+    const messageData = {
+      from: message.from,
+      name: contact.profile?.name || null,
+      phone_number_id: phoneNumberId,
+      body: message.text?.body || null,
+      timestamp: Number(message.timestamp),
+      type: message.type,
+      message_id: message.id,
+      user_uid: null, // lo collegheremo dopo via query
+      createdAt: Timestamp.now()
+    };
+
+    try {
+      await addDoc(collection(db, "messages"), messageData);
+      console.log("✅ Messaggio salvato:", messageData);
+    } catch (err) {
+      console.error("❌ Errore salvataggio Firestore:", err);
+    }
+  }
+
   return new Response("EVENT_RECEIVED", { status: 200 });
 }
