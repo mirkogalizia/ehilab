@@ -19,47 +19,54 @@ export default function Home() {
         </span>
       </p>
 
-      {/* Sezione servizi */}
-      <section className="w-full max-w-3xl mx-auto mt-4">
-        <h2 className="text-2xl font-bold text-center mb-8">I nostri servizi</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-          <div className="rounded-2xl bg-neutral-50 shadow p-6 text-center">
-            <span className="text-3xl mb-2 inline-block">🛒</span>
-            <h3 className="font-semibold text-lg mb-1">Siti Web & E-commerce</h3>
-            <p className="text-gray-600 text-sm">
-              Realizzazione siti professionali e store Shopify su misura.
-            </p>
-          </div>
-          <div className="rounded-2xl bg-neutral-50 shadow p-6 text-center">
-            <span className="text-3xl mb-2 inline-block">🤖</span>
-            <h3 className="font-semibold text-lg mb-1">Automazioni & Dashboard</h3>
-            <p className="text-gray-600 text-sm">
-              App web personalizzate, integrazione API e automazione processi.
-            </p>
-          </div>
-          <div className="rounded-2xl bg-neutral-50 shadow p-6 text-center">
-            <span className="text-3xl mb-2 inline-block">🍽️</span>
-            <h3 className="font-semibold text-lg mb-1">Smart Menu & Prenotazioni</h3>
-            <p className="text-gray-600 text-sm">
-              Menù digitali QR e sistemi smart per la gestione clienti.
-            </p>
-          </div>
-          <div className="rounded-2xl bg-neutral-50 shadow p-6 text-center">
-            <span className="text-3xl mb-2 inline-block">💬</span>
-            <h3 className="font-semibold text-lg mb-1">EHI! Chat Boost</h3>
-            <p className="text-gray-600 text-sm">
-              Automazione WhatsApp, CRM integrato e campagne marketing.<br />
-              Rispondi ai clienti, invia offerte e gestisci tutto da una dashboard unica.
-            </p>
-            <a
-              href="/chat-boost"
-              className="mt-3 inline-block font-semibold text-blue-600 hover:underline"
+      {/* Sezione servizi uniforme */}
+      <section className="w-full max-w-5xl mx-auto mt-8 px-2">
+        <h2 className="text-2xl font-bold text-center mb-10 tracking-tight">I nostri servizi</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {[
+            {
+              icon: "🛒",
+              title: "Siti Web & E-commerce",
+              text: "Realizzazione siti professionali e store Shopify su misura.",
+            },
+            {
+              icon: "🤖",
+              title: "Automazioni & Dashboard",
+              text: "App web personalizzate, integrazione API e automazione processi.",
+            },
+            {
+              icon: "🍽️",
+              title: "Smart Menu & Prenotazioni",
+              text: "Menù digitali QR e sistemi smart per la gestione clienti.",
+            },
+            {
+              icon: "💬",
+              title: "EHI! Chat Boost",
+              text: (
+                <>
+                  Automazione WhatsApp, CRM integrato e campagne marketing.<br />
+                  <a
+                    href="/chat-boost"
+                    className="inline font-semibold text-blue-600 hover:underline"
+                  >
+                    Scopri la piattaforma
+                  </a>
+                </>
+              ),
+            },
+          ].map(({ icon, title, text }) => (
+            <div
+              key={title}
+              className="flex flex-col items-center rounded-3xl bg-white shadow-xl border border-neutral-200 px-6 py-8 transition hover:shadow-2xl"
             >
-              Scopri la piattaforma
-            </a>
-          </div>
+              <span className="text-4xl mb-4">{icon}</span>
+              <h3 className="font-semibold text-lg mb-3 text-neutral-800 text-center">{title}</h3>
+              <div className="text-gray-600 text-sm text-center">{text}</div>
+            </div>
+          ))}
         </div>
       </section>
     </main>
   );
 }
+
