@@ -1,140 +1,96 @@
-// src/app/chatboost/register/page.jsx
-"use client";
+'use client';
 
-import { useState } from "react";
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent } from '@/components/ui/card';
+import { useRouter } from 'next/navigation';
 
 export default function RegisterPage() {
   const [form, setForm] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    password: "",
-    company: "",
-    address: "",
-    piva: "",
-    cf: "",
-    personalPhone: "",
-    whatsappNumber: "",
+    name: '',
+    surname: '',
+    company: '',
+    address: '',
+    piva: '',
+    cf: '',
+    phone: '',
+    whatsapp: '',
+    email: '',
+    password: '',
   });
 
+  const router = useRouter();
+
   const handleChange = (e) => {
-    const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
+    setForm({ ...form, [e.target.name]: e.target.value });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log("Dati inviati:", form);
-    // TODO: invia a Firebase
+    // Qui andrebbe aggiunta la logica Firebase
+    console.log('Submitting:', form);
+    router.push('/chatboost/dashboard');
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-xl space-y-4"
-      >
-        <h1 className="text-2xl font-bold text-center">Registrati a ChatBoost</h1>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <input
-            type="text"
-            name="firstName"
-            placeholder="Nome*"
-            className="input"
-            onChange={handleChange}
-            required
-          />
-          <input
-            type="text"
-            name="lastName"
-            placeholder="Cognome*"
-            className="input"
-            onChange={handleChange}
-            required
-          />
-        </div>
-
-        <input
-          type="text"
-          name="company"
-          placeholder="Azienda (opzionale)"
-          className="input"
-          onChange={handleChange}
-        />
-
-        <input
-          type="text"
-          name="address"
-          placeholder="Indirizzo sede legale"
-          className="input"
-          onChange={handleChange}
-        />
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <input
-            type="text"
-            name="piva"
-            placeholder="P.IVA (opzionale)"
-            className="input"
-            onChange={handleChange}
-          />
-          <input
-            type="text"
-            name="cf"
-            placeholder="Codice Fiscale (opzionale)"
-            className="input"
-            onChange={handleChange}
-          />
-        </div>
-
-        <input
-          type="tel"
-          name="personalPhone"
-          placeholder="Cellulare personale*"
-          className="input"
-          onChange={handleChange}
-          required
-        />
-
-        <input
-          type="tel"
-          name="whatsappNumber"
-          placeholder="Numero da associare a ChatBoost*"
-          className="input"
-          onChange={handleChange}
-          required
-        />
-
-        <input
-          type="email"
-          name="email"
-          placeholder="Email*"
-          className="input"
-          onChange={handleChange}
-          required
-        />
-
-        <input
-          type="password"
-          name="password"
-          placeholder="Password*"
-          className="input"
-          onChange={handleChange}
-          required
-        />
-
-        <p className="text-sm text-gray-500 italic">
-          ⚠️ Il numero associato a ChatBoost non potrà essere utilizzato su WhatsApp telefono.
-        </p>
-
-        <button
-          type="submit"
-          className="w-full bg-black text-white py-3 rounded-xl hover:opacity-90 transition"
-        >
-          Crea account
-        </button>
-      </form>
-    </div>
+    <main className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
+      <Card className="max-w-xl w-full shadow-lg border border-gray-200">
+        <CardContent className="p-8">
+          <h1 className="text-2xl font-bold mb-6 text-center">Crea il tuo account ChatBoost</h1>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Nome *</Label>
+                <Input name="name" value={form.name} onChange={handleChange} required />
+              </div>
+              <div>
+                <Label>Cognome *</Label>
+                <Input name="surname" value={form.surname} onChange={handleChange} required />
+              </div>
+              <div>
+                <Label>Azienda</Label>
+                <Input name="company" value={form.company} onChange={handleChange} />
+              </div>
+              <div>
+                <Label>Indirizzo</Label>
+                <Input name="address" value={form.address} onChange={handleChange} />
+              </div>
+              <div>
+                <Label>Partita IVA</Label>
+                <Input name="piva" value={form.piva} onChange={handleChange} />
+              </div>
+              <div>
+                <Label>Codice Fiscale</Label>
+                <Input name="cf" value={form.cf} onChange={handleChange} />
+              </div>
+              <div>
+                <Label>Cellulare personale *</Label>
+                <Input name="phone" value={form.phone} onChange={handleChange} required />
+              </div>
+              <div>
+                <Label>Numero da associare a ChatBoost *</Label>
+                <Input name="whatsapp" value={form.whatsapp} onChange={handleChange} required />
+              </div>
+            </div>
+            <div>
+              <Label>Email *</Label>
+              <Input name="email" type="email" value={form.email} onChange={handleChange} required />
+            </div>
+            <div>
+              <Label>Password *</Label>
+              <Input name="password" type="password" value={form.password} onChange={handleChange} required />
+            </div>
+            <p className="text-xs text-gray-500 italic mt-1">
+              I campi contrassegnati con * sono obbligatori.
+            </p>
+            <Button type="submit" className="w-full mt-4 text-base py-6 rounded-xl">
+              Crea account
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </main>
   );
 }
