@@ -15,7 +15,7 @@ export default function DashboardPage() {
     if (!user) return;
 
     const q = query(
-      collection(db, "messaggi"),
+      collection(db, "messages"), // ✅ correzione qui
       where("user_uid", "==", user.uid),
       orderBy("timestamp", "desc")
     );
