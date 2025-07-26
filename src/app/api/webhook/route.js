@@ -45,17 +45,17 @@ export async function POST(req) {
     const user_uid = userDoc.id;
 
     // Salva i messaggi in Firebase associandoli all'utente
-    for (const message of messages) {
-      await addDoc(collection(db, "messaggi"), {
-        user_uid,
-        from: message.from,
-        message_id: message.id,
-        timestamp: message.timestamp,
-        type: message.type,
-        text: message.text?.body || "",
-        createdAt: serverTimestamp()
-      });
-    }
+for (const message of messages) {
+  await addDoc(collection(db, "messages"), {
+    user_uid,
+    from: message.from,
+    message_id: message.id,
+    timestamp: message.timestamp,
+    type: message.type,
+    text: message.text?.body || "",
+    createdAt: serverTimestamp()
+  });
+}
 
     return new Response("Messaggio salvato", { status: 200 });
   } catch (error) {
