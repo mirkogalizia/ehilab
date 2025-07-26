@@ -1,18 +1,14 @@
-export async function POST(req) {
-  console.log("📥 POST ricevuto!");
-
-  try {
-    const text = await req.text(); // NON usare .json() per il test
-    console.log("📦 Body grezzo ricevuto:", text);
-
-    return new Response("OK", { status: 200 });
-  } catch (err) {
-    console.error("❌ Errore ricezione POST:", err);
-    return new Response("ERROR", { status: 500 });
-  }
-}
-
+// src/app/api/webhook/route.js
 export async function GET(req) {
-  return new Response("GET OK", { status: 200 });
-}
+  const { searchParams } = new URL(req.url);
+  const mode = searchParams.get("hub.mode");
+  const token = searchParams.get("hub.verify_token");
+  const challenge = searchParams.get("hub.challenge");
 
+  if (mode === "subscribe" && token === "chatboost_verify_token") {
+    console.log("✅ Webhook verificato");
+    return new Response(challenge, { status: 200 });
+  }
+
+  return new Response("❌ Forbidden", { status: 403 });
+}
