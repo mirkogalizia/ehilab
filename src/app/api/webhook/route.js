@@ -1,6 +1,6 @@
 // src/app/api/webhook/route.js
 import { db } from "@/firebase";
-import { collection, addDoc, Timestamp } from "firebase/firestore";
+import { collection, addDoc, query, where, getDocs, doc, serverTimestamp } from "firebase/firestore";
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
@@ -19,36 +19,49 @@ export async function GET(req) {
 export async function POST(req) {
   try {
     const body = await req.json();
-    const change = body.entry?.[0]?.changes?.[0];
+    console.log("📩 Messaggio ricevuto:", JSON.stringify(body, null, 2));
+
+    const entry = body?.entry?.[0];
+    const change = entry?.changes?.[0];
     const value = change?.value;
+    const phone_number_id = value?.metadata?.phone_number_id;
+    const messages = value?.messages || [];
 
-    const message = value?.messages?.[0];
-    const contact = value?.contacts?.[0];
-    const phoneNumberId = value?.metadata?.phone_number_id;
-
-    if (!message || !contact) {
-      return new Response("No message or contact", { status: 200 });
+    if (!phone_number_id || messages.length === 0) {
+      return new Response("No messages to process", { status: 200 });
     }
 
-    const messageData = {
-      from: message.from,
-      name: contact.profile?.name || null,
-      phone_number_id: phoneNumberId,
-      body: message.text?.body || null,
-      timestamp: Number(message.timestamp),
-      type: message.type,
-      message_id: message.id,
-      user_uid: null, // da collegare successivamente
-      createdAt: Timestamp.now(),
-    };
+    // Cerca utente in base al phone_number_id
+    const usersRef = collection(db, "utenti");
+    const q = query(usersRef, where("phone_number_id", "==", phone_number_id));
+    const querySnapshot = await getDocs(q);
 
-    await addDoc(collection(db, "messages"), messageData);
-    console.log("✅ Messaggio salvato:", messageData);
+    if (querySnapshot.empty) {
+      console.warn("Nessun utente trovato per questo phone_number_id:", phone_number_id);
+      return new Response("Utente non trovato", { status: 200 });
+    }
 
-    return new Response("EVENT_RECEIVED", { status: 200 });
-  } catch (err) {
-    console.error("❌ Errore salvataggio webhook:", err);
-    return new Response("Errore server", { status: 500 });
+    const userDoc = querySnapshot.docs[0];
+    const user_uid = userDoc.id;
+
+    // Salva i messaggi in Firebase associandoli all'utente
+    for (const message of messages) {
+      await addDoc(collection(db, "messaggi"), {
+        user_uid,
+        from: message.from,
+        message_id: message.id,
+        timestamp: message.timestamp,
+        type: message.type,
+        text: message.text?.body || "",
+        createdAt: serverTimestamp()
+      });
+    }
+
+    return new Response("Messaggio salvato", { status: 200 });
+  } catch (error) {
+    console.error("Errore nel webhook:", error);
+    return new Response("Errore interno", { status: 500 });
   }
 }
+
 

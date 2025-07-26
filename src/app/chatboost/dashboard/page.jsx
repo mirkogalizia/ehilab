@@ -1,61 +1,53 @@
+// src/app/chatboost/dashboard/page.jsx
 "use client";
+
 import { useEffect, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth, db } from "@/firebase";
-import { useRouter } from "next/navigation";
-import { collection, getDocs, query, orderBy } from "firebase/firestore";
+import { db } from "@/firebase";
+import { collection, query, where, onSnapshot, orderBy } from "firebase/firestore";
+import { useAuth } from "@/context/AuthContext";
 import { format } from "date-fns";
 
 export default function DashboardPage() {
-  const router = useRouter();
+  const { user } = useAuth();
   const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (!user) {
-        router.push("/chatboost/login");
-      } else {
-        fetchMessages();
-      }
+    if (!user) return;
+
+    const q = query(
+      collection(db, "messaggi"),
+      where("user_uid", "==", user.uid),
+      orderBy("timestamp", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const msgs = [];
+      querySnapshot.forEach((doc) => {
+        msgs.push({ id: doc.id, ...doc.data() });
+      });
+      setMessages(msgs);
     });
 
-    return () => unsub();
-  }, []);
+    return () => unsubscribe();
+  }, [user]);
 
-  const fetchMessages = async () => {
-    const q = query(collection(db, "messages"), orderBy("timestamp", "desc"));
-    const querySnapshot = await getDocs(q);
-
-    const parsed = querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-
-    setMessages(parsed);
-    setLoading(false);
-  };
-
-  if (loading) return <div className="p-8">Caricamento conversazioni...</div>;
+  if (!user) return <div className="text-center mt-10">🔒 Effettua il login per accedere alla dashboard</div>;
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6">📩 Conversazioni recenti</h1>
-
-      {messages.length === 0 && (
-        <p>Nessun messaggio ricevuto.</p>
-      )}
-
-      <ul className="space-y-4">
-        {messages.map(msg => (
-          <li key={msg.id} className="border rounded-lg p-4 shadow">
-            <div><strong>📞 Da:</strong> {msg.from}</div>
-            <div><strong>🧑‍💼 Nome:</strong> {msg.name || "Sconosciuto"}</div>
-            <div><strong>💬 Messaggio:</strong> {msg.body}</div>
-            <div><strong>🕒 Orario:</strong> {format(new Date(msg.timestamp * 1000), "dd/MM/yyyy HH:mm")}</div>
-          </li>
+    <div className="max-w-2xl mx-auto mt-8 p-4 bg-white rounded-xl shadow-md">
+      <h1 className="text-2xl font-bold mb-4">📨 Le tue conversazioni WhatsApp</h1>
+      <div className="space-y-4">
+        {messages.map((msg) => (
+          <div key={msg.id} className="border p-3 rounded-lg bg-gray-100">
+            <div className="text-sm text-gray-500">
+              {format(new Date(Number(msg.timestamp) * 1000), "dd/MM/yyyy HH:mm")}
+            </div>
+            <div className="text-lg">{msg.text}</div>
+            <div className="text-xs text-gray-400 mt-1">ID: {msg.message_id}</div>
+          </div>
         ))}
-      </ul>
+        {messages.length === 0 && <p className="text-gray-500">Nessun messaggio ricevuto ancora.</p>}
+      </div>
     </div>
   );
 }
