@@ -1,6 +1,5 @@
-// src/app/api/submit-template/route.js
 import { db } from '@/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { doc, getDocs, collection } from 'firebase/firestore';
 
 export async function POST(req) {
   const { name, category, language, bodyText, email } = await req.json();
@@ -10,31 +9,28 @@ export async function POST(req) {
   }
 
   try {
-    const snapshot = await getDocs(collection(db, 'users'));
-    const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const usersSnapshot = await getDocs(collection(db, 'users'));
+    const users = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const userData = users.find(u => u.email === email);
 
     if (!userData) {
-      return new Response(JSON.stringify({ error: 'Utente non trovato con questa email' }), { status: 404 });
+      return new Response(JSON.stringify({ error: 'Utente non trovato' }), { status: 404 });
     }
 
-    if (!userData.waba_id) {
-      return new Response(JSON.stringify({ error: 'waba_id mancante nel documento utente' }), { status: 400 });
-    }
+    const wabaId = userData.waba_id;
+    const token = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
 
-    const token = process.env.WHATSAPP_ACCESS_TOKEN;
-
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.waba_id}/message_templates`, {
+    const response = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        name,
+        name, // deve essere tutto minuscolo e con underscore
         category,
         language,
-        parameter_format: 'HANDLEBARS',
+        parameter_format: 'POSITIONAL',
         allow_category_change: false,
         components: [
           { type: 'BODY', text: bodyText }
@@ -42,9 +38,9 @@ export async function POST(req) {
       }),
     });
 
-    const data = await res.json();
-    if (!res.ok) {
-      return new Response(JSON.stringify({ error: data }), { status: res.status });
+    const data = await response.json();
+    if (!response.ok) {
+      return new Response(JSON.stringify({ error: data }), { status: response.status });
     }
 
     return new Response(JSON.stringify(data), { status: 200 });
