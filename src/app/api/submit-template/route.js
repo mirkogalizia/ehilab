@@ -1,6 +1,5 @@
-// src/app/api/submit-template/route.js
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 
 export async function POST(req) {
   const { name, category, language, bodyText, email } = await req.json();
@@ -10,24 +9,17 @@ export async function POST(req) {
   }
 
   try {
-    // Cerca l'utente tramite la mail
-    const snapshot = await getDoc(doc(db, 'users', email));
-    const userSnap = snapshot.exists() ? snapshot : null;
+    // Cerca l’utente tramite email
+    const snapshot = await getDocs(collection(db, 'users'));
+    const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const matchedUser = allUsers.find(u => u.email === email);
 
-    if (!userSnap) {
+    if (!matchedUser) {
       return new Response(JSON.stringify({ error: 'Utente non trovato' }), { status: 404 });
     }
 
-    const userData = userSnap.data();
-
-    if (!userData.waba_id) {
-      return new Response(JSON.stringify({ error: 'waba_id mancante nel documento utente' }), { status: 400 });
-    }
-
-    const wabaId = userData.waba_id;
-
-    // 🔥 Token scritto in chiaro per test temporaneo
-    const token = 'EAAWboJeZBHdsBPER8VTl2cZC6TgMrCHlVeMrbOsAnY4yR8Spq3wSOp7phJkvlM7LLMV1njPAXgW6G5VxbL4GZCd37ZCHSq6ZBM7vCope47qU4BHnqfR4jcMI80rIy2z0jGIZC472Qvgx02VTEaZABcTVDES3voLVtfAELTwEYWQmLDeL8VepL3cIuUl6Tpr0NLrngZDZD';
+    const wabaId = matchedUser.waba_id;
+    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN; // o metti hardcoded temporaneamente per test
 
     const res = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
       method: 'POST',
