@@ -8,20 +8,18 @@ export default function ChatBoostLayout({ children }) {
   const { user } = useAuth();
   const router = useRouter();
 
-  // Redirect automatico se non loggato
   useEffect(() => {
     if (user === null) {
       router.push('/chatboost/login');
     }
   }, [user]);
 
-  if (!user) {
-    return null; // Non mostra nulla finché non ha determinato se loggato
+  if (user === undefined) {
+    return null; // ancora in caricamento
   }
 
   return (
     <div className="flex h-screen">
-      {/* Sidebar solo se loggato */}
       <aside className="w-64 bg-white border-r p-4 space-y-6 shadow-md">
         <h2 className="text-2xl font-bold text-green-600">EHI! Chat Boost</h2>
         <nav className="space-y-2">
@@ -37,7 +35,6 @@ export default function ChatBoostLayout({ children }) {
             </summary>
             <div className="ml-4 mt-2 space-y-1">
               <a href="/chatboost/impostazioni/info" className="block text-sm hover:underline">Info</a>
-
             </div>
           </details>
           <button
@@ -52,8 +49,9 @@ export default function ChatBoostLayout({ children }) {
         </nav>
       </aside>
 
-      {/* Contenuto dinamico */}
-      <main className="flex-1 overflow-y-auto bg-[#f7f7f7]">{children}</main>
+      <main className="flex-1 overflow-y-auto bg-[#f7f7f7]">
+        {children}
+      </main>
     </div>
   );
 }
