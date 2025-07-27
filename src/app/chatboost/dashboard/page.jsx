@@ -103,7 +103,7 @@ export default function DashboardPage() {
         return;
       }
 
-      // Salvataggio Firestore
+      // Salva anche su Firestore
       await addDoc(collection(db, "messages"), {
         user_uid: user.uid,
         from: "operator",
@@ -129,9 +129,9 @@ export default function DashboardPage() {
     <div className="max-w-6xl mx-auto mt-8 p-4">
       <h1 className="text-2xl font-bold mb-6">💬 Chat WhatsApp</h1>
       <div className="grid grid-cols-3 gap-4">
-        {/* Lista conversazioni */}
+        {/* Lista numeri */}
         <div className="col-span-1 border rounded-xl p-2 bg-white h-[500px] overflow-y-auto">
-          {conversations.map(([waId, msgs]) => (
+          {conversations.map(([waId]) => (
             <div
               key={waId}
               className={`cursor-pointer p-3 rounded-lg hover:bg-gray-100 ${
@@ -140,14 +140,11 @@ export default function DashboardPage() {
               onClick={() => setSelectedWaId(waId)}
             >
               <div className="font-semibold">{waId}</div>
-              <div className="text-xs text-gray-500 line-clamp-1">
-                {msgs[msgs.length - 1]?.text || "(Nessun messaggio)"}
-              </div>
             </div>
           ))}
         </div>
 
-        {/* Area messaggi */}
+        {/* Area chat */}
         <div className="col-span-2 border rounded-xl bg-white h-[500px] flex flex-col">
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
             {messages.map((msg) => (
@@ -187,5 +184,6 @@ export default function DashboardPage() {
     </div>
   );
 }
+
 
 
