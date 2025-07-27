@@ -2,37 +2,28 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { db } from '@/lib/firebase';
-import { useAuth } from '@/lib/useAuth';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  addDoc,
-  serverTimestamp,
-  doc,
-  getDoc,
-} from 'firebase/firestore';
+import { doc, getDoc, collection, query, orderBy, onSnapshot, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Send } from 'lucide-react';
+import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
-  const { user } = useAuth();
   const [userData, setUserData] = useState(null);
   const [allMessages, setAllMessages] = useState([]);
   const [phoneList, setPhoneList] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
   const messagesEndRef = useRef(null);
+  const { user } = useAuth();
 
-  // Carica dati utente loggato
+  // 🔄 Carica dati utente loggato da Firestore
   useEffect(() => {
     if (user?.uid) {
-      const userRef = doc(db, 'users', user.uid);
-      getDoc(userRef).then((snap) => {
-        if (snap.exists()) {
-          setUserData(snap.data());
+      const userDocRef = doc(db, 'users', user.uid);
+      getDoc(userDocRef).then((docSnap) => {
+        if (docSnap.exists()) {
+          setUserData(docSnap.data());
         } else {
           console.warn('⚠️ Documento utente non trovato');
         }
@@ -40,7 +31,7 @@ export default function ChatPage() {
     }
   }, [user]);
 
-  // Carica tutti i messaggi
+  // 🔄 Carica messaggi in tempo reale
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -54,11 +45,14 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  const sendMessage = async () => {
-    if (!selectedPhone || !messageText || !userData?.phone_number_id || !userData?.numeroWhatsapp) return;
+  // 🔄 Scroll verso fondo chat
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [allMessages, selectedPhone]);
 
-    const accessToken = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
-    const url = `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`;
+  // ✅ Invio messaggio
+  const sendMessage = async () => {
+    if (!selectedPhone || !messageText || !userData?.phone_number_id) return;
 
     const payload = {
       messaging_product: 'whatsapp',
@@ -67,18 +61,19 @@ export default function ChatPage() {
       text: { body: messageText },
     };
 
-    const res = await fetch(url, {
+    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
     });
 
     const data = await res.json();
+    console.log('✅ Invio WhatsApp →', data);
 
-    if (data.messages) {
+    if (data?.messages) {
       await addDoc(collection(db, 'messages'), {
         text: messageText,
         to: selectedPhone,
@@ -91,7 +86,7 @@ export default function ChatPage() {
       });
       setMessageText('');
     } else {
-      console.error('Errore invio messaggio:', data);
+      console.error('❌ Errore invio:', data);
     }
   };
 
@@ -105,11 +100,11 @@ export default function ChatPage() {
 
   const filteredMessages = allMessages
     .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
-    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+    .sort((a, b) => parseTime(a.timestamp) - parseTime(b.timestamp));
 
   return (
     <div className="flex flex-col md:flex-row h-screen">
-      {/* Sidebar contatti */}
+      {/* Sidebar */}
       <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-4">
         <h2 className="text-lg font-semibold mb-4">📱 Conversazioni</h2>
         <ul className="space-y-2">
@@ -137,18 +132,15 @@ export default function ChatPage() {
           <div className="flex flex-col gap-2">
             {filteredMessages.map((msg, idx) => {
               const isOperator = msg.from === 'operator';
-              const time = new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
+              const time = new Date(parseTime(msg.timestamp)).toLocaleTimeString('it-IT', {
                 hour: '2-digit',
                 minute: '2-digit',
               });
-
               return (
                 <div key={msg.id || idx} className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}>
                   <div
                     className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap leading-snug shadow-md break-words ${
-                      isOperator
-                        ? 'bg-[#dcf8c6] text-gray-900'
-                        : 'bg-white text-gray-900'
+                      isOperator ? 'bg-[#dcf8c6]' : 'bg-white'
                     }`}
                   >
                     {msg.text}
@@ -174,13 +166,9 @@ export default function ChatPage() {
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="w-full flex-1 rounded-full px-4 py-2 text-sm border border-gray-300 bg-white"
+            className="w-full flex-1 rounded-full"
           />
-          <Button
-            onClick={sendMessage}
-            disabled={!messageText || !selectedPhone || !userData}
-            className="rounded-full px-4 py-2 bg-green-500 text-white hover:bg-green-600 transition disabled:bg-gray-400"
-          >
+          <Button onClick={sendMessage} disabled={!userData?.phone_number_id || !selectedPhone || !messageText}>
             <Send size={16} />
           </Button>
         </div>
