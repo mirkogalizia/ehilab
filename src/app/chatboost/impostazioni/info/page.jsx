@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { auth, db } from "@/firebase/config";
+import { auth, db } from "../../../firebase";
 import { doc, getDoc } from "firebase/firestore";
 
 export default function InfoPage() {
