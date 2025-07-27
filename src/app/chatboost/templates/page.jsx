@@ -50,34 +50,24 @@ export default function TemplatePage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+
     const data = await res.json();
     setResponse(data);
-    loadTemplates(); // ricarica lista template
+    loadTemplates(); // ricarica lista template dopo invio
   };
 
   const loadTemplates = async () => {
     if (!userData?.email) return;
-    const res = await fetch(`/api/list-templates?email=${userData.email}`);
-    const data = await res.json();
-    if (data?.data) {
-      setTemplateList(data.data);
-    }
-  };
 
-  const deleteTemplate = async (templateName) => {
-    if (!userData?.email) return;
-
-    const res = await fetch(`/api/delete-template`, {
+    const res = await fetch('/api/list-templates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: userData.email, name: templateName }),
+      body: JSON.stringify({ email: userData.email }),
     });
 
     const data = await res.json();
-    if (res.ok) {
-      setTemplateList((prev) => prev.filter((tpl) => tpl.name !== templateName));
-    } else {
-      alert('Errore durante l\'eliminazione: ' + JSON.stringify(data));
+    if (Array.isArray(data)) {
+      setTemplateList(data);
     }
   };
 
@@ -102,6 +92,7 @@ export default function TemplatePage() {
       <h1 className="text-2xl font-bold">📄 Crea nuovo Template</h1>
 
       <Input placeholder="Nome template" value={name} onChange={(e) => setName(e.target.value)} />
+
       <select
         className="border px-3 py-2 rounded w-full"
         value={category}
@@ -139,19 +130,10 @@ export default function TemplatePage() {
               <h3 className="text-lg font-bold capitalize">{status}</h3>
               <ul className="space-y-1 mt-2">
                 {templates.map((tpl) => (
-                  <li key={tpl.id} className="border rounded p-2 bg-white shadow-sm flex justify-between items-start">
-                    <div>
-                      <strong>{tpl.name}</strong> – {tpl.language} – {tpl.category}
-                      <br />
-                      <span className="text-xs text-gray-500">{tpl.components?.[0]?.text}</span>
-                    </div>
-                    <button
-                      className="text-red-500 font-bold ml-4"
-                      onClick={() => deleteTemplate(tpl.name)}
-                      title="Elimina template"
-                    >
-                      ❌
-                    </button>
+                  <li key={tpl.id} className="border rounded p-2 bg-white shadow-sm">
+                    <strong>{tpl.name}</strong> – {tpl.language} – {tpl.category}
+                    <br />
+                    <span className="text-xs text-gray-500">{tpl.components?.[0]?.text}</span>
                   </li>
                 ))}
               </ul>
