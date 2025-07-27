@@ -31,7 +31,7 @@ export default function TemplatePage() {
   }, [user]);
 
   const handleSubmit = async () => {
-    if (!userData || !userData.email) {
+    if (!userData || !userData.waba_id) {
       alert('Dati utente mancanti');
       return;
     }
@@ -42,9 +42,10 @@ export default function TemplatePage() {
       language,
       bodyText,
       email: userData.email,
+      waba_id: userData.waba_id,
+      phone_number_id: userData.phone_number_id,
     };
 
-    // 🔍 Log per debugging
     console.log('🛰️ Dati inviati a submit-template:', payload);
 
     const res = await fetch('/api/submit-template', {
@@ -58,7 +59,7 @@ export default function TemplatePage() {
   };
 
   if (!userData) {
-    return <div className="text-gray-500 p-6">⏳ Caricamento dati...</div>;
+    return <div className="text-gray-500 p-6">⏳ Caricamento dati utente...</div>;
   }
 
   return (
@@ -105,3 +106,4 @@ export default function TemplatePage() {
     </div>
   );
 }
+
