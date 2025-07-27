@@ -1,97 +1,88 @@
+// 1. 📁 app/chatboost/templates/page.jsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@/lib/useAuth';
 
-export default function SubmitTemplatePage() {
-  const { user } = useAuth(); // recupera l'utente loggato (email già disponibile)
+export default function TemplatePage() {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('MARKETING');
   const [language, setLanguage] = useState('it');
   const [bodyText, setBodyText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [response, setResponse] = useState(null);
+  const [userData, setUserData] = useState(null);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('chatboostUser');
+    if (stored) {
+      setUserData(JSON.parse(stored));
+    }
+  }, []);
 
   const handleSubmit = async () => {
-    if (!user?.email || !name || !category || !language || !bodyText) {
-      alert('Compila tutti i campi');
+    if (!userData || !userData.waba_id || !userData.phone_number_id) {
+      alert('Dati utente mancanti');
       return;
     }
 
-    setLoading(true);
-    setResult(null);
-
-    try {
-      const res = await fetch('/api/submit-template', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          category,
-          language,
-          bodyText,
-          email: user.email, // 🔥 usa l’email del loggato
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setResult({ success: false, message: JSON.stringify(data.error || data) });
-      } else {
-        setResult({ success: true, message: 'Template inviato con successo ✅' });
-      }
-    } catch (err) {
-      setResult({ success: false, message: err.message });
-    }
-
-    setLoading(false);
+    const res = await fetch('/api/submit-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        category,
+        language,
+        bodyText,
+        uid: userData.uid,
+        waba_id: userData.waba_id,
+        phone_number_id: userData.phone_number_id
+      })
+    });
+    const data = await res.json();
+    setResponse(data);
   };
 
   return (
-    <div className="max-w-xl mx-auto mt-10 p-6 bg-white rounded-xl shadow-md space-y-4 border border-gray-200">
-      <h1 className="text-2xl font-bold text-center">📨 Invia Template WhatsApp</h1>
+    <div className="p-6 space-y-4">
+      <h1 className="text-2xl font-bold">📄 Crea nuovo Template</h1>
 
-      <Input placeholder="Nome del template" value={name} onChange={(e) => setName(e.target.value)} />
-      
+      <Input
+        placeholder="Nome template (es. promo_estate)"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+
       <select
+        className="border px-3 py-2 rounded w-full"
         value={category}
         onChange={(e) => setCategory(e.target.value)}
-        className="w-full p-2 border rounded-md bg-white text-sm"
       >
-        <option value="MARKETING">MARKETING</option>
-        <option value="UTILITY">UTILITY</option>
-        <option value="TRANSACTIONAL">TRANSACTIONAL</option>
+        <option value="MARKETING">Marketing</option>
+        <option value="TRANSACTIONAL">Transazionale</option>
+        <option value="OTP">OTP</option>
       </select>
 
-      <select
+      <Input
+        placeholder="Lingua (es. it, en_US)"
         value={language}
         onChange={(e) => setLanguage(e.target.value)}
-        className="w-full p-2 border rounded-md bg-white text-sm"
-      >
-        <option value="it">🇮🇹 Italiano</option>
-        <option value="en">🇬🇧 English</option>
-        <option value="es">🇪🇸 Español</option>
-        <option value="fr">🇫🇷 Français</option>
-      </select>
+      />
 
       <textarea
-        className="w-full border p-2 rounded-md text-sm"
-        rows="6"
-        placeholder="Testo del messaggio (usa {{1}}, {{2}} per i parametri dinamici)"
+        placeholder="Corpo del messaggio"
+        rows={5}
+        className="border px-3 py-2 rounded w-full"
         value={bodyText}
         onChange={(e) => setBodyText(e.target.value)}
       />
 
-      <Button onClick={handleSubmit} disabled={loading} className="w-full bg-green-600 hover:bg-green-700">
-        {loading ? 'Invio in corso...' : 'Invia Template'}
-      </Button>
+      <Button onClick={handleSubmit}>📤 Invia Template</Button>
 
-      {result && (
-        <div className={`text-sm p-2 mt-2 rounded-md ${result.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-          {result.message}
-        </div>
+      {response && (
+        <pre className="bg-gray-100 p-4 rounded text-sm">
+          {JSON.stringify(response, null, 2)}
+        </pre>
       )}
     </div>
   );
