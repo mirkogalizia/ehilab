@@ -1,7 +1,9 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/useAuth';
-import { Input, Textarea, Button } from '@/components/ui';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
 
 export default function TemplatesPage() {
   const { user } = useAuth();
@@ -34,7 +36,6 @@ export default function TemplatesPage() {
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold">Crea Template</h1>
-      {/* form */}
       <Input placeholder="Nome template" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
       <Input placeholder="Categoria" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
       <Input placeholder="Lingua" value={form.language} onChange={e => setForm({ ...form, language: e.target.value })} />
@@ -42,16 +43,14 @@ export default function TemplatesPage() {
       <Button onClick={handleSubmit}>Richiedi approvazione</Button>
       {result && <pre>{result}</pre>}
 
-      {/* lista */}
       <h2 className="mt-8 text-xl">Template esistenti</h2>
-      <ul>
+      <ul className="list-disc list-inside">
         {templates.map(t => (
           <li key={t.name}>
-            {t.name} – {t.status} ({t.category})
+            <strong>{t.name}</strong> – {t.status} ({t.category})
           </li>
         ))}
       </ul>
     </div>
   );
 }
-
