@@ -4,6 +4,9 @@
 import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { db } from '@/lib/firebase';
+import { collection, getDocs } from 'firebase/firestore';
+import { useAuth } from '@/lib/useAuth';
 
 export default function TemplatePage() {
   const [name, setName] = useState('');
@@ -12,16 +15,24 @@ export default function TemplatePage() {
   const [bodyText, setBodyText] = useState('');
   const [response, setResponse] = useState(null);
   const [userData, setUserData] = useState(null);
+  const { user } = useAuth();
 
   useEffect(() => {
-    const stored = localStorage.getItem('chatboostUser');
-    if (stored) {
-      setUserData(JSON.parse(stored));
-    }
-  }, []);
+    const fetchUserData = async () => {
+      if (!user?.email) return;
+      const snapshot = await getDocs(collection(db, 'users'));
+      const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const matched = allUsers.find(u => u.email === user.email);
+      if (matched) {
+        setUserData(matched);
+      }
+    };
+
+    fetchUserData();
+  }, [user]);
 
   const handleSubmit = async () => {
-    if (!userData || !userData.waba_id || !userData.phone_number_id) {
+    if (!userData || !userData.waba_id || !userData.phone_number_id || !userData.uid) {
       alert('Dati utente mancanti');
       return;
     }
@@ -42,6 +53,10 @@ export default function TemplatePage() {
     const data = await res.json();
     setResponse(data);
   };
+
+  if (!userData) {
+    return <div className="text-gray-500 p-6">⏳ Caricamento dati...</div>;
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -87,4 +102,5 @@ export default function TemplatePage() {
     </div>
   );
 }
+
 
