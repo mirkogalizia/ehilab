@@ -10,8 +10,7 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
-  getDoc,
-  doc
+  getDocs
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -29,16 +28,25 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!user) return;
-    const fetchUserData = async () => {
-      const docRef = doc(db, 'users', user.uid);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        setUserData(snap.data());
-      } else {
-        console.warn('⚠️ Documento utente non trovato per UID:', user.uid);
+
+    const fetchUserDataByEmail = async () => {
+      try {
+        const usersRef = collection(db, 'users');
+        const snapshot = await getDocs(usersRef);
+        const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const currentUserData = allUsers.find((u) => u.email === user.email);
+
+        if (currentUserData) {
+          setUserData(currentUserData);
+        } else {
+          console.warn('⚠️ Nessun utente trovato con email:', user.email);
+        }
+      } catch (error) {
+        console.error('❌ Errore nel recupero dati utente:', error);
       }
     };
-    fetchUserData();
+
+    fetchUserDataByEmail();
   }, [user]);
 
   useEffect(() => {
