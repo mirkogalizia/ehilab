@@ -71,6 +71,23 @@ export default function TemplatePage() {
     }
   };
 
+  const handleDelete = async (templateId) => {
+    if (!userData?.email) return;
+
+    const res = await fetch('/api/delete-template', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: userData.email, template_id: templateId }),
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      loadTemplates(); // aggiorna lista dopo eliminazione
+    } else {
+      alert('Errore eliminazione');
+    }
+  };
+
   useEffect(() => {
     if (userData?.email) {
       loadTemplates();
@@ -130,10 +147,18 @@ export default function TemplatePage() {
               <h3 className="text-lg font-bold capitalize">{status}</h3>
               <ul className="space-y-1 mt-2">
                 {templates.map((tpl) => (
-                  <li key={tpl.id} className="border rounded p-2 bg-white shadow-sm">
-                    <strong>{tpl.name}</strong> – {tpl.language} – {tpl.category}
-                    <br />
-                    <span className="text-xs text-gray-500">{tpl.components?.[0]?.text}</span>
+                  <li key={tpl.id} className="border rounded p-2 bg-white shadow-sm flex justify-between items-start">
+                    <div>
+                      <strong>{tpl.name}</strong> – {tpl.language} – {tpl.category}
+                      <br />
+                      <span className="text-xs text-gray-500">{tpl.components?.[0]?.text}</span>
+                    </div>
+                    <button
+                      className="text-red-500 hover:text-red-700 text-sm ml-4"
+                      onClick={() => handleDelete(tpl.id)}
+                    >
+                      ❌
+                    </button>
                   </li>
                 ))}
               </ul>
