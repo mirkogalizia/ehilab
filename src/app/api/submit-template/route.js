@@ -1,5 +1,6 @@
+// src/app/api/submit-template/route.js
 import { db } from '@/firebase';
-import { doc, getDocs, collection } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 export async function POST(req) {
   const { name, category, language, bodyText, email } = await req.json();
@@ -9,38 +10,47 @@ export async function POST(req) {
   }
 
   try {
-    const usersSnapshot = await getDocs(collection(db, 'users'));
-    const users = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const userData = users.find(u => u.email === email);
+    // cerca l'utente tramite la mail
+    const snapshot = await getDoc(doc(db, 'users', email));
+    const userSnap = snapshot.exists() ? snapshot : null;
 
-    if (!userData) {
+    if (!userSnap) {
       return new Response(JSON.stringify({ error: 'Utente non trovato' }), { status: 404 });
     }
 
-    const wabaId = userData.waba_id;
-    const token = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
+    const userData = userSnap.data();
 
-    const response = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
+    if (!userData.waba_id) {
+      return new Response(JSON.stringify({ error: 'waba_id mancante nel documento utente' }), { status: 400 });
+    }
+
+    const wabaId = userData.waba_id;
+    const token = process.env.WHATSAPP_ACCESS_TOKEN;
+
+    const res = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        name, // deve essere tutto minuscolo e con underscore
+        name: name.toLowerCase().replace(/\s+/g, '_'), // Facebook richiede solo lowercase + underscore
         category,
         language,
         parameter_format: 'POSITIONAL',
         allow_category_change: false,
         components: [
-          { type: 'BODY', text: bodyText }
-        ]
+          {
+            type: 'BODY',
+            text: bodyText,
+          },
+        ],
       }),
     });
 
-    const data = await response.json();
-    if (!response.ok) {
-      return new Response(JSON.stringify({ error: data }), { status: response.status });
+    const data = await res.json();
+    if (!res.ok) {
+      return new Response(JSON.stringify({ error: data }), { status: res.status });
     }
 
     return new Response(JSON.stringify(data), { status: 200 });
