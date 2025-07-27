@@ -1,4 +1,3 @@
-// src/app/chatboost/dashboard/page.jsx
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
@@ -10,7 +9,8 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
-  getDocs
+  getDocs,
+  doc
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ export default function ChatPage() {
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
   const [userData, setUserData] = useState(null);
+  const [contactNames, setContactNames] = useState({});
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
@@ -51,7 +52,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
       const messages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       setAllMessages(messages);
 
@@ -59,7 +60,16 @@ export default function ChatPage() {
         new Set(messages.map((msg) => (msg.from !== 'operator' ? msg.from : msg.to)))
       );
       setPhoneList(uniquePhones);
+
+      // Carica nomi associati ai numeri
+      const contactsSnapshot = await getDocs(collection(db, 'contacts'));
+      const namesMap = {};
+      contactsSnapshot.forEach((doc) => {
+        namesMap[doc.id] = doc.data().name;
+      });
+      setContactNames(namesMap);
     });
+
     return () => unsubscribe();
   }, []);
 
@@ -131,7 +141,7 @@ export default function ChatPage() {
                 selectedPhone === phone ? 'bg-green-100 font-bold' : ''
               }`}
             >
-              {phone}
+              {contactNames[phone] || phone}
             </li>
           ))}
         </ul>
@@ -139,7 +149,9 @@ export default function ChatPage() {
 
       <div className="flex flex-col flex-1 bg-[#e5ddd5]">
         <div className="p-4 text-center text-lg font-semibold bg-[#f0f0f0] shadow-sm">
-          {selectedPhone ? `Chat con ${selectedPhone}` : 'Seleziona una chat'}
+          {selectedPhone
+            ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
+            : 'Seleziona una chat'}
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -194,3 +206,4 @@ export default function ChatPage() {
     </div>
   );
 }
+

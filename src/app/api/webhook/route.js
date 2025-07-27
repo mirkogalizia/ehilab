@@ -1,6 +1,16 @@
 // src/app/api/webhook/route.js
+
 import { db } from "@/firebase";
-import { collection, addDoc, query, where, getDocs, doc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  getDocs,
+  doc,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
@@ -26,12 +36,13 @@ export async function POST(req) {
     const value = change?.value;
     const phone_number_id = value?.metadata?.phone_number_id;
     const messages = value?.messages || [];
+    const contacts = value?.contacts || [];
 
     if (!phone_number_id || messages.length === 0) {
       return new Response("No messages to process", { status: 200 });
     }
 
-    // Cerca utente in base al phone_number_id
+    // Trova l'utente associato al phone_number_id
     const usersRef = collection(db, "users");
     const q = query(usersRef, where("phone_number_id", "==", phone_number_id));
     const querySnapshot = await getDocs(q);
@@ -44,24 +55,36 @@ export async function POST(req) {
     const userDoc = querySnapshot.docs[0];
     const user_uid = userDoc.id;
 
-    // Salva i messaggi in Firebase associandoli all'utente
-for (const message of messages) {
-  await addDoc(collection(db, "messages"), {
-    user_uid,
-    from: message.from,
-    message_id: message.id,
-    timestamp: message.timestamp,
-    type: message.type,
-    text: message.text?.body || "",
-    createdAt: serverTimestamp()
-  });
-}
+    // Loop su tutti i messaggi ricevuti
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+      const contact = contacts?.[i];
+      const wa_id = contact?.wa_id || message.from;
+      const profile_name = contact?.profile?.name || "";
 
-    return new Response("Messaggio salvato", { status: 200 });
+      // 1. Salva messaggio
+      await addDoc(collection(db, "messages"), {
+        user_uid,
+        from: wa_id,
+        message_id: message.id,
+        timestamp: message.timestamp,
+        type: message.type,
+        text: message.text?.body || "",
+        createdAt: serverTimestamp(),
+      });
+
+      // 2. Salva nome contatto se presente
+      if (profile_name) {
+        await setDoc(doc(db, "contacts", wa_id), {
+          name: profile_name,
+        }, { merge: true });
+      }
+    }
+
+    return new Response("Messaggi salvati", { status: 200 });
   } catch (error) {
-    console.error("Errore nel webhook:", error);
+    console.error("❌ Errore nel webhook:", error);
     return new Response("Errore interno", { status: 500 });
   }
 }
-
 
