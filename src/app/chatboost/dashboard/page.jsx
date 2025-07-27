@@ -1,221 +1,108 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { db } from '@/lib/firebase';
-import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  addDoc,
-  serverTimestamp,
-  getDocs,
-  doc
-} from 'firebase/firestore';
+import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send } from 'lucide-react';
+import { db } from '@/lib/firebase';
+import { collection, getDocs } from 'firebase/firestore';
 import { useAuth } from '@/lib/useAuth';
 
-export default function ChatPage() {
-  const [allMessages, setAllMessages] = useState([]);
-  const [phoneList, setPhoneList] = useState([]);
-  const [selectedPhone, setSelectedPhone] = useState('');
-  const [messageText, setMessageText] = useState('');
+export default function TemplatePage() {
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('MARKETING');
+  const [language, setLanguage] = useState('it');
+  const [bodyText, setBodyText] = useState('');
+  const [response, setResponse] = useState(null);
   const [userData, setUserData] = useState(null);
-  const [contactNames, setContactNames] = useState({});
-  const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user) return;
-
-    const fetchUserDataByEmail = async () => {
-      try {
-        const usersRef = collection(db, 'users');
-        const snapshot = await getDocs(usersRef);
-        const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        const currentUserData = allUsers.find((u) => u.email === user.email);
-
-        if (currentUserData) {
-          setUserData(currentUserData);
-        } else {
-          console.warn('⚠️ Nessun utente trovato con email:', user.email);
-        }
-      } catch (error) {
-        console.error('❌ Errore nel recupero dati utente:', error);
+    const fetchUserData = async () => {
+      if (!user?.email) return;
+      const snapshot = await getDocs(collection(db, 'users'));
+      const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const matched = allUsers.find(u => u.email === user.email);
+      if (matched) {
+        setUserData(matched);
       }
     };
 
-    fetchUserDataByEmail();
+    fetchUserData();
   }, [user]);
 
-  useEffect(() => {
-    const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const messages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setAllMessages(messages);
-
-      const uniquePhones = Array.from(
-        new Set(messages.map((msg) => (msg.from !== 'operator' ? msg.from : msg.to)))
-      );
-      setPhoneList(uniquePhones);
-
-      const contactsSnapshot = await getDocs(collection(db, 'contacts'));
-      const namesMap = {};
-      contactsSnapshot.forEach((doc) => {
-        namesMap[doc.id] = doc.data().name;
-      });
-      setContactNames(namesMap);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+  const handleSubmit = async () => {
+    if (!userData || !userData.email) {
+      alert('Dati utente mancanti');
+      return;
     }
-  }, [allMessages, selectedPhone]);
 
-  const sendMessage = async () => {
-    if (!selectedPhone || !messageText || !userData) return;
     const payload = {
-      messaging_product: 'whatsapp',
-      to: selectedPhone,
-      type: 'text',
-      text: { body: messageText },
+      name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      category,
+      language,
+      bodyText,
+      email: userData.email,
     };
 
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
+    // 🔍 Log per debugging
+    console.log('🛰️ Dati inviati a submit-template:', payload);
+
+    const res = await fetch('/api/submit-template', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
     const data = await res.json();
-
-    if (data.messages) {
-      await addDoc(collection(db, 'messages'), {
-        text: messageText,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: 'text',
-        user_uid: user.uid,
-        message_id: data.messages[0].id,
-      });
-      setMessageText('');
-    } else {
-      console.warn('❌ Errore invio messaggio:', data);
-    }
+    setResponse(data);
   };
 
-  const parseTime = (val) => {
-    if (!val) return 0;
-    if (typeof val === 'string') return parseInt(val) * 1000;
-    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
-    if (val?.seconds) return val.seconds * 1000;
-    return 0;
-  };
-
-  const filteredMessages = allMessages
-    .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
-    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+  if (!userData) {
+    return <div className="text-gray-500 p-6">⏳ Caricamento dati...</div>;
+  }
 
   return (
-    <div className="flex flex-col md:flex-row h-screen">
-      {/* Lista contatti */}
-      <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-4">
-        <h2 className="text-lg font-semibold mb-4">📱 Conversazioni</h2>
-        <ul className="space-y-2">
-          {phoneList.map((phone) => (
-            <li
-              key={phone}
-              onClick={() => setSelectedPhone(phone)}
-              className={`cursor-pointer px-3 py-2 rounded-lg hover:bg-gray-100 transition ${
-                selectedPhone === phone ? 'bg-green-100 font-bold' : ''
-              }`}
-            >
-              {contactNames[phone] || phone}
-            </li>
-          ))}
-        </ul>
-      </div>
+    <div className="p-6 space-y-4">
+      <h1 className="text-2xl font-bold">📄 Crea nuovo Template</h1>
 
-      {/* Conversazione */}
-      <div className="flex flex-col flex-1 bg-[#e5ddd5]">
-        {/* Header */}
-        <div className="p-4 text-center text-lg font-semibold bg-[#f0f0f0] shadow-sm">
-          {selectedPhone
-            ? contactNames[selectedPhone] !== undefined
-              ? `Chat con ${contactNames[selectedPhone]}`
-              : 'Caricamento...'
-            : 'Seleziona una chat'}
-        </div>
+      <Input
+        placeholder="Nome template (es. promo_estate)"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
 
-        {/* Messaggi */}
-        <div className="flex-1 overflow-y-auto px-4 py-3">
-          <div className="flex flex-col gap-2">
-            {filteredMessages.map((msg, idx) => {
-              const isOperator = msg.from === 'operator';
-              const time = new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
-                hour: '2-digit',
-                minute: '2-digit',
-              });
+      <select
+        className="border px-3 py-2 rounded w-full"
+        value={category}
+        onChange={(e) => setCategory(e.target.value)}
+      >
+        <option value="MARKETING">Marketing</option>
+        <option value="TRANSACTIONAL">Transazionale</option>
+        <option value="OTP">OTP</option>
+      </select>
 
-              return (
-                <div key={msg.id || idx} className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}>
-                  {!isOperator && (
-                    <div className="text-[11px] text-gray-500 mb-1 ml-1">
-                      {contactNames[msg.from] || msg.from}
-                    </div>
-                  )}
-                  <div
-                    className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap leading-snug shadow-md break-words ${
-                      isOperator ? 'bg-[#dcf8c6] text-gray-900' : 'bg-white text-gray-900'
-                    }`}
-                  >
-                    {msg.text}
-                  </div>
-                  <div className="text-[10px] text-gray-500 mt-1">{time}</div>
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
+      <Input
+        placeholder="Lingua (es. it, en_US)"
+        value={language}
+        onChange={(e) => setLanguage(e.target.value)}
+      />
 
-        {/* Input */}
-        <div className="flex flex-col md:flex-row items-center gap-2 p-4 bg-[#f0f0f0] border-t">
-          <Input
-            placeholder="Numero telefono"
-            value={selectedPhone}
-            onChange={(e) => setSelectedPhone(e.target.value)}
-            className="w-full md:w-1/3"
-          />
-          <Input
-            placeholder="Scrivi un messaggio..."
-            value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="w-full flex-1 rounded-full px-4 py-2 text-sm border border-gray-300 bg-white"
-          />
-          <Button
-            onClick={sendMessage}
-            className="rounded-full px-4 py-2 bg-green-500 text-white hover:bg-green-600 transition"
-            disabled={!userData || !selectedPhone || !messageText}
-          >
-            <Send size={16} />
-          </Button>
-        </div>
-      </div>
+      <textarea
+        placeholder="Corpo del messaggio"
+        rows={5}
+        className="border px-3 py-2 rounded w-full"
+        value={bodyText}
+        onChange={(e) => setBodyText(e.target.value)}
+      />
+
+      <Button onClick={handleSubmit}>📤 Invia Template</Button>
+
+      {response && (
+        <pre className="bg-gray-100 p-4 rounded text-sm">
+          {JSON.stringify(response, null, 2)}
+        </pre>
+      )}
     </div>
   );
 }
-
 
