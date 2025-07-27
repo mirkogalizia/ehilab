@@ -1,4 +1,5 @@
-import { db } from '@/lib/firebase';
+// src/app/api/submit-template/route.js
+import { db } from '@/lib/firebase'; // ✅ importa dalla nuova posizione
 import { doc, getDoc } from 'firebase/firestore';
 
 export async function POST(req) {
@@ -15,12 +16,8 @@ export async function POST(req) {
     }
 
     const userData = snapshot.data();
-    if (!userData.waba_id) {
-      return new Response(JSON.stringify({ error: 'waba_id mancante nel documento utente' }), { status: 400 });
-    }
-
     const wabaId = userData.waba_id;
-    const token = process.env.WHATSAPP_ACCESS_TOKEN;
+    const token = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
 
     const res = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
       method: 'POST',

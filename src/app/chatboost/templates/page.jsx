@@ -17,39 +17,40 @@ export default function TemplatePage() {
   const { user } = useAuth();
 
   useEffect(() => {
-    const fetchUserDataByEmail = async () => {
+    const fetchUserData = async () => {
       if (!user?.email) return;
-      const usersRef = collection(db, 'users');
-      const snapshot = await getDocs(usersRef);
-      const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      const currentUserData = allUsers.find((u) => u.email === user.email);
-
-      if (currentUserData) {
-        setUserData(currentUserData);
-      } else {
-        console.warn('⚠️ Nessun utente trovato con email:', user.email);
+      const snapshot = await getDocs(collection(db, 'users'));
+      const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const matched = allUsers.find(u => u.email === user.email);
+      if (matched) {
+        setUserData(matched);
       }
     };
 
-    fetchUserDataByEmail();
+    fetchUserData();
   }, [user]);
 
   const handleSubmit = async () => {
-    if (!userData?.waba_id || !userData?.phone_number_id || !user?.email) {
+    if (!userData || !userData.email) {
       alert('Dati utente mancanti');
       return;
     }
 
+    const payload = {
+      name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      category,
+      language,
+      bodyText,
+      email: userData.email,
+    };
+
+    // 🔍 Log per debugging
+    console.log('🛰️ Dati inviati a submit-template:', payload);
+
     const res = await fetch('/api/submit-template', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-        category,
-        language,
-        bodyText,
-        email: user.email, // passiamo la mail per cercare lo user nel backend
-      }),
+      body: JSON.stringify(payload),
     });
 
     const data = await res.json();
@@ -57,7 +58,7 @@ export default function TemplatePage() {
   };
 
   if (!userData) {
-    return <div className="text-gray-500 p-6">⏳ Caricamento dati utente...</div>;
+    return <div className="text-gray-500 p-6">⏳ Caricamento dati...</div>;
   }
 
   return (
@@ -104,4 +105,3 @@ export default function TemplatePage() {
     </div>
   );
 }
-
