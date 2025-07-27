@@ -15,14 +15,15 @@ import { useAuth } from "@/context/AuthContext";
 import { format } from "date-fns";
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, userData } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [selectedWaId, setSelectedWaId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
 
+  // Raggruppa per numero tutte le chat
   useEffect(() => {
-    if (!user) return;
+    if (!user || !userData) return;
 
     const q = query(
       collection(db, "messages"),
@@ -37,21 +38,25 @@ export default function DashboardPage() {
         if (!convos.has(wa_id)) convos.set(wa_id, []);
         convos.get(wa_id).push({ id: doc.id, ...data });
       });
+
       const entries = Array.from(convos.entries());
       entries.sort((a, b) => {
         const aTime = Math.max(...a[1].map((m) => m.timestamp));
         const bTime = Math.max(...b[1].map((m) => m.timestamp));
         return bTime - aTime;
       });
+
       setConversations(entries);
       if (!selectedWaId && entries.length > 0) setSelectedWaId(entries[0][0]);
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, userData]);
 
+  // Carica messaggi della chat selezionata
   useEffect(() => {
-    if (!selectedWaId || !user) return;
+    if (!selectedWaId || !user || !userData) return;
+
     const q = query(
       collection(db, "messages"),
       where("user_uid", "==", user.uid),
@@ -68,12 +73,13 @@ export default function DashboardPage() {
     });
 
     return () => unsubscribe();
-  }, [selectedWaId, user]);
+  }, [selectedWaId, user, userData]);
 
+  // Invia nuovo messaggio
   const handleSend = async () => {
-    if (!newMessage.trim() || !user || !selectedWaId) return;
+    if (!newMessage.trim() || !user || !userData || !selectedWaId) return;
 
-    const phoneNumberId = user.phone_number_id;
+    const phoneNumberId = userData.phone_number_id;
     const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
 
     try {
@@ -94,8 +100,10 @@ export default function DashboardPage() {
         }
       );
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error?.message || "Errore generico");
+      if (!response.ok) {
+        console.error("Errore invio:", await response.json());
+        return;
+      }
 
       await addDoc(collection(db, "messages"), {
         user_uid: user.uid,
@@ -110,12 +118,12 @@ export default function DashboardPage() {
       });
 
       setNewMessage("");
-    } catch (err) {
-      alert("❌ Errore nell'invio del messaggio: " + err.message);
+    } catch (error) {
+      console.error("Errore invio:", error);
     }
   };
 
-  if (!user)
+  if (!user || !userData)
     return (
       <div className="text-center mt-10">
         🔒 Effettua il login per accedere alla dashboard
@@ -126,6 +134,7 @@ export default function DashboardPage() {
     <div className="max-w-6xl mx-auto mt-8 p-4">
       <h1 className="text-2xl font-bold mb-6">💬 Chat WhatsApp</h1>
       <div className="grid grid-cols-3 gap-4">
+        {/* Colonna sinistra: elenco numeri */}
         <div className="col-span-1 border rounded-xl p-2 bg-white h-[500px] overflow-y-auto">
           {conversations.map(([waId]) => (
             <div
@@ -135,15 +144,13 @@ export default function DashboardPage() {
               }`}
               onClick={() => setSelectedWaId(waId)}
             >
-              <div className="font-semibold">{waId}</div>
+              <div className="font-semibold text-sm">+{waId}</div>
             </div>
           ))}
         </div>
 
+        {/* Colonna destra: messaggi */}
         <div className="col-span-2 border rounded-xl bg-white h-[500px] flex flex-col">
-          <div className="px-4 py-2 border-b text-sm text-gray-600">
-            📱 Conversazione con: <b>{selectedWaId || "..."}</b>
-          </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
             {messages.map((msg) => (
               <div
@@ -160,10 +167,9 @@ export default function DashboardPage() {
                 </div>
               </div>
             ))}
-            {messages.length === 0 && (
-              <p className="text-gray-500">Nessun messaggio nella chat.</p>
-            )}
+            {messages.length === 0 && <p className="text-gray-500">Nessun messaggio nella chat.</p>}
           </div>
+
           <div className="p-3 border-t flex gap-2">
             <input
               value={newMessage}
