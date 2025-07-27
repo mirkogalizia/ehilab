@@ -1,185 +1,191 @@
-// src/app/chatboost/dashboard/page.jsx
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import { db } from "@/firebase";
+import { useEffect, useState, useRef } from 'react';
+import { db } from '@/lib/firebase';
+import { useAuth } from '@/lib/useAuth';
 import {
   collection,
   query,
-  where,
-  onSnapshot,
   orderBy,
+  onSnapshot,
   addDoc,
   serverTimestamp,
-} from "firebase/firestore";
-import { useAuth } from "@/context/AuthContext";
-import { format } from "date-fns";
+  doc,
+  getDoc,
+} from 'firebase/firestore';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Send } from 'lucide-react';
 
-export default function DashboardPage() {
-  const { user, userData } = useAuth();
-  const [conversations, setConversations] = useState([]);
-  const [selectedWaId, setSelectedWaId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
+export default function ChatPage() {
+  const { user } = useAuth();
+  const [userData, setUserData] = useState(null);
+  const [allMessages, setAllMessages] = useState([]);
+  const [phoneList, setPhoneList] = useState([]);
+  const [selectedPhone, setSelectedPhone] = useState('');
+  const [messageText, setMessageText] = useState('');
+  const messagesEndRef = useRef(null);
 
-  // Raggruppa tutte le chat per numero
+  // Carica dati utente loggato
   useEffect(() => {
-    if (!user || !userData) return;
-
-    const q = query(
-      collection(db, "messages"),
-      where("from", "in", [userData.numeroWhatsapp, "operator"])
-    );
-
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const convos = new Map();
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        const wa_id = data.from === "operator" ? data.to : data.from;
-        if (!convos.has(wa_id)) convos.set(wa_id, []);
-        convos.get(wa_id).push({ id: doc.id, ...data });
-      });
-      const entries = Array.from(convos.entries());
-      entries.sort((a, b) => {
-        const aTime = Math.max(...a[1].map((m) => Number(m.timestamp)));
-        const bTime = Math.max(...b[1].map((m) => Number(m.timestamp)));
-        return bTime - aTime;
-      });
-      setConversations(entries);
-      if (!selectedWaId && entries.length > 0) setSelectedWaId(entries[0][0]);
-    });
-
-    return () => unsubscribe();
-  }, [user, userData]);
-
-  // Mostra messaggi della chat selezionata
-  useEffect(() => {
-    if (!selectedWaId || !user) return;
-
-    const q = query(
-      collection(db, "messages"),
-      where("from", "in", [selectedWaId, "operator"]),
-      orderBy("timestamp", "asc")
-    );
-
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const msgs = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        const isRelevant =
-          (data.from === selectedWaId && data.to === userData.numeroWhatsapp) ||
-          (data.from === "operator" && data.to === selectedWaId);
-        if (isRelevant) {
-          msgs.push({ id: doc.id, ...data });
+    if (user?.uid) {
+      const userRef = doc(db, 'users', user.uid);
+      getDoc(userRef).then((snap) => {
+        if (snap.exists()) {
+          setUserData(snap.data());
+        } else {
+          console.warn('⚠️ Documento utente non trovato');
         }
       });
-      setMessages(msgs);
+    }
+  }, [user]);
+
+  // Carica tutti i messaggi
+  useEffect(() => {
+    const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const messages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setAllMessages(messages);
+      const uniquePhones = Array.from(
+        new Set(messages.map((msg) => (msg.from !== 'operator' ? msg.from : msg.to)))
+      );
+      setPhoneList(uniquePhones);
     });
-
     return () => unsubscribe();
-  }, [selectedWaId, user, userData]);
+  }, []);
 
-  const handleSend = async () => {
-    if (!newMessage.trim() || !user || !userData || !selectedWaId) return;
+  const sendMessage = async () => {
+    if (!selectedPhone || !messageText || !userData?.phone_number_id || !userData?.numeroWhatsapp) return;
 
-    const phoneNumberId = userData.phone_number_id;
-    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
-    const fromNumber = userData.numeroWhatsapp;
+    const accessToken = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
+    const url = `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`;
 
     const payload = {
-      messaging_product: "whatsapp",
-      to: selectedWaId,
-      type: "text",
-      text: { body: newMessage },
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'text',
+      text: { body: messageText },
     };
 
-    const response = await fetch(`https://graph.facebook.com/v17.0/${phoneNumberId}/messages`, {
-      method: "POST",
+    const res = await fetch(url, {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
     });
 
-    if (!response.ok) {
-      console.error("Errore nell'invio del messaggio via WhatsApp API");
-      return;
+    const data = await res.json();
+
+    if (data.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text: messageText,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'text',
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
+      });
+      setMessageText('');
+    } else {
+      console.error('Errore invio messaggio:', data);
     }
-
-    await addDoc(collection(db, "messages"), {
-      user_uid: user.uid,
-      from: "operator",
-      to: selectedWaId,
-      message_id: "manual-" + Date.now(),
-      timestamp: Math.floor(Date.now() / 1000),
-      type: "text",
-      text: newMessage,
-      createdAt: serverTimestamp(),
-    });
-
-    setNewMessage("");
   };
 
-  if (!user)
-    return <div className="text-center mt-10">🔒 Effettua il login per accedere alla dashboard</div>;
+  const parseTime = (val) => {
+    if (!val) return 0;
+    if (typeof val === 'string') return parseInt(val) * 1000;
+    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
+    if (val?.seconds) return val.seconds * 1000;
+    return 0;
+  };
+
+  const filteredMessages = allMessages
+    .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
+    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   return (
-    <div className="max-w-6xl mx-auto mt-8 p-4">
-      <h1 className="text-2xl font-bold mb-6">💬 Chat WhatsApp</h1>
-      <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-1 border rounded-xl p-2 bg-white h-[500px] overflow-y-auto">
-          {conversations.map(([waId, msgs]) => (
-            <div
-              key={waId}
-              className={`cursor-pointer p-3 rounded-lg hover:bg-gray-100 ${
-                selectedWaId === waId ? "bg-gray-200" : ""
+    <div className="flex flex-col md:flex-row h-screen">
+      {/* Sidebar contatti */}
+      <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-4">
+        <h2 className="text-lg font-semibold mb-4">📱 Conversazioni</h2>
+        <ul className="space-y-2">
+          {phoneList.map((phone) => (
+            <li
+              key={phone}
+              onClick={() => setSelectedPhone(phone)}
+              className={`cursor-pointer px-3 py-2 rounded-lg hover:bg-gray-100 transition ${
+                selectedPhone === phone ? 'bg-green-100 font-bold' : ''
               }`}
-              onClick={() => setSelectedWaId(waId)}
             >
-              <div className="font-semibold">{waId}</div>
-            </div>
+              {phone}
+            </li>
           ))}
+        </ul>
+      </div>
+
+      {/* Chat */}
+      <div className="flex flex-col flex-1 bg-[#e5ddd5]">
+        <div className="p-4 text-center text-lg font-semibold bg-[#f0f0f0] shadow-sm">
+          {selectedPhone ? `Chat con ${selectedPhone}` : 'Seleziona una chat'}
         </div>
 
-        <div className="col-span-2 border rounded-xl bg-white h-[500px] flex flex-col">
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`max-w-[80%] px-4 py-2 rounded-xl text-sm shadow-sm ${
-                  msg.from === "operator"
-                    ? "bg-green-100 ml-auto text-right"
-                    : "bg-gray-100 mr-auto"
-                }`}
-              >
-                <div>{msg.text}</div>
-                <div className="text-xs text-gray-400 mt-1">
-                  {format(new Date(Number(msg.timestamp) * 1000), "dd/MM/yyyy HH:mm")}
+        <div className="flex-1 overflow-y-auto px-4 py-3">
+          <div className="flex flex-col gap-2">
+            {filteredMessages.map((msg, idx) => {
+              const isOperator = msg.from === 'operator';
+              const time = new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+
+              return (
+                <div key={msg.id || idx} className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}>
+                  <div
+                    className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap leading-snug shadow-md break-words ${
+                      isOperator
+                        ? 'bg-[#dcf8c6] text-gray-900'
+                        : 'bg-white text-gray-900'
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                  <div className="text-[10px] text-gray-500 mt-1">{time}</div>
                 </div>
-              </div>
-            ))}
-            {messages.length === 0 && <p className="text-gray-500">Nessun messaggio nella chat.</p>}
+              );
+            })}
+            <div ref={messagesEndRef} />
           </div>
-          <div className="p-3 border-t flex gap-2">
-            <input
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              className="flex-1 border px-4 py-2 rounded-lg"
-              placeholder="Scrivi un messaggio..."
-            />
-            <button
-              onClick={handleSend}
-              className="bg-black text-white px-4 py-2 rounded-lg font-semibold hover:bg-gray-800"
-            >
-              Invia
-            </button>
-          </div>
+        </div>
+
+        {/* Input */}
+        <div className="flex flex-col md:flex-row items-center gap-2 p-4 bg-[#f0f0f0] border-t">
+          <Input
+            placeholder="Numero telefono"
+            value={selectedPhone}
+            onChange={(e) => setSelectedPhone(e.target.value)}
+            className="w-full md:w-1/3"
+          />
+          <Input
+            placeholder="Scrivi un messaggio..."
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+            className="w-full flex-1 rounded-full px-4 py-2 text-sm border border-gray-300 bg-white"
+          />
+          <Button
+            onClick={sendMessage}
+            disabled={!messageText || !selectedPhone || !userData}
+            className="rounded-full px-4 py-2 bg-green-500 text-white hover:bg-green-600 transition disabled:bg-gray-400"
+          >
+            <Send size={16} />
+          </Button>
         </div>
       </div>
     </div>
   );
 }
-
-
 
