@@ -21,59 +21,52 @@ export default function DashboardPage() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
 
+  // LISTA CONVERSAZIONI (numeri unici da from/to)
   useEffect(() => {
     if (!user) return;
 
-    const q = query(
-      collection(db, "messages"),
-      where("user_uid", "==", user.uid)
-    );
+    const q = query(collection(db, "messages"), where("user_uid", "==", user.uid));
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const convos = new Map();
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        const wa_id = data.from === "operator" ? data.to : data.from;
-        if (!convos.has(wa_id)) convos.set(wa_id, []);
-        convos.get(wa_id).push({ id: doc.id, ...data });
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const numbersSet = new Set();
+      snapshot.forEach((doc) => {
+        const d = doc.data();
+        if (d.from && d.from !== "operator") numbersSet.add(d.from);
+        if (d.to && d.to !== "operator") numbersSet.add(d.to);
       });
 
-      const entries = Array.from(convos.entries());
-      entries.sort((a, b) => {
-        const aTime = Math.max(...a[1].map((m) => m.timestamp));
-        const bTime = Math.max(...b[1].map((m) => m.timestamp));
-        return bTime - aTime;
-      });
-
-      setConversations(entries);
-      if (!selectedWaId && entries.length > 0) setSelectedWaId(entries[0][0]);
+      const numbers = Array.from(numbersSet);
+      setConversations(numbers);
+      if (!selectedWaId && numbers.length > 0) setSelectedWaId(numbers[0]);
     });
 
     return () => unsubscribe();
   }, [user]);
 
+  // CARICAMENTO MESSAGGI per il numero selezionato
   useEffect(() => {
     if (!selectedWaId || !user) return;
 
     const q = query(
       collection(db, "messages"),
       where("user_uid", "==", user.uid),
-      where("from", "in", [selectedWaId, "operator"]),
-      where("to", "in", [selectedWaId, "operator"]),
       orderBy("timestamp", "asc")
     );
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const msgs = [];
-      querySnapshot.forEach((doc) => {
-        msgs.push({ id: doc.id, ...doc.data() });
-      });
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((msg) =>
+          msg.from === selectedWaId || msg.to === selectedWaId
+        );
+
       setMessages(msgs);
     });
 
     return () => unsubscribe();
   }, [selectedWaId, user]);
 
+  // INVIO MESSAGGIO VIA API WHATSAPP + FIREBASE
   const handleSend = async () => {
     if (!newMessage.trim() || !user || !selectedWaId) return;
 
@@ -103,7 +96,6 @@ export default function DashboardPage() {
         return;
       }
 
-      // Salva anche su Firestore
       await addDoc(collection(db, "messages"), {
         user_uid: user.uid,
         from: "operator",
@@ -131,7 +123,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-3 gap-4">
         {/* Lista numeri */}
         <div className="col-span-1 border rounded-xl p-2 bg-white h-[500px] overflow-y-auto">
-          {conversations.map(([waId]) => (
+          {conversations.map((waId) => (
             <div
               key={waId}
               className={`cursor-pointer p-3 rounded-lg hover:bg-gray-100 ${
