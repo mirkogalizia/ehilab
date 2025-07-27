@@ -5,7 +5,6 @@ import { db } from "@/firebase";
 import {
   collection,
   query,
-  where,
   onSnapshot,
   orderBy,
   addDoc,
@@ -21,11 +20,9 @@ export default function DashboardPage() {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
 
-  // LISTA CONVERSAZIONI (numeri unici da from/to)
+  // CARICA CONVERSAZIONI — numeri da from/to
   useEffect(() => {
-    if (!user) return;
-
-    const q = query(collection(db, "messages"), where("user_uid", "==", user.uid));
+    const q = query(collection(db, "messages"));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const numbersSet = new Set();
@@ -41,17 +38,13 @@ export default function DashboardPage() {
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [selectedWaId]);
 
-  // CARICAMENTO MESSAGGI per il numero selezionato
+  // CARICA MESSAGGI di quella conversazione
   useEffect(() => {
-    if (!selectedWaId || !user) return;
+    if (!selectedWaId) return;
 
-    const q = query(
-      collection(db, "messages"),
-      where("user_uid", "==", user.uid),
-      orderBy("timestamp", "asc")
-    );
+    const q = query(collection(db, "messages"), orderBy("timestamp", "asc"));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const msgs = snapshot.docs
@@ -64,9 +57,9 @@ export default function DashboardPage() {
     });
 
     return () => unsubscribe();
-  }, [selectedWaId, user]);
+  }, [selectedWaId]);
 
-  // INVIO MESSAGGIO VIA API WHATSAPP + FIREBASE
+  // INVIA messaggio WhatsApp + salva su Firestore
   const handleSend = async () => {
     if (!newMessage.trim() || !user || !selectedWaId) return;
 
@@ -97,7 +90,6 @@ export default function DashboardPage() {
       }
 
       await addDoc(collection(db, "messages"), {
-        user_uid: user.uid,
         from: "operator",
         to: selectedWaId,
         message_id: result.messages?.[0]?.id || "manual-" + Date.now(),
@@ -136,7 +128,7 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* Area chat */}
+        {/* Chat */}
         <div className="col-span-2 border rounded-xl bg-white h-[500px] flex flex-col">
           <div className="flex-1 overflow-y-auto p-4 space-y-2">
             {messages.map((msg) => (
