@@ -1,15 +1,15 @@
-// /app/api/delete-template/route.js
 import { db } from '@/lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
 export async function POST(req) {
-  const { name, email } = await req.json();
+  const { email, template_id } = await req.json();
 
-  if (!name || !email) {
+  if (!email || !template_id) {
     return new Response(JSON.stringify({ error: 'Campi mancanti' }), { status: 400 });
   }
 
   try {
+    // Trova l'utente tramite la mail
     const snapshot = await getDocs(collection(db, 'users'));
     const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const matchedUser = allUsers.find(u => u.email === email);
@@ -19,9 +19,9 @@ export async function POST(req) {
     }
 
     const wabaId = matchedUser.waba_id;
-    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
+    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN; // Puoi anche usare hardcoded per test
 
-    const url = `https://graph.facebook.com/v17.0/${wabaId}/message_templates/${name}`;
+    const url = `https://graph.facebook.com/v17.0/${wabaId}/message_templates/${template_id}`;
     const res = await fetch(url, {
       method: 'DELETE',
       headers: {
@@ -39,3 +39,4 @@ export async function POST(req) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
+
