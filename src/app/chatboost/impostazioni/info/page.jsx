@@ -1,27 +1,36 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { auth, db } from "@/firebase.js";
-import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/firebase.js";
+import { collection, getDocs } from "firebase/firestore";
+import { useAuth } from "@/lib/useAuth";
 
 export default function InfoPage() {
+  const { user } = useAuth();
   const [userData, setUserData] = useState(null);
 
   useEffect(() => {
+    if (!user || !user.email) return;
+
     const fetchUserData = async () => {
-      const user = auth.currentUser;
-      if (!user) return;
-      const docRef = doc(db, "users", user.uid);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setUserData(docSnap.data());
+      try {
+        const snapshot = await getDocs(collection(db, "users"));
+        const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+        const match = allUsers.find((u) => u.email === user.email);
+        if (match) {
+          setUserData(match);
+        } else {
+          console.warn("⚠️ Nessun utente trovato con email:", user.email);
+        }
+      } catch (error) {
+        console.error("❌ Errore nel recupero dati utente:", error);
       }
     };
 
     fetchUserData();
-  }, []);
+  }, [user]);
 
-  if (!userData) {
+  if (user === undefined || userData === null) {
     return <div className="p-6 text-gray-500">⏳ Caricamento dati utente...</div>;
   }
 
