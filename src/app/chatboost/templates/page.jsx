@@ -13,11 +13,9 @@ export default function TemplatePage() {
   const [language, setLanguage] = useState('it');
   const [bodyText, setBodyText] = useState('');
   const [response, setResponse] = useState(null);
-  const [templates, setTemplates] = useState([]);
   const [userData, setUserData] = useState(null);
   const { user } = useAuth();
 
-  // Carica utente da Firestore
   useEffect(() => {
     const fetchUserData = async () => {
       if (!user?.email) return;
@@ -28,27 +26,13 @@ export default function TemplatePage() {
         setUserData(matched);
       }
     };
+
     fetchUserData();
   }, [user]);
 
-  // Carica lista template
-  const fetchTemplates = async () => {
-    if (!userData?.email) return;
-    const res = await fetch(`/api/list-templates?uid=${userData.email}`);
-    const data = await res.json();
-    setTemplates(data.data || []);
-  };
-
-  useEffect(() => {
-    if (userData?.email) {
-      fetchTemplates();
-    }
-  }, [userData]);
-
-  // Invio nuovo template
   const handleSubmit = async () => {
-    if (!userData || !userData.waba_id || !userData.phone_number_id) {
-      alert('Dati utente mancanti');
+    if (!userData || !userData.waba_id) {
+      alert('Dati mancanti per invio template');
       return;
     }
 
@@ -60,13 +44,12 @@ export default function TemplatePage() {
         category,
         language,
         bodyText,
-        email: userData.email
+        waba_id: userData.waba_id,
       })
     });
 
     const data = await res.json();
     setResponse(data);
-    await fetchTemplates();
   };
 
   if (!userData) {
@@ -113,39 +96,6 @@ export default function TemplatePage() {
         <pre className="bg-gray-100 p-4 rounded text-sm">
           {JSON.stringify(response, null, 2)}
         </pre>
-      )}
-
-      {/* Lista Template */}
-      {templates.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-xl font-semibold mb-2">📋 Template esistenti</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm border border-gray-200">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="px-4 py-2 text-left">Nome</th>
-                  <th className="px-4 py-2 text-left">Categoria</th>
-                  <th className="px-4 py-2 text-left">Lingua</th>
-                  <th className="px-4 py-2 text-left">Stato</th>
-                </tr>
-              </thead>
-              <tbody>
-                {templates.map((tpl) => (
-                  <tr key={tpl.name} className="border-t">
-                    <td className="px-4 py-2">{tpl.name}</td>
-                    <td className="px-4 py-2">{tpl.category}</td>
-                    <td className="px-4 py-2">{tpl.language}</td>
-                    <td className="px-4 py-2 font-semibold">
-                      {tpl.status === 'APPROVED' && <span className="text-green-600">✅ Approvato</span>}
-                      {tpl.status === 'REJECTED' && <span className="text-red-600">❌ Rifiutato</span>}
-                      {tpl.status === 'IN_REVIEW' && <span className="text-yellow-600">⏳ In revisione</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
       )}
     </div>
   );
