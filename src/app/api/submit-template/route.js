@@ -22,7 +22,7 @@ export async function POST(req) {
       return new Response(JSON.stringify({ error: 'waba_id mancante nel documento utente' }), { status: 400 });
     }
 
-    const token = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
+    const token = process.env.WHATSAPP_ACCESS_TOKEN;
 
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.waba_id}/message_templates`, {
       method: 'POST',
