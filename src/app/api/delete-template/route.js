@@ -9,7 +9,6 @@ export async function POST(req) {
   }
 
   try {
-    // Trova l'utente tramite la mail
     const snapshot = await getDocs(collection(db, 'users'));
     const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const matchedUser = allUsers.find(u => u.email === email);
@@ -19,10 +18,9 @@ export async function POST(req) {
     }
 
     const wabaId = matchedUser.waba_id;
-    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN; // Puoi anche usare hardcoded per test
+    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
 
-    const url = `https://graph.facebook.com/v17.0/${wabaId}/message_templates/${template_id}`;
-    const res = await fetch(url, {
+    const res = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates/${template_id}`, {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -30,11 +28,12 @@ export async function POST(req) {
     });
 
     const data = await res.json();
+
     if (!res.ok) {
       return new Response(JSON.stringify({ error: data }), { status: res.status });
     }
 
-    return new Response(JSON.stringify({ success: true }), { status: 200 });
+    return new Response(JSON.stringify({ success: true, result: data }), { status: 200 });
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
