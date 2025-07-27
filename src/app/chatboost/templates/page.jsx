@@ -50,17 +50,24 @@ export default function TemplatePage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+
     const data = await res.json();
     setResponse(data);
-    loadTemplates(); // ricarica lista template
+    loadTemplates(); // ricarica lista template dopo invio
   };
 
   const loadTemplates = async () => {
     if (!userData?.email) return;
-    const res = await fetch(`/api/list-templates?email=${userData.email}`);
+
+    const res = await fetch('/api/list-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: userData.email }),
+    });
+
     const data = await res.json();
-    if (data?.data) {
-      setTemplateList(data.data);
+    if (Array.isArray(data)) {
+      setTemplateList(data);
     }
   };
 
@@ -85,6 +92,7 @@ export default function TemplatePage() {
       <h1 className="text-2xl font-bold">📄 Crea nuovo Template</h1>
 
       <Input placeholder="Nome template" value={name} onChange={(e) => setName(e.target.value)} />
+
       <select
         className="border px-3 py-2 rounded w-full"
         value={category}
