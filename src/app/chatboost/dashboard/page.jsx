@@ -24,9 +24,12 @@ export default function DashboardPage() {
 
   // Raggruppa tutte le chat per numero
   useEffect(() => {
-    if (!user) return;
+    if (!user || !userData) return;
 
-    const q = query(collection(db, "messages"), where("user_uid", "==", user.uid));
+    const q = query(
+      collection(db, "messages"),
+      where("from", "in", [userData.numeroWhatsapp, "operator"])
+    );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const convos = new Map();
@@ -47,7 +50,7 @@ export default function DashboardPage() {
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, userData]);
 
   // Mostra messaggi della chat selezionata
   useEffect(() => {
@@ -55,22 +58,26 @@ export default function DashboardPage() {
 
     const q = query(
       collection(db, "messages"),
-      where("user_uid", "==", user.uid),
       where("from", "in", [selectedWaId, "operator"]),
-      where("to", "in", [selectedWaId, "operator"]),
       orderBy("timestamp", "asc")
     );
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const msgs = [];
       querySnapshot.forEach((doc) => {
-        msgs.push({ id: doc.id, ...doc.data() });
+        const data = doc.data();
+        const isRelevant =
+          (data.from === selectedWaId && data.to === userData.numeroWhatsapp) ||
+          (data.from === "operator" && data.to === selectedWaId);
+        if (isRelevant) {
+          msgs.push({ id: doc.id, ...data });
+        }
       });
       setMessages(msgs);
     });
 
     return () => unsubscribe();
-  }, [selectedWaId, user]);
+  }, [selectedWaId, user, userData]);
 
   const handleSend = async () => {
     if (!newMessage.trim() || !user || !userData || !selectedWaId) return;
