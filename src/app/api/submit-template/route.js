@@ -5,13 +5,23 @@ import { doc, getDoc } from 'firebase/firestore';
 export async function POST(req) {
   const { name, category, language, bodyText, uid } = await req.json();
 
-  if (!name || !category || !language || !bodyText) {
+  if (!name || !category || !language || !bodyText || !uid) {
     return new Response(JSON.stringify({ error: 'Campi mancanti' }), { status: 400 });
   }
 
   try {
     const userSnap = await getDoc(doc(db, 'users', uid));
+
+    if (!userSnap.exists()) {
+      return new Response(JSON.stringify({ error: 'Utente non trovato' }), { status: 404 });
+    }
+
     const userData = userSnap.data();
+
+    if (!userData.waba_id) {
+      return new Response(JSON.stringify({ error: 'waba_id mancante nel documento utente' }), { status: 400 });
+    }
+
     const wabaId = userData.waba_id;
     const token = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
 
@@ -42,5 +52,4 @@ export async function POST(req) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
-
 
