@@ -1,8 +1,8 @@
+// src/app/chatboost/dashboard/page.jsx
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
 import { db } from '@/lib/firebase';
-import { useAuth } from '@/lib/useAuth';
 import {
   collection,
   query,
@@ -10,42 +10,35 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
-  doc,
-  getDoc
+  getDoc,
+  doc
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Send } from 'lucide-react';
+import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
-  const { user } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
   const [phoneList, setPhoneList] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
-  const [waData, setWaData] = useState(null);
+  const [userData, setUserData] = useState(null);
   const messagesEndRef = useRef(null);
-  const phoneInputRef = useRef(null);
+  const { user } = useAuth();
 
   useEffect(() => {
-    if (!user?.uid) return;
-
-    const fetchWaData = async () => {
+    if (!user) return;
+    const fetchUserData = async () => {
       const docRef = doc(db, 'users', user.uid);
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setWaData({
-          phone_number_id: data.phone_number_id,
-          numeroWhatsapp: data.numeroWhatsapp
-        });
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        setUserData(snap.data());
       } else {
         console.warn('⚠️ Documento utente non trovato per UID:', user.uid);
       }
     };
-
-    fetchWaData();
+    fetchUserData();
   }, [user]);
 
   useEffect(() => {
@@ -69,8 +62,7 @@ export default function ChatPage() {
   }, [allMessages, selectedPhone]);
 
   const sendMessage = async () => {
-    if (!selectedPhone || !messageText || !waData) return;
-
+    if (!selectedPhone || !messageText || !userData) return;
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
@@ -78,7 +70,7 @@ export default function ChatPage() {
       text: { body: messageText },
     };
 
-    const res = await fetch(`https://graph.facebook.com/v17.0/${waData.phone_number_id}/messages`, {
+    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
@@ -88,6 +80,7 @@ export default function ChatPage() {
     });
 
     const data = await res.json();
+
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
         text: messageText,
@@ -101,7 +94,7 @@ export default function ChatPage() {
       });
       setMessageText('');
     } else {
-      console.warn('Errore invio messaggio:', data);
+      console.warn('❌ Errore invio messaggio:', data);
     }
   };
 
@@ -125,10 +118,7 @@ export default function ChatPage() {
           {phoneList.map((phone) => (
             <li
               key={phone}
-              onClick={() => {
-                setSelectedPhone(phone);
-                if (phoneInputRef.current) phoneInputRef.current.value = phone;
-              }}
+              onClick={() => setSelectedPhone(phone)}
               className={`cursor-pointer px-3 py-2 rounded-lg hover:bg-gray-100 transition ${
                 selectedPhone === phone ? 'bg-green-100 font-bold' : ''
               }`}
@@ -157,9 +147,7 @@ export default function ChatPage() {
                 <div key={msg.id || idx} className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}>
                   <div
                     className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap leading-snug shadow-md break-words ${
-                      isOperator
-                        ? 'bg-[#dcf8c6] text-gray-900'
-                        : 'bg-white text-gray-900'
+                      isOperator ? 'bg-[#dcf8c6] text-gray-900' : 'bg-white text-gray-900'
                     }`}
                   >
                     {msg.text}
@@ -174,7 +162,6 @@ export default function ChatPage() {
 
         <div className="flex flex-col md:flex-row items-center gap-2 p-4 bg-[#f0f0f0] border-t">
           <Input
-            ref={phoneInputRef}
             placeholder="Numero telefono"
             value={selectedPhone}
             onChange={(e) => setSelectedPhone(e.target.value)}
@@ -190,7 +177,7 @@ export default function ChatPage() {
           <Button
             onClick={sendMessage}
             className="rounded-full px-4 py-2 bg-green-500 text-white hover:bg-green-600 transition"
-            disabled={!waData || !messageText || !selectedPhone}
+            disabled={!userData || !selectedPhone || !messageText}
           >
             <Send size={16} />
           </Button>
