@@ -3,19 +3,9 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
-import {
-  MessageSquare,
-  FileText,
-  Settings,
-  LogOut,
-  Users
-} from 'lucide-react';
+import { MessageSquare, FileText, Settings, LogOut, Users } from 'lucide-react';
 
-interface ChatBoostLayoutProps {
-  children: React.ReactNode;
-}
-
-export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
+export default function ChatBoostLayout({ children }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -27,7 +17,7 @@ export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
     }
   }, [loading, user, router]);
 
-  // Loader durante verifica login
+  // Loader
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">
@@ -35,8 +25,6 @@ export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
       </div>
     );
   }
-
-  // Se non loggato, non mostrare layout
   if (!user) {
     return null;
   }
@@ -48,7 +36,7 @@ export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
     { label: 'Impostaz.', icon: Settings,      path: '/chatboost/impostazioni/info' },
   ];
 
-  // Nascondi bottom nav mobile quando sei in una chat full-screen
+  // Nasconde bottom-nav mobile in chat full-screen
   const hideBottomNav = pathname.startsWith('/chatboost/dashboard/chat/');
 
   return (
@@ -61,7 +49,6 @@ export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
         >
           EHI!
         </div>
-
         <nav className="flex flex-col gap-10 items-center flex-1">
           {navItems.map(({ label, icon: Icon, path }) => {
             const active = pathname.startsWith(path);
@@ -79,7 +66,6 @@ export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
             );
           })}
         </nav>
-
         <button
           onClick={() => {
             localStorage.removeItem('firebaseAuthToken');
@@ -92,7 +78,7 @@ export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
         </button>
       </aside>
 
-      {/* Contenuto principale */}
+      {/* Main content */}
       <main className="flex-1 overflow-hidden bg-[#f7f7f7]">
         {children}
       </main>
@@ -115,7 +101,6 @@ export default function ChatBoostLayout({ children }: ChatBoostLayoutProps) {
               </button>
             );
           })}
-
           <button
             onClick={() => {
               localStorage.removeItem('firebaseAuthToken');
