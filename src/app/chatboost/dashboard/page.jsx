@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send } from 'lucide-react';
+import { Send, Plus } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
@@ -25,6 +25,8 @@ export default function ChatPage() {
   const [userData, setUserData] = useState(null);
   const [contactNames, setContactNames] = useState({});
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [newPhone, setNewPhone] = useState('');
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
@@ -89,7 +91,6 @@ export default function ChatPage() {
           body: JSON.stringify({ email: user.email }),
         });
         const data = await res.json();
-        console.log("📑 Template caricati:", data);
         if (Array.isArray(data)) {
           setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
         } else {
@@ -138,8 +139,6 @@ export default function ChatPage() {
         message_id: data.messages[0].id,
       });
       setMessageText('');
-    } else {
-      console.warn('❌ Errore invio messaggio:', data);
     }
   };
 
@@ -175,7 +174,7 @@ export default function ChatPage() {
     const data = await res.json();
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
-        text: bodyText, // contenuto reale
+        text: bodyText,
         templateName,
         to: selectedPhone,
         from: 'operator',
@@ -186,8 +185,6 @@ export default function ChatPage() {
         message_id: data.messages[0].id,
       });
       setShowTemplates(false);
-    } else {
-      console.warn('❌ Errore invio template:', data);
     }
   };
 
@@ -208,7 +205,16 @@ export default function ChatPage() {
     <div className="flex flex-col md:flex-row h-screen bg-gray-50 font-[Montserrat]">
       {/* Lista contatti */}
       <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
-        <h2 className="text-xl font-semibold text-gray-800 mb-6">Conversazioni</h2>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold text-gray-800">Conversazioni</h2>
+          <button
+            onClick={() => setShowNewChat(true)}
+            className="flex items-center gap-1 text-sm bg-black text-white px-3 py-2 rounded-full hover:bg-gray-800"
+          >
+            <Plus size={16} /> Nuova
+          </button>
+        </div>
+
         <ul className="space-y-3">
           {phoneList.map((phone) => (
             <li
@@ -224,6 +230,43 @@ export default function ChatPage() {
             </li>
           ))}
         </ul>
+
+        {/* Modal nuova chat */}
+        {showNewChat && (
+          <div className="mt-4 p-4 bg-gray-100 rounded-xl shadow-md">
+            <h3 className="font-medium mb-2">📞 Inserisci numero</h3>
+            <Input
+              placeholder="Es: 3931234567"
+              value={newPhone}
+              onChange={(e) => setNewPhone(e.target.value)}
+              className="mb-3"
+            />
+            <div className="flex gap-2">
+              <Button
+                onClick={() => {
+                  if (newPhone) {
+                    setSelectedPhone(newPhone);
+                    if (!phoneList.includes(newPhone)) {
+                      setPhoneList((prev) => [newPhone, ...prev]);
+                    }
+                    setShowNewChat(false);
+                    setNewPhone('');
+                  }
+                }}
+                className="bg-black text-white hover:bg-gray-800 flex-1"
+              >
+                Avvia
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowNewChat(false)}
+                className="flex-1"
+              >
+                Annulla
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Conversazione */}
