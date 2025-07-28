@@ -190,11 +190,12 @@ export default function ChatPage() {
     }
   };
 
-  // Upload generico
+  // Upload generico con fix messaging_product
   const uploadMedia = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('type', file.type);
+    formData.append('messaging_product', 'whatsapp'); // FIX aggiunto
 
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
