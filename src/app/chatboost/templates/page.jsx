@@ -27,7 +27,6 @@ export default function TemplatePage() {
         setUserData(matched);
       }
     };
-
     fetchUserData();
   }, [user]);
 
@@ -53,7 +52,7 @@ export default function TemplatePage() {
 
     const data = await res.json();
     setResponse(data);
-    loadTemplates(); // ricarica lista template dopo invio
+    loadTemplates();
   };
 
   const loadTemplates = async () => {
@@ -81,10 +80,11 @@ export default function TemplatePage() {
     });
 
     const data = await res.json();
-    if (data.success) {
-      loadTemplates(); // aggiorna lista dopo eliminazione
+    if (res.ok) {
+      alert('✅ Template eliminato con successo');
+      loadTemplates();
     } else {
-      alert('Errore eliminazione');
+      alert('❌ Errore eliminazione: ' + JSON.stringify(data));
     }
   };
 
@@ -152,6 +152,8 @@ export default function TemplatePage() {
                       <strong>{tpl.name}</strong> – {tpl.language} – {tpl.category}
                       <br />
                       <span className="text-xs text-gray-500">{tpl.components?.[0]?.text}</span>
+                      <br />
+                      <span className="text-[10px] text-gray-400">ID: {tpl.id}</span>
                     </div>
                     <button
                       className="text-red-500 hover:text-red-700 text-sm ml-4"
@@ -169,3 +171,4 @@ export default function TemplatePage() {
     </div>
   );
 }
+
