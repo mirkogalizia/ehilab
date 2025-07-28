@@ -146,6 +146,10 @@ export default function ChatPage() {
   // Invio template
   const sendTemplate = async (templateName) => {
     if (!selectedPhone || !templateName || !userData) return;
+
+    const tpl = templates.find((t) => t.name === templateName);
+    const bodyText = tpl?.components?.[0]?.text || `Template inviato: ${templateName}`;
+
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
@@ -171,7 +175,8 @@ export default function ChatPage() {
     const data = await res.json();
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
-        text: `[TEMPLATE] ${templateName}`,
+        text: bodyText, // contenuto reale
+        templateName,
         to: selectedPhone,
         from: 'operator',
         timestamp: Date.now(),
@@ -252,7 +257,14 @@ export default function ChatPage() {
                         : 'bg-white text-gray-900 rounded-bl-none'
                     }`}
                   >
-                    {msg.text}
+                    {msg.type === 'template' ? (
+                      <>
+                        <span className="font-semibold">📑 </span>
+                        {msg.text}
+                      </>
+                    ) : (
+                      msg.text
+                    )}
                   </div>
                   <div className="text-[10px] text-gray-400 mt-1">{time}</div>
                 </div>
