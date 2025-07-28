@@ -10,7 +10,6 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
-  doc
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -39,8 +38,6 @@ export default function ChatPage() {
 
         if (currentUserData) {
           setUserData(currentUserData);
-        } else {
-          console.warn('⚠️ Nessun utente trovato con email:', user.email);
         }
       } catch (error) {
         console.error('❌ Errore nel recupero dati utente:', error);
@@ -128,17 +125,30 @@ export default function ChatPage() {
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   return (
-    <div className="flex flex-col md:flex-row h-screen">
+    <div className="flex h-screen bg-gray-50 font-sans">
+      {/* Sidebar */}
+      <aside className="w-20 bg-white border-r flex flex-col items-center py-6 shadow-md">
+        <div className="text-2xl font-bold text-green-600 mb-10">💬</div>
+        <nav className="flex flex-col gap-6">
+          <Button variant="ghost" size="icon">🏠</Button>
+          <Button variant="ghost" size="icon">💬</Button>
+          <Button variant="ghost" size="icon">📊</Button>
+          <Button variant="ghost" size="icon">⚙️</Button>
+        </nav>
+      </aside>
+
       {/* Lista contatti */}
-      <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-4">
-        <h2 className="text-lg font-semibold mb-4">📱 Conversazioni</h2>
-        <ul className="space-y-2">
+      <div className="w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-gray-700 mb-6">Conversazioni</h2>
+        <ul className="space-y-3">
           {phoneList.map((phone) => (
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              className={`cursor-pointer px-3 py-2 rounded-lg hover:bg-gray-100 transition ${
-                selectedPhone === phone ? 'bg-green-100 font-bold' : ''
+              className={`cursor-pointer px-4 py-3 rounded-xl shadow-sm transition ${
+                selectedPhone === phone
+                  ? 'bg-green-100 text-green-700 font-semibold'
+                  : 'hover:bg-gray-100'
               }`}
             >
               {contactNames[phone] || phone}
@@ -147,20 +157,18 @@ export default function ChatPage() {
         </ul>
       </div>
 
-      {/* Conversazione */}
-      <div className="flex flex-col flex-1 bg-[#e5ddd5]">
+      {/* Chat */}
+      <div className="flex flex-col flex-1 bg-gray-100">
         {/* Header */}
-        <div className="p-4 text-center text-lg font-semibold bg-[#f0f0f0] shadow-sm">
+        <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
           {selectedPhone
-            ? contactNames[selectedPhone] !== undefined
-              ? `Chat con ${contactNames[selectedPhone]}`
-              : 'Caricamento...'
+            ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
             : 'Seleziona una chat'}
         </div>
 
         {/* Messaggi */}
-        <div className="flex-1 overflow-y-auto px-4 py-3">
-          <div className="flex flex-col gap-2">
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="flex flex-col gap-3">
             {filteredMessages.map((msg, idx) => {
               const isOperator = msg.from === 'operator';
               const time = new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
@@ -169,20 +177,20 @@ export default function ChatPage() {
               });
 
               return (
-                <div key={msg.id || idx} className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}>
-                  {!isOperator && (
-                    <div className="text-[11px] text-gray-500 mb-1 ml-1">
-                      {contactNames[msg.from] || msg.from}
-                    </div>
-                  )}
+                <div
+                  key={msg.id || idx}
+                  className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}
+                >
                   <div
-                    className={`max-w-[75%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap leading-snug shadow-md break-words ${
-                      isOperator ? 'bg-[#dcf8c6] text-gray-900' : 'bg-white text-gray-900'
+                    className={`max-w-[70%] px-5 py-3 rounded-2xl text-sm shadow-md ${
+                      isOperator
+                        ? 'bg-green-500 text-white rounded-br-none'
+                        : 'bg-white text-gray-900 rounded-bl-none'
                     }`}
                   >
                     {msg.text}
                   </div>
-                  <div className="text-[10px] text-gray-500 mt-1">{time}</div>
+                  <div className="text-[10px] text-gray-400 mt-1">{time}</div>
                 </div>
               );
             })}
@@ -191,26 +199,20 @@ export default function ChatPage() {
         </div>
 
         {/* Input */}
-        <div className="flex flex-col md:flex-row items-center gap-2 p-4 bg-[#f0f0f0] border-t">
-          <Input
-            placeholder="Numero telefono"
-            value={selectedPhone}
-            onChange={(e) => setSelectedPhone(e.target.value)}
-            className="w-full md:w-1/3"
-          />
+        <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner">
           <Input
             placeholder="Scrivi un messaggio..."
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="w-full flex-1 rounded-full px-4 py-2 text-sm border border-gray-300 bg-white"
+            className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-green-400"
           />
           <Button
             onClick={sendMessage}
-            className="rounded-full px-4 py-2 bg-green-500 text-white hover:bg-green-600 transition"
+            className="rounded-full px-5 py-3 bg-green-500 text-white hover:bg-green-600"
             disabled={!userData || !selectedPhone || !messageText}
           >
-            <Send size={16} />
+            <Send size={18} />
           </Button>
         </div>
       </div>
