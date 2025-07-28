@@ -9,8 +9,8 @@ export default function Home() {
         <Image
           src="/logo.png"
           alt="EHI! Lab Logo"
-          width={120}
-          height={120}
+          width={400}
+          height={400}
           className="mb-7 drop-shadow-xl rounded-2xl"
           priority
         />
