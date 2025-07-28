@@ -65,7 +65,7 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  // Scroll automatico
+  // Scroll automatico in fondo
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -98,32 +98,36 @@ export default function ChatPage() {
       type: 'text',
       text: { body: messageText },
     };
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      const data = await res.json();
+      if (data.messages) {
+        await addDoc(collection(db, 'messages'), {
+          text: messageText,
+          to: selectedPhone,
+          from: 'operator',
+          timestamp: Date.now(),
+          createdAt: serverTimestamp(),
+          type: 'text',
+          user_uid: user.uid,
+          message_id: data.messages[0].id,
+        });
+        setMessageText('');
+      } else {
+        alert('Errore invio: ' + JSON.stringify(data.error));
       }
-    );
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, 'messages'), {
-        text: messageText,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: 'text',
-        user_uid: user.uid,
-        message_id: data.messages[0].id,
-      });
-      setMessageText('');
-    } else {
-      alert('Errore invio: ' + JSON.stringify(data.error));
+    } catch (err) {
+      console.error('❌ Errore invio messaggio:', err);
     }
   };
 
@@ -142,14 +146,14 @@ export default function ChatPage() {
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   return (
-    <div className="h-screen w-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
+    <div className="h-[100dvh] w-screen flex font-[Montserrat] bg-gray-50 overflow-hidden">
       {/* Lista contatti */}
       <div
         className={`${
-          selectedPhone ? 'hidden md:block md:w-1/4' : 'w-full md:w-1/4'
+          selectedPhone ? 'hidden md:block md:w-1/3' : 'w-full md:w-1/3'
         } bg-white border-r overflow-y-auto px-4 py-5`}
       >
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-800">Conversazioni</h2>
           <button
             onClick={() => setShowNewChat(true)}
@@ -176,11 +180,11 @@ export default function ChatPage() {
         </ul>
       </div>
 
-      {/* Conversazione */}
+      {/* Chat */}
       {selectedPhone && (
-        <div className="flex flex-col flex-1 bg-gray-100 pb-20 md:pb-6">
+        <div className="flex flex-col flex-1 bg-gray-100">
           {/* Header */}
-          <div className="p-4 bg-white border-b shadow-sm flex items-center gap-3">
+          <div className="p-4 bg-white border-b shadow-sm flex items-center gap-3 sticky top-0 z-10">
             <button
               onClick={() => setSelectedPhone('')}
               className="md:hidden text-gray-600 hover:text-black"
@@ -213,7 +217,24 @@ export default function ChatPage() {
                           : 'bg-white text-gray-900 rounded-bl-none mr-auto'
                       } max-w-[90%]`}
                     >
-                      {msg.text}
+                      {msg.type === 'image' && msg.mediaUrl ? (
+                        <img
+                          src={msg.mediaUrl}
+                          alt={msg.text}
+                          className="max-w-full h-auto rounded-lg shadow-md"
+                        />
+                      ) : msg.type === 'document' && msg.mediaUrl ? (
+                        <a
+                          href={msg.mediaUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 underline text-sm"
+                        >
+                          📎 {msg.text}
+                        </a>
+                      ) : (
+                        msg.text
+                      )}
                     </div>
                     <div className="text-[11px] text-gray-400 mt-1">{time}</div>
                   </div>
@@ -224,7 +245,7 @@ export default function ChatPage() {
           </div>
 
           {/* Input */}
-          <div className="flex items-center gap-3 p-3 bg-white border-t shadow-inner">
+          <div className="flex items-center gap-3 p-3 bg-white border-t shadow-inner sticky bottom-0">
             <Input
               placeholder="Scrivi un messaggio..."
               value={messageText}
