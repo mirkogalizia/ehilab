@@ -393,16 +393,17 @@ export default function ChatPage() {
                         : 'bg-white text-gray-900 rounded-bl-none'
                     }`}
                   >
-                    {msg.type === 'image' ? (
+                    {msg.type === 'image' && msg.mediaId ? (
                       <img
                         src={`https://graph.facebook.com/v17.0/${msg.mediaId}`}
                         alt="Immagine"
                         className="max-w-[200px] rounded-lg shadow-md"
                       />
-                    ) : msg.type === 'document' ? (
+                    ) : msg.type === 'document' && msg.mediaId ? (
                       <a
                         href={`https://graph.facebook.com/v17.0/${msg.mediaId}`}
                         target="_blank"
+                        rel="noopener noreferrer"
                         className="flex items-center gap-2 text-blue-600 underline text-sm"
                       >
                         📎 {msg.text}
