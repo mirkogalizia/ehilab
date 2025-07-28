@@ -29,7 +29,7 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
-  // Recupera dati utente da Firestore (dinamico per ogni login)
+  // Recupera dati utente da Firestore
   useEffect(() => {
     if (!user) return;
     const fetchUserData = async () => {
@@ -38,8 +38,6 @@ export default function ChatPage() {
         const snap = await getDoc(userRef);
         if (snap.exists()) {
           setUserData(snap.data());
-        } else {
-          console.warn('⚠️ Nessun documento utente trovato per:', user.uid);
         }
       } catch (error) {
         console.error('❌ Errore recupero dati utente:', error);
@@ -48,27 +46,33 @@ export default function ChatPage() {
     fetchUserData();
   }, [user]);
 
-  // Recupera templates APPROVED
+  // Recupera templates approvati tramite API interna
   useEffect(() => {
-    if (!userData?.waba_id) return;
+    if (!user?.email) return;
+
     const fetchTemplates = async () => {
       try {
-        const res = await fetch(
-          `https://graph.facebook.com/v17.0/${userData.waba_id}/message_templates?status=APPROVED`,
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN}`,
-            },
-          }
-        );
+        const res = await fetch('/api/list-template', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: user.email }),
+        });
+
         const data = await res.json();
-        if (data.data) setTemplates(data.data);
+
+        if (Array.isArray(data) && data.length > 0) {
+          setTemplates(data);
+        } else {
+          setTemplates([]);
+          console.warn('⚠️ Nessun template trovato per questo utente');
+        }
       } catch (err) {
-        console.error('Errore caricamento template:', err);
+        console.error('❌ Errore caricamento template:', err);
       }
     };
+
     fetchTemplates();
-  }, [userData]);
+  }, [user]);
 
   // Recupera messaggi realtime
   useEffect(() => {
@@ -93,7 +97,7 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  // Funzione comune di invio
+  // Funzione comune invio messaggio/template
   const sendToWhatsApp = async (payload, text) => {
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
@@ -124,7 +128,7 @@ export default function ChatPage() {
     }
   };
 
-  // Invio messaggio testo
+  // Invio testo
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -137,7 +141,7 @@ export default function ChatPage() {
     setMessageText('');
   };
 
-  // Invio template selezionato
+  // Invio template
   const sendTemplate = async (templateName) => {
     if (!selectedPhone || !templateName || !userData) return;
     const payload = {
@@ -152,7 +156,7 @@ export default function ChatPage() {
     await sendToWhatsApp(payload, `[TEMPLATE] ${templateName}`);
   };
 
-  // Parse timestamp per messaggi
+  // Gestione timestamp messaggi
   const parseTime = (val) => {
     if (!val) return 0;
     if (typeof val === 'string') return parseInt(val) * 1000;
@@ -205,7 +209,6 @@ export default function ChatPage() {
                 hour: '2-digit',
                 minute: '2-digit',
               });
-
               return (
                 <div
                   key={msg.id || idx}
