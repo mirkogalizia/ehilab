@@ -10,6 +10,8 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
+  doc,
+  getDoc,
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -21,29 +23,54 @@ export default function ChatPage() {
   const [phoneList, setPhoneList] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
+  const [templates, setTemplates] = useState([]);
   const [userData, setUserData] = useState(null);
   const [contactNames, setContactNames] = useState({});
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
+  // Recupera dati utente da Firestore (dinamico per ogni login)
   useEffect(() => {
     if (!user) return;
-
-    const fetchUserDataByEmail = async () => {
+    const fetchUserData = async () => {
       try {
-        const usersRef = collection(db, 'users');
-        const snapshot = await getDocs(usersRef);
-        const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        const currentUserData = allUsers.find((u) => u.email === user.email);
-        if (currentUserData) setUserData(currentUserData);
+        const userRef = doc(db, 'users', user.uid);
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+          setUserData(snap.data());
+        } else {
+          console.warn('⚠️ Nessun documento utente trovato per:', user.uid);
+        }
       } catch (error) {
-        console.error('❌ Errore nel recupero dati utente:', error);
+        console.error('❌ Errore recupero dati utente:', error);
       }
     };
-
-    fetchUserDataByEmail();
+    fetchUserData();
   }, [user]);
 
+  // Recupera templates APPROVED
+  useEffect(() => {
+    if (!userData?.waba_id) return;
+    const fetchTemplates = async () => {
+      try {
+        const res = await fetch(
+          `https://graph.facebook.com/v17.0/${userData.waba_id}/message_templates?status=APPROVED`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN}`,
+            },
+          }
+        );
+        const data = await res.json();
+        if (data.data) setTemplates(data.data);
+      } catch (err) {
+        console.error('Errore caricamento template:', err);
+      }
+    };
+    fetchTemplates();
+  }, [userData]);
+
+  // Recupera messaggi realtime
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -66,12 +93,38 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [allMessages, selectedPhone]);
+  // Funzione comune di invio
+  const sendToWhatsApp = async (payload, text) => {
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+    const data = await res.json();
 
+    if (data.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text,
+        to: payload.to,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: payload.type,
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
+      });
+    } else {
+      console.error('❌ Errore invio messaggio:', data);
+    }
+  };
+
+  // Invio messaggio testo
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -80,35 +133,26 @@ export default function ChatPage() {
       type: 'text',
       text: { body: messageText },
     };
-
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json();
-
-    if (data.messages) {
-      await addDoc(collection(db, 'messages'), {
-        text: messageText,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: 'text',
-        user_uid: user.uid,
-        message_id: data.messages[0].id,
-      });
-      setMessageText('');
-    } else {
-      console.warn('❌ Errore invio messaggio:', data);
-    }
+    await sendToWhatsApp(payload, messageText);
+    setMessageText('');
   };
 
+  // Invio template selezionato
+  const sendTemplate = async (templateName) => {
+    if (!selectedPhone || !templateName || !userData) return;
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'it' },
+      },
+    };
+    await sendToWhatsApp(payload, `[TEMPLATE] ${templateName}`);
+  };
+
+  // Parse timestamp per messaggi
   const parseTime = (val) => {
     if (!val) return 0;
     if (typeof val === 'string') return parseInt(val) * 1000;
@@ -122,7 +166,7 @@ export default function ChatPage() {
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-gray-50">
+    <div className="flex flex-col md:flex-row h-screen bg-gray-50 font-[Montserrat]">
       {/* Lista contatti */}
       <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
         <h2 className="text-xl font-semibold text-gray-700 mb-6">Conversazioni</h2>
@@ -133,7 +177,7 @@ export default function ChatPage() {
               onClick={() => setSelectedPhone(phone)}
               className={`cursor-pointer px-4 py-3 rounded-xl shadow-sm transition ${
                 selectedPhone === phone
-                  ? 'bg-green-100 text-green-700 font-semibold'
+                  ? 'bg-gray-200 text-gray-900 font-semibold'
                   : 'hover:bg-gray-100'
               }`}
             >
@@ -170,7 +214,7 @@ export default function ChatPage() {
                   <div
                     className={`max-w-[70%] px-5 py-3 rounded-2xl text-sm shadow-md ${
                       isOperator
-                        ? 'bg-green-500 text-white rounded-br-none'
+                        ? 'bg-black text-white rounded-br-none'
                         : 'bg-white text-gray-900 rounded-bl-none'
                     }`}
                   >
@@ -184,18 +228,46 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Input */}
+        {/* Input + Icona Template */}
         <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner">
           <Input
             placeholder="Scrivi un messaggio..."
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-green-400"
+            className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
           />
+
+          {/* Pulsante Template */}
+          <div className="relative group">
+            <button
+              type="button"
+              className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition text-sm text-gray-700"
+            >
+              📑 Template
+            </button>
+            <div className="absolute right-0 mt-2 w-52 bg-white border border-gray-200 rounded-xl shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition">
+              {templates.length === 0 ? (
+                <p className="p-3 text-sm text-gray-500 text-center">Nessun template</p>
+              ) : (
+                <ul className="py-2">
+                  {templates.map((tpl) => (
+                    <li
+                      key={tpl.name}
+                      onClick={() => sendTemplate(tpl.name)}
+                      className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+                    >
+                      {tpl.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
           <Button
             onClick={sendMessage}
-            className="rounded-full px-5 py-3 bg-green-500 text-white hover:bg-green-600"
+            className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 transition"
             disabled={!userData || !selectedPhone || !messageText}
           >
             <Send size={18} />
@@ -205,5 +277,4 @@ export default function ChatPage() {
     </div>
   );
 }
-
 
