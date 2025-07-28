@@ -32,6 +32,7 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
+  // Recupera dati utente
   useEffect(() => {
     if (!user) return;
     const fetchUserDataByEmail = async () => {
@@ -44,6 +45,7 @@ export default function ChatPage() {
     fetchUserDataByEmail();
   }, [user]);
 
+  // Ascolta messaggi realtime
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -65,12 +67,14 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
+  // Scroll automatico in fondo chat
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [allMessages, selectedPhone]);
 
+  // Carica template APPROVED
   useEffect(() => {
     if (!user?.email) return;
     const fetchTemplates = async () => {
@@ -87,6 +91,7 @@ export default function ChatPage() {
     fetchTemplates();
   }, [user]);
 
+  // Invia messaggio testo
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -125,6 +130,7 @@ export default function ChatPage() {
     }
   };
 
+  // Invia template
   const sendTemplate = async (templateName) => {
     if (!selectedPhone || !templateName || !userData) return;
     const tpl = templates.find((t) => t.name === templateName);
@@ -133,10 +139,7 @@ export default function ChatPage() {
       messaging_product: 'whatsapp',
       to: selectedPhone,
       type: 'template',
-      template: {
-        name: templateName,
-        language: { code: 'it' },
-      },
+      template: { name: templateName, language: { code: 'it' } },
     };
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
@@ -169,56 +172,56 @@ export default function ChatPage() {
     }
   };
 
+  // Upload media con preview + update URL Meta
   const uploadMedia = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('type', file.type);
     formData.append('messaging_product', 'whatsapp');
+
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
       {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        },
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
         body: formData,
       }
     );
     const data = await res.json();
+
     if (!data.id) {
       console.error('❌ Errore upload media:', data);
       alert('Upload fallito: ' + JSON.stringify(data.error));
       return null;
     }
     const mediaId = data.id;
-    // Get media URL
+
+    // Ottieni URL remoto Meta
     const urlRes = await fetch(
       `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
       {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        },
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
       }
     );
     const urlData = await urlRes.json();
-    if (!urlData.url) {
-      console.error('❌ Errore fetching media URL:', urlData);
-      alert('Errore nel recupero URL immagine');
-      return { mediaId, mediaUrl: null };
-    }
-    return { mediaId, mediaUrl: urlData.url };
+    const mediaUrl = urlData.url || null;
+
+    return { mediaId, mediaUrl };
   };
 
+  // Invia messaggio media e aggiorna Firestore con preview locale + URL remoto
   const sendMediaMessage = async (file, type) => {
     const { mediaId, mediaUrl } = await uploadMedia(file) || {};
     if (!mediaId) return;
+
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
       type,
       [type]: { id: mediaId, caption: file.name },
     };
+
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -231,9 +234,11 @@ export default function ChatPage() {
       }
     );
     const data = await res.json();
+
     if (data.messages) {
-      // Salva con preview locale e url ufficiale
-      await addDoc(collection(db, 'messages'), {
+      // Salva con preview locale e URL ufficiale Meta
+      const localUrl = URL.createObjectURL(file);
+      const docRef = await addDoc(collection(db, 'messages'), {
         text: file.name,
         to: selectedPhone,
         from: 'operator',
@@ -243,8 +248,23 @@ export default function ChatPage() {
         user_uid: user.uid,
         message_id: data.messages[0].id,
         mediaId,
-        mediaUrl: mediaUrl || URL.createObjectURL(file),
+        mediaUrl: mediaUrl || localUrl,
       });
+
+      // Aggiorna Firestore con URL Meta appena disponibile (se non presente)
+      if (!mediaUrl) {
+        const urlFetch = await fetch(
+          `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
+          {
+            headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
+          }
+        );
+        const urlJson = await urlFetch.json();
+        if (urlJson.url) {
+          const docToUpdate = doc(db, 'messages', docRef.id);
+          await updateDoc(docToUpdate, { mediaUrl: urlJson.url });
+        }
+      }
     } else {
       console.error('❌ Errore invio media:', data);
       alert('Errore invio media: ' + JSON.stringify(data.error));
@@ -318,11 +338,7 @@ export default function ChatPage() {
               >
                 Avvia
               </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowNewChat(false)}
-                className="flex-1"
-              >
+              <Button variant="outline" onClick={() => setShowNewChat(false)} className="flex-1">
                 Annulla
               </Button>
             </div>
