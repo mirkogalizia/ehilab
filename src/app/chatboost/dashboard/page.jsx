@@ -10,8 +10,6 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
-  doc,
-  updateDoc,
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -130,153 +128,93 @@ export default function ChatPage() {
     }
   };
 
-  // Invia template
-  const sendTemplate = async (templateName) => {
-    if (!selectedPhone || !templateName || !userData) return;
-    const tpl = templates.find((t) => t.name === templateName);
-    const bodyText = tpl?.components?.[0]?.text || `Template inviato: ${templateName}`;
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: selectedPhone,
-      type: 'template',
-      template: { name: templateName, language: { code: 'it' } },
-    };
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, 'messages'), {
-        text: bodyText,
-        templateName,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: 'template',
-        user_uid: user.uid,
-        message_id: data.messages[0].id,
-      });
-      setShowTemplates(false);
-    } else {
-      console.error('❌ Errore invio template:', data);
-      alert('Errore invio template: ' + JSON.stringify(data.error));
-    }
-  };
-
-  // Upload media con preview + update URL Meta
-  const uploadMedia = async (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('type', file.type);
-    formData.append('messaging_product', 'whatsapp');
-
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
-        body: formData,
-      }
-    );
-    const data = await res.json();
-
-    if (!data.id) {
-      console.error('❌ Errore upload media:', data);
-      alert('Upload fallito: ' + JSON.stringify(data.error));
-      return null;
-    }
-    const mediaId = data.id;
-
-    // Ottieni URL remoto Meta
-    const urlRes = await fetch(
-      `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
-      {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
-      }
-    );
-    const urlData = await urlRes.json();
-    const mediaUrl = urlData.url || null;
-
-    return { mediaId, mediaUrl };
-  };
-
-  // Invia messaggio media e aggiorna Firestore con preview locale + URL remoto
-  const sendMediaMessage = async (file, type) => {
-    const { mediaId, mediaUrl } = await uploadMedia(file) || {};
-    if (!mediaId) return;
-
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: selectedPhone,
-      type,
-      [type]: { id: mediaId, caption: file.name },
-    };
-
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-    const data = await res.json();
-
-    if (data.messages) {
-      // Salva con preview locale e URL ufficiale Meta
-      const localUrl = URL.createObjectURL(file);
-      const docRef = await addDoc(collection(db, 'messages'), {
-        text: file.name,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type,
-        user_uid: user.uid,
-        message_id: data.messages[0].id,
-        mediaId,
-        mediaUrl: mediaUrl || localUrl,
-      });
-
-      // Aggiorna Firestore con URL Meta appena disponibile (se non presente)
-      if (!mediaUrl) {
-        const urlFetch = await fetch(
-          `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
-          {
-            headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
-          }
-        );
-        const urlJson = await urlFetch.json();
-        if (urlJson.url) {
-          const docToUpdate = doc(db, 'messages', docRef.id);
-          await updateDoc(docToUpdate, { mediaUrl: urlJson.url });
-        }
-      }
-    } else {
-      console.error('❌ Errore invio media:', data);
-      alert('Errore invio media: ' + JSON.stringify(data.error));
-    }
-  };
-
+  // Funzione per parse timestamp
   const parseTime = (val) => {
     if (!val) return 0;
     if (typeof val === 'string') return parseInt(val) * 1000;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
     if (val?.seconds) return val.seconds * 1000;
     return 0;
+  };
+
+  // Invia media (immagini / documenti)
+  const sendMediaMessage = async (file, mediaType) => {
+    if (!selectedPhone || !userData) return;
+
+    try {
+      // 1) Upload del file a WhatsApp Graph API (messaging_product richiesto!)
+      const form = new FormData();
+      form.append('file', file);
+      form.append('type', mediaType);
+      form.append('messaging_product', 'whatsapp'); // IMPORTANTE!
+
+      const uploadRes = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            // NON mettere Content-Type, ci pensa FormData
+          },
+          body: form,
+        }
+      );
+      const uploadData = await uploadRes.json();
+      if (!uploadData.id) throw new Error(JSON.stringify(uploadData));
+
+      const mediaId = uploadData.id;
+
+      // 2) Recupera URL pubblico del media
+      const urlRes = await fetch(
+        `https://graph.facebook.com/v17.0/${mediaId}?fields=url&messaging_product=whatsapp`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          },
+        }
+      );
+      const { url: mediaUrl } = await urlRes.json();
+
+      // 3) Invia il messaggio WhatsApp con riferimento a mediaId
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: selectedPhone,
+        type: mediaType,
+        [mediaType]: {
+          id: mediaId,
+          caption: file.name,
+        },
+      };
+      const res = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      const result = await res.json();
+      if (!result.messages) throw new Error(JSON.stringify(result));
+
+      // 4) Registra in Firestore
+      await addDoc(collection(db, 'messages'), {
+        text: file.name,
+        mediaUrl,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: mediaType,
+        user_uid: user.uid,
+        message_id: result.messages[0].id,
+      });
+    } catch (err) {
+      console.error('❌ Errore sendMediaMessage:', err);
+      alert('Errore invio media: ' + err.message);
+    }
   };
 
   const filteredMessages = allMessages
@@ -378,7 +316,7 @@ export default function ChatPage() {
                     {msg.type === 'image' && msg.mediaUrl ? (
                       <img
                         src={msg.mediaUrl}
-                        alt="Immagine"
+                        alt={msg.text}
                         className="max-w-full h-auto rounded-lg shadow-md"
                       />
                     ) : msg.type === 'document' && msg.mediaUrl ? (
@@ -486,3 +424,4 @@ export default function ChatPage() {
     </div>
   );
 }
+
