@@ -27,7 +27,7 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
-  // Recupera userData per invio messaggi
+  // Recupera userData
   useEffect(() => {
     if (!user) return;
 
@@ -69,27 +69,31 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  // Auto-scroll alla fine
+  // Scroll automatico
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [allMessages, selectedPhone]);
 
-  // Fetch templates dalla tua API list-template
+  // Carica template APPROVED dalla tua API
   useEffect(() => {
     if (!user?.email) return;
 
     const fetchTemplates = async () => {
       try {
-        const res = await fetch('/api/list-template', {
+        const res = await fetch('/api/list-templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: user.email }),
         });
         const data = await res.json();
-        console.log("📑 Template ricevuti:", data);
-        if (Array.isArray(data)) setTemplates(data);
+        console.log("📑 Template caricati:", data);
+        if (Array.isArray(data)) {
+          setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
+        } else {
+          setTemplates([]);
+        }
       } catch (err) {
         console.error('❌ Errore caricamento template:', err);
       }
@@ -274,9 +278,9 @@ export default function ChatPage() {
             >
               📑 Template
             </button>
-            <div className="absolute right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition">
+            <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition">
               {templates.length === 0 ? (
-                <p className="p-3 text-sm text-gray-500 text-center">Nessun template</p>
+                <p className="p-3 text-sm text-gray-500 text-center">Nessun template approvato</p>
               ) : (
                 <ul className="py-2 max-h-64 overflow-y-auto">
                   {templates.map((tpl) => (
@@ -285,7 +289,10 @@ export default function ChatPage() {
                       onClick={() => sendTemplate(tpl.name)}
                       className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
                     >
-                      {tpl.name}
+                      <div className="font-medium">{tpl.name}</div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {tpl.components?.[0]?.text || '—'}
+                      </div>
                     </li>
                   ))}
                 </ul>
