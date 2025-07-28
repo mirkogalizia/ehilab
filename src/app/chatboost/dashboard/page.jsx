@@ -10,6 +10,8 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
+  doc,
+  updateDoc,
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -30,24 +32,20 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
-  // Recupera userData
+  // User Data
   useEffect(() => {
     if (!user) return;
     const fetchUserDataByEmail = async () => {
-      try {
-        const usersRef = collection(db, 'users');
-        const snapshot = await getDocs(usersRef);
-        const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        const currentUserData = allUsers.find((u) => u.email === user.email);
-        if (currentUserData) setUserData(currentUserData);
-      } catch (error) {
-        console.error('❌ Errore nel recupero dati utente:', error);
-      }
+      const usersRef = collection(db, 'users');
+      const snapshot = await getDocs(usersRef);
+      const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const currentUserData = allUsers.find((u) => u.email === user.email);
+      if (currentUserData) setUserData(currentUserData);
     };
     fetchUserDataByEmail();
   }, [user]);
 
-  // Recupera messaggi realtime
+  // Messaggi realtime
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -76,6 +74,24 @@ export default function ChatPage() {
     }
   }, [allMessages, selectedPhone]);
 
+  // Templates
+  useEffect(() => {
+    if (!user?.email) return;
+    const fetchTemplates = async () => {
+      const res = await fetch('/api/list-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email }),
+      });
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
+      }
+    };
+    fetchTemplates();
+  }, [user]);
+
+  // Send text message
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -112,7 +128,107 @@ export default function ChatPage() {
       });
       setMessageText('');
     } else {
-      console.warn('❌ Errore invio messaggio:', data);
+      console.error('❌ Errore invio messaggio:', data);
+    }
+  };
+
+  // Send template
+  const sendTemplate = async (templateName) => {
+    const tpl = templates.find((t) => t.name === templateName);
+    const bodyText = tpl?.components?.[0]?.text || `Template inviato: ${templateName}`;
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'template',
+      template: { name: templateName, language: { code: 'it' } },
+    };
+
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const data = await res.json();
+    if (data.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text: bodyText,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'template',
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
+        status: 'sent',
+      });
+      setShowTemplates(false);
+    }
+  };
+
+  // Upload media
+  const uploadMedia = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('type', file.type);
+    formData.append('messaging_product', 'whatsapp');
+
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
+        body: formData,
+      }
+    );
+    const data = await res.json();
+    return data.id || null;
+  };
+
+  const sendMediaMessage = async (file, type) => {
+    const mediaId = await uploadMedia(file);
+    if (!mediaId) return;
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type,
+      [type]: { id: mediaId, caption: file.name },
+    };
+
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+    const data = await res.json();
+
+    if (data.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text: file.name,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type,
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
+        mediaUrl: URL.createObjectURL(file), // preview locale
+        status: 'sent',
+      });
     }
   };
 
@@ -123,94 +239,79 @@ export default function ChatPage() {
     .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
     .sort((a, b) => parseTime(a.timestamp) - parseTime(b.timestamp));
 
+  // Abilitazione invio libero solo dopo risposta
+  const hasReply = filteredMessages.some((msg) => msg.from !== 'operator');
+  const canSendFreeText = hasReply;
+
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-gray-50">
-      {/* Lista contatti */}
-      <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
-        <h2 className="text-xl font-semibold text-gray-700 mb-6">Conversazioni</h2>
-        <ul className="space-y-3">
-          {phoneList.map((phone) => (
-            <li
-              key={phone}
-              onClick={() => setSelectedPhone(phone)}
-              className={`cursor-pointer px-4 py-3 rounded-xl shadow-sm transition ${
-                selectedPhone === phone
-                  ? 'bg-gray-200 text-gray-900 font-semibold'
-                  : 'hover:bg-gray-100'
-              }`}
-            >
-              {contactNames[phone] || phone}
-            </li>
-          ))}
-        </ul>
+    <div className="flex h-screen bg-gray-50 font-[Montserrat]">
+      {/* Sidebar */}
+      <div className="w-1/4 bg-white p-6 border-r">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="font-bold text-lg">Conversazioni</h2>
+          <button onClick={() => setShowNewChat(true)} className="text-sm bg-black text-white px-3 py-1 rounded">+ Nuova</button>
+        </div>
+        {phoneList.map((phone) => (
+          <div
+            key={phone}
+            onClick={() => setSelectedPhone(phone)}
+            className={`p-2 cursor-pointer rounded ${selectedPhone === phone ? 'bg-gray-200 font-bold' : 'hover:bg-gray-100'}`}
+          >
+            {contactNames[phone] || phone}
+          </div>
+        ))}
       </div>
 
-      {/* Conversazione */}
-      <div className="flex flex-col flex-1 bg-gray-100">
-        <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
-          {selectedPhone
-            ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
-            : 'Seleziona una chat'}
+      {/* Chat */}
+      <div className="flex-1 flex flex-col bg-gray-100">
+        <div className="p-4 bg-white border-b font-semibold">
+          {selectedPhone ? `Chat con ${contactNames[selectedPhone] || selectedPhone}` : 'Seleziona una chat'}
         </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="flex flex-col gap-3">
-            {filteredMessages.map((msg, idx) => {
-              const isOperator = msg.from === 'operator';
-              const time = new Date(parseTime(msg.timestamp)).toLocaleTimeString('it-IT', {
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-
-              return (
-                <div
-                  key={msg.id || idx}
-                  className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}
-                >
-                  <div
-                    className={`max-w-[70%] px-5 py-3 rounded-2xl text-sm shadow-md ${
-                      isOperator
-                        ? 'bg-black text-white rounded-br-none'
-                        : 'bg-white text-gray-900 rounded-bl-none'
-                    }`}
-                  >
-                    {msg.text}
-                  </div>
-                  <div className="text-[10px] text-gray-400 mt-1">
-                    {time}
-                    {isOperator && msg.status && (
-                      <>
-                        {msg.status === 'sent' && ' ✅'}
-                        {msg.status === 'delivered' && ' ✅✅'}
-                        {msg.status === 'read' && <span className="text-blue-500"> ✅✅</span>}
-                      </>
-                    )}
-                  </div>
+        <div className="flex-1 overflow-y-auto p-4">
+          {filteredMessages.map((msg) => {
+            const isOperator = msg.from === 'operator';
+            const time = new Date(parseTime(msg.timestamp)).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            return (
+              <div key={msg.id} className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'} mb-3`}>
+                <div className={`px-4 py-2 rounded-2xl shadow ${isOperator ? 'bg-black text-white' : 'bg-white'}`}>
+                  {msg.type === 'image' && msg.mediaUrl ? (
+                    <img src={msg.mediaUrl} alt="Immagine" className="max-w-[200px] rounded" />
+                  ) : msg.type === 'document' && msg.mediaUrl ? (
+                    <a href={msg.mediaUrl} target="_blank" className="text-blue-600 underline">📎 {msg.text}</a>
+                  ) : (
+                    msg.text
+                  )}
                 </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </div>
+                <div className="text-[10px] text-gray-400 flex gap-1 items-center mt-1">
+                  {time}
+                  {isOperator && (
+                    <>
+                      {msg.status === 'sent' && '✅'}
+                      {msg.status === 'delivered' && '✅✅'}
+                      {msg.status === 'read' && <span className="text-blue-500">✅✅</span>}
+                    </>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div ref={messagesEndRef} />
         </div>
-
-        <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner">
+        <div className="p-3 bg-white border-t flex gap-2">
           <Input
             placeholder="Scrivi un messaggio..."
             value={messageText}
             onChange={(e) => setMessageText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
+            disabled={!canSendFreeText}
+            className="flex-1"
           />
-          <Button
-            onClick={sendMessage}
-            className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
-            disabled={!userData || !selectedPhone || !messageText}
-          >
+          <Button onClick={sendMessage} disabled={!canSendFreeText || !messageText}>
             <Send size={18} />
           </Button>
+          <input type="file" accept="image/*" onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'image')} />
+          <input type="file" accept=".pdf,.doc,.docx" onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'document')} />
         </div>
       </div>
     </div>
   );
 }
-
