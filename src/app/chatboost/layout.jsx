@@ -1,13 +1,20 @@
 'use client';
 
 import { useAuth } from '@/lib/useAuth';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 
 export default function ChatBoostLayout({ children }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
+  // Se sei nella pagina login → non mostrare mai sidebar
+  if (pathname.startsWith('/chatboost/login')) {
+    return <main className="flex-1 overflow-y-auto bg-[#f7f7f7]">{children}</main>;
+  }
+
+  // Redirect automatico se non loggato
   useEffect(() => {
     if (!loading && !user) {
       router.push('/chatboost/login');
@@ -27,10 +34,16 @@ export default function ChatBoostLayout({ children }) {
       <aside className="w-64 bg-white border-r p-4 space-y-6 shadow-md">
         <h2 className="text-2xl font-bold text-green-600">EHI! Chat Boost</h2>
         <nav className="space-y-2">
-          <a href="/chatboost/dashboard" className="block px-3 py-2 rounded hover:bg-gray-100 transition">
+          <a
+            href="/chatboost/dashboard"
+            className="block px-3 py-2 rounded hover:bg-gray-100 transition"
+          >
             💬 Conversazioni
           </a>
-          <a href="/chatboost/templates" className="block px-3 py-2 rounded hover:bg-gray-100 transition">
+          <a
+            href="/chatboost/templates"
+            className="block px-3 py-2 rounded hover:bg-gray-100 transition"
+          >
             📄 Template
           </a>
           <details className="group">
@@ -38,7 +51,12 @@ export default function ChatBoostLayout({ children }) {
               ⚙️ Impostazioni
             </summary>
             <div className="ml-4 mt-2 space-y-1">
-              <a href="/chatboost/impostazioni/info" className="block text-sm hover:underline">Info</a>
+              <a
+                href="/chatboost/impostazioni/info"
+                className="block text-sm hover:underline"
+              >
+                Info
+              </a>
             </div>
           </details>
           <button
@@ -57,5 +75,4 @@ export default function ChatBoostLayout({ children }) {
     </div>
   );
 }
-
 
