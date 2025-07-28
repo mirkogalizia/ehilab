@@ -36,7 +36,7 @@ export default function ChatBoostLayout({ children }) {
 
   return (
     <div className="flex h-screen bg-gray-50 font-[Montserrat]">
-      {/* Sidebar - visibile solo su desktop */}
+      {/* Sidebar - solo desktop */}
       <aside className="hidden md:flex w-24 bg-white border-r flex-col items-center py-8 shadow-md">
         <div
           onClick={() => router.push('/chatboost/dashboard')}
@@ -76,12 +76,12 @@ export default function ChatBoostLayout({ children }) {
       </aside>
 
       {/* Contenuto */}
-      <main className="flex-1 overflow-y-auto bg-[#f7f7f7] p-6">
+      <main className="flex-1 overflow-y-auto bg-[#f7f7f7] p-6 pb-20 md:pb-6">
         {children}
       </main>
 
-      {/* Bottom Navigation - visibile solo su mobile */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around items-center py-3 shadow-lg md:hidden">
+      {/* Bottom Navigation - solo mobile */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around items-center py-3 shadow-lg md:hidden z-50">
         {navItems.map(({ label, icon: Icon, path }) => {
           const active = pathname.startsWith(path);
           return (
@@ -98,7 +98,6 @@ export default function ChatBoostLayout({ children }) {
           );
         })}
 
-        {/* Logout anche in mobile */}
         <button
           onClick={() => {
             localStorage.removeItem('firebaseAuthToken');
@@ -113,6 +112,5 @@ export default function ChatBoostLayout({ children }) {
     </div>
   );
 }
-
 
 
