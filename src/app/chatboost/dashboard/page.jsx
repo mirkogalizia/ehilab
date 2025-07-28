@@ -29,7 +29,7 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
-  // Recupera dati utente da Firestore
+  // Recupero userData (per invio messaggi)
   useEffect(() => {
     if (!user) return;
     const fetchUserData = async () => {
@@ -46,7 +46,7 @@ export default function ChatPage() {
     fetchUserData();
   }, [user]);
 
-  // Recupera templates approvati tramite API interna
+  // Recupero templates APPROVED tramite la tua API list-template
   useEffect(() => {
     if (!user?.email) return;
 
@@ -59,12 +59,10 @@ export default function ChatPage() {
         });
 
         const data = await res.json();
-
         if (Array.isArray(data) && data.length > 0) {
           setTemplates(data);
         } else {
           setTemplates([]);
-          console.warn('⚠️ Nessun template trovato per questo utente');
         }
       } catch (err) {
         console.error('❌ Errore caricamento template:', err);
@@ -74,7 +72,7 @@ export default function ChatPage() {
     fetchTemplates();
   }, [user]);
 
-  // Recupera messaggi realtime
+  // Recupero messaggi in real time
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -97,8 +95,16 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  // Funzione comune invio messaggio/template
-  const sendToWhatsApp = async (payload, text) => {
+  // Invio messaggi (funzione originale)
+  const sendMessage = async () => {
+    if (!selectedPhone || !messageText || !userData) return;
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'text',
+      text: { body: messageText },
+    };
+
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -110,35 +116,24 @@ export default function ChatPage() {
         body: JSON.stringify(payload),
       }
     );
+
     const data = await res.json();
 
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
-        text,
-        to: payload.to,
+        text: messageText,
+        to: selectedPhone,
         from: 'operator',
         timestamp: Date.now(),
         createdAt: serverTimestamp(),
-        type: payload.type,
+        type: 'text',
         user_uid: user.uid,
         message_id: data.messages[0].id,
       });
+      setMessageText('');
     } else {
-      console.error('❌ Errore invio messaggio:', data);
+      console.warn('❌ Errore invio messaggio:', data);
     }
-  };
-
-  // Invio testo
-  const sendMessage = async () => {
-    if (!selectedPhone || !messageText || !userData) return;
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: selectedPhone,
-      type: 'text',
-      text: { body: messageText },
-    };
-    await sendToWhatsApp(payload, messageText);
-    setMessageText('');
   };
 
   // Invio template
@@ -153,10 +148,38 @@ export default function ChatPage() {
         language: { code: 'it' },
       },
     };
-    await sendToWhatsApp(payload, `[TEMPLATE] ${templateName}`);
+
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const data = await res.json();
+
+    if (data.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text: `[TEMPLATE] ${templateName}`,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'template',
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
+      });
+    } else {
+      console.warn('❌ Errore invio template:', data);
+    }
   };
 
-  // Gestione timestamp messaggi
+  // Funzione tempo messaggi
   const parseTime = (val) => {
     if (!val) return 0;
     if (typeof val === 'string') return parseInt(val) * 1000;
@@ -193,14 +216,12 @@ export default function ChatPage() {
 
       {/* Conversazione */}
       <div className="flex flex-col flex-1 bg-gray-100">
-        {/* Header */}
         <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
           {selectedPhone
             ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
             : 'Seleziona una chat'}
         </div>
 
-        {/* Messaggi */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="flex flex-col gap-3">
             {filteredMessages.map((msg, idx) => {
@@ -231,7 +252,7 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Input + Icona Template */}
+        {/* Input + Template */}
         <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner">
           <Input
             placeholder="Scrivi un messaggio..."
@@ -241,7 +262,7 @@ export default function ChatPage() {
             className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
           />
 
-          {/* Pulsante Template */}
+          {/* Template Dropdown */}
           <div className="relative group">
             <button
               type="button"
