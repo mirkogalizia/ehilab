@@ -10,14 +10,10 @@ export default function ChatBoostLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Redirect login se non autenticato
   useEffect(() => {
-    if (!loading && !user) {
-      router.push('/wa/login');
-    }
+    if (!loading && !user) router.push('/wa/login');
   }, [user, loading, router]);
 
-  // Loader
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">
@@ -36,9 +32,8 @@ export default function ChatBoostLayout({ children }) {
 
   return (
     <div className="h-screen w-screen flex font-[Montserrat] bg-gray-50 overflow-hidden">
-      {/* Sidebar - desktop */}
+      {/* Sidebar desktop */}
       <aside className="hidden md:flex w-24 bg-white border-r flex-col items-center py-8 shadow-md">
-        {/* Logo */}
         <div
           onClick={() => router.push('/chatboost/dashboard')}
           className="text-xl font-extrabold text-gray-900 mb-12 cursor-pointer tracking-tight hover:scale-105 transition-transform"
@@ -46,7 +41,6 @@ export default function ChatBoostLayout({ children }) {
           EHI!
         </div>
 
-        {/* Menu */}
         <nav className="flex flex-col gap-10 items-center flex-1">
           {navItems.map(({ label, icon: Icon, path }) => {
             const active = pathname.startsWith(path);
@@ -65,7 +59,6 @@ export default function ChatBoostLayout({ children }) {
           })}
         </nav>
 
-        {/* Logout */}
         <button
           onClick={() => {
             localStorage.removeItem('firebaseAuthToken');
@@ -78,12 +71,12 @@ export default function ChatBoostLayout({ children }) {
         </button>
       </aside>
 
-      {/* Contenuto principale */}
+      {/* Main content */}
       <main className="flex-1 overflow-y-auto bg-[#f7f7f7] p-4 pb-24 md:pb-6">
         {children}
       </main>
 
-      {/* Bottom Navigation - mobile */}
+      {/* Bottom Nav mobile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around items-center py-3 shadow-lg md:hidden z-50">
         {navItems.map(({ label, icon: Icon, path }) => {
           const active = pathname.startsWith(path);
@@ -101,7 +94,6 @@ export default function ChatBoostLayout({ children }) {
           );
         })}
 
-        {/* Logout mobile */}
         <button
           onClick={() => {
             localStorage.removeItem('firebaseAuthToken');

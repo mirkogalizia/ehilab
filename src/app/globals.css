@@ -9,6 +9,34 @@ html, body, button, input, textarea {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Evita zoom su input <16px su iOS */
+input, textarea, select, button {
+  font-size: 16px !important;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Gestione altezza dinamica per mobile con tastiera */
+html, body {
+  height: 100%;
+  min-height: -webkit-fill-available;
+  overscroll-behavior-y: contain; /* evita rimbalzi */
+  background: var(--background);
+  color: var(--foreground);
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+/* Lock dello zoom e del pan */
+body {
+  touch-action: manipulation;
+}
+
+/* Rimuove highlight blu al tap su iOS */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -16,45 +44,37 @@ html, body, button, input, textarea {
   --color-foreground: var(--foreground);
   --font-sans: 'Montserrat', sans-serif;
   --font-mono: var(--font-geist-mono);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-primary: #000; /* nero dominante */
+  --color-primary-foreground: #fff;
+  --color-secondary: oklch(0.97 0 0);
+  --color-secondary-foreground: oklch(0.205 0 0);
+
+  --color-muted: #f9f9f9;
+  --color-muted-foreground: #666;
+
+  --color-border: #e5e7eb;
+  --color-input: #f3f4f6;
+  --color-ring: #d1d5db;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 }
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: #ffffff;
+  --foreground: #111827;
+}
+
+.dark {
+  --background: #111827;
+  --foreground: #f9fafb;
+  --color-border: #374151;
+  --color-input: #1f2937;
+  --color-ring: #4b5563;
 }
 
 @layer base {
