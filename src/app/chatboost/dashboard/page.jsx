@@ -30,52 +30,51 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
-  // Recupera dati utente
+  // Recupera dati utente da Firestore (documento “users”)
   useEffect(() => {
     if (!user) return;
-    const fetchUserDataByEmail = async () => {
+    (async () => {
       const usersRef = collection(db, 'users');
       const snapshot = await getDocs(usersRef);
       const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      const currentUserData = allUsers.find((u) => u.email === user.email);
-      if (currentUserData) setUserData(currentUserData);
-    };
-    fetchUserDataByEmail();
+      const current = allUsers.find((u) => u.email === user.email);
+      if (current) setUserData(current);
+    })();
   }, [user]);
 
-  // Ascolta messaggi realtime
+  // Ascolta i messaggi in real-time
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const messages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      setAllMessages(messages);
+    const unsubscribe = onSnapshot(q, async (snap) => {
+      const msgs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setAllMessages(msgs);
 
-      const uniquePhones = Array.from(
-        new Set(messages.map((msg) => (msg.from !== 'operator' ? msg.from : msg.to)))
+      // Costruisci la lista dei numeri unici
+      const uniques = Array.from(
+        new Set(msgs.map((m) => (m.from !== 'operator' ? m.from : m.to)))
       );
-      setPhoneList(uniquePhones);
+      setPhoneList(uniques);
 
-      const contactsSnapshot = await getDocs(collection(db, 'contacts'));
-      const namesMap = {};
-      contactsSnapshot.forEach((doc) => {
-        namesMap[doc.id] = doc.data().name;
+      // Carica tutti i contatti
+      const contactsSnap = await getDocs(collection(db, 'contacts'));
+      const map = {};
+      contactsSnap.forEach((d) => {
+        map[d.id] = d.data().name;
       });
-      setContactNames(namesMap);
+      setContactNames(map);
     });
-    return () => unsubscribe();
+    return unsubscribe;
   }, []);
 
-  // Scroll automatico in fondo chat
+  // Scroll automatico in fondo
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
   // Carica template APPROVED
   useEffect(() => {
     if (!user?.email) return;
-    const fetchTemplates = async () => {
+    (async () => {
       const res = await fetch('/api/list-templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -85,19 +84,38 @@ export default function ChatPage() {
       if (Array.isArray(data)) {
         setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
       }
-    };
-    fetchTemplates();
+    })();
   }, [user]);
 
-  // Invia messaggio testo
+  // Helper per convertire timestamp Firestore / Unix
+  const parseTime = (val) => {
+    if (!val) return 0;
+    if (typeof val === 'string') return parseInt(val) * 1000;
+    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
+    if (val?.seconds) return val.seconds * 1000;
+    return 0;
+  };
+
+  // Filtra e ordina i messaggi per chat selezionata
+  const filteredMessages = allMessages
+    .filter((m) => m.from === selectedPhone || m.to === selectedPhone)
+    .sort(
+      (a, b) =>
+        parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt)
+    );
+
+  // ──────────────────────────────────────────────────────
+  // Funzione per inviare text message
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
+
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
       type: 'text',
       text: { body: messageText },
     };
+
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -110,6 +128,7 @@ export default function ChatPage() {
       }
     );
     const data = await res.json();
+
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
         text: messageText,
@@ -123,27 +142,95 @@ export default function ChatPage() {
       });
       setMessageText('');
     } else {
-      console.error('❌ Errore invio messaggio:', data);
-      alert('Errore invio messaggio: ' + JSON.stringify(data.error));
+      console.error(data);
+      alert('Errore invio text: ' + JSON.stringify(data.error));
     }
   };
 
-  // Funzione per parse timestamp
-  const parseTime = (val) => {
-    if (!val) return 0;
-    if (typeof val === 'string') return parseInt(val) * 1000;
-    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
-    if (val?.seconds) return val.seconds * 1000;
-    return 0;
+  // ──────────────────────────────────────────────────────
+  // Funzione per invio MEDIA (image / document)
+  const sendMediaMessage = async (file, mediaType) => {
+    if (!selectedPhone || !userData) return;
+
+    try {
+      // 1) Upload del file a WhatsApp Graph API
+      const form = new FormData();
+      form.append('file', file);
+      form.append('type', mediaType);
+
+      const uploadRes = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          },
+          body: form,
+        }
+      );
+      const uploadData = await uploadRes.json();
+      if (!uploadData.id) throw new Error(JSON.stringify(uploadData));
+
+      const mediaId = uploadData.id;
+
+      // 2) Recupera URL pubblico del media per mostrare in chat
+      const urlRes = await fetch(
+        `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          },
+        }
+      );
+      const { url: mediaUrl } = await urlRes.json();
+
+      // 3) Invia il messaggio WhatsApp con riferimento a mediaId
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: selectedPhone,
+        type: mediaType,
+        [mediaType]: {
+          id: mediaId,
+          caption: file.name,
+        },
+      };
+      const res = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      const result = await res.json();
+      if (!result.messages) throw new Error(JSON.stringify(result));
+
+      // 4) Registra in Firestore
+      await addDoc(collection(db, 'messages'), {
+        text: file.name,
+        mediaUrl,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: mediaType,
+        user_uid: user.uid,
+        message_id: result.messages[0].id,
+      });
+    } catch (err) {
+      console.error('❌ Errore sendMediaMessage:', err);
+      alert('Errore invio media: ' + err.message);
+    }
   };
+  // ──────────────────────────────────────────────────────
 
-  const filteredMessages = allMessages
-    .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
-    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
-
+  // ────────────────────── RENDER ────────────────────────
   return (
     <div className="flex flex-col md:flex-row h-screen bg-gray-50 font-[Montserrat]">
-      {/* Lista contatti */}
+      {/* Sidebar contatti */}
       <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-gray-800">Conversazioni</h2>
@@ -154,7 +241,6 @@ export default function ChatPage() {
             <Plus size={16} /> Nuova
           </button>
         </div>
-
         <ul className="space-y-3">
           {phoneList.map((phone) => (
             <li
@@ -170,7 +256,6 @@ export default function ChatPage() {
             </li>
           ))}
         </ul>
-
         {showNewChat && (
           <div className="mt-4 p-4 bg-gray-100 rounded-xl shadow-md">
             <h3 className="font-medium mb-2">📞 Inserisci numero</h3>
@@ -183,14 +268,12 @@ export default function ChatPage() {
             <div className="flex gap-2">
               <Button
                 onClick={() => {
-                  if (newPhone) {
-                    setSelectedPhone(newPhone);
-                    if (!phoneList.includes(newPhone)) {
-                      setPhoneList((prev) => [newPhone, ...prev]);
-                    }
-                    setShowNewChat(false);
-                    setNewPhone('');
+                  if (!phoneList.includes(newPhone)) {
+                    setPhoneList((prev) => [newPhone, ...prev]);
                   }
+                  setSelectedPhone(newPhone);
+                  setShowNewChat(false);
+                  setNewPhone('');
                 }}
                 className="bg-black text-white hover:bg-gray-800 flex-1"
               >
@@ -204,19 +287,20 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Conversazione */}
+      {/* Chat window */}
       <div className="flex flex-col flex-1 bg-gray-100">
         <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
           {selectedPhone
             ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
             : 'Seleziona una chat'}
         </div>
-
         <div className="flex-1 overflow-y-auto p-6">
           <div className="flex flex-col gap-3">
             {filteredMessages.map((msg, idx) => {
               const isOperator = msg.from === 'operator';
-              const time = new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
+              const time = new Date(
+                parseTime(msg.timestamp || msg.createdAt)
+              ).toLocaleTimeString('it-IT', {
                 hour: '2-digit',
                 minute: '2-digit',
               });
@@ -265,6 +349,7 @@ export default function ChatPage() {
           </div>
         </div>
 
+        {/* Input e bottoni */}
         <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner relative">
           <Input
             placeholder="Scrivi un messaggio..."
@@ -274,10 +359,11 @@ export default function ChatPage() {
             className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
           />
 
+          {/* Template picker */}
           <div className="relative">
             <button
               type="button"
-              onClick={() => setShowTemplates((prev) => !prev)}
+              onClick={() => setShowTemplates((p) => !p)}
               className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition text-sm text-gray-700"
             >
               📑
@@ -308,30 +394,33 @@ export default function ChatPage() {
             )}
           </div>
 
-          <div>
-            <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
-              📷
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'image')}
-              />
-            </label>
-          </div>
+          {/* Bottone upload IMMAGINE */}
+          <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
+            📷
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) =>
+                e.target.files[0] && sendMediaMessage(e.target.files[0], 'image')
+              }
+            />
+          </label>
 
-          <div>
-            <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
-              📎
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx,.xls,.xlsx"
-                className="hidden"
-                onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'document')}
-              />
-            </label>
-          </div>
+          {/* Bottone upload DOCUMENTO */}
+          <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
+            📎
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx,.xls,.xlsx"
+              className="hidden"
+              onChange={(e) =>
+                e.target.files[0] && sendMediaMessage(e.target.files[0], 'document')
+              }
+            />
+          </label>
 
+          {/* Bottone invio testo */}
           <Button
             onClick={sendMessage}
             className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 transition"
