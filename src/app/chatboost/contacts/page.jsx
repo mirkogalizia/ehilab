@@ -18,13 +18,12 @@ import {
   Users,
   Send,
   X,
-  CheckCircle,
   Loader2,
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ContactsPage() {
-  const { user } = useAuth();
+  const { user, userData, templates } = useAuth(); // Assumi userData e templates disponibili qui
 
   // Stati base
   const [categories, setCategories] = useState([]);
@@ -39,10 +38,7 @@ export default function ContactsPage() {
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
 
-  // Template disponibili per invio massivo
-  const [templates, setTemplates] = useState([]);
-
-  // Modal gestione invio massivo
+  // Modal invio massivo
   const [modalOpen, setModalOpen] = useState(false);
   const [templateToSend, setTemplateToSend] = useState(null);
 
@@ -74,23 +70,6 @@ export default function ContactsPage() {
     });
     return () => unsub();
   }, [currentCat]);
-
-  // Carica templates (puoi adattare qui o caricare da API)
-  useEffect(() => {
-    async function loadTemplates() {
-      // Esempio fetch da API
-      const res = await fetch('/api/list-templates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user?.email }),
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setTemplates(data.filter(tpl => tpl.status === 'APPROVED'));
-      }
-    }
-    if (user?.email) loadTemplates();
-  }, [user]);
 
   // Crea categoria
   const createCategory = async () => {
@@ -136,34 +115,75 @@ export default function ContactsPage() {
     setSelected(s);
   };
 
-  // Funzione invio template singolo contatto (adattare col tuo codice reale)
+  // Invio template singolo contatto via API WhatsApp
   const sendTemplateToContact = async (phone, templateName) => {
-    // Qui devi mettere la tua logica reale di invio API WhatsApp
-    // Simulazione con delay:
-    return new Promise(resolve => setTimeout(resolve, 300));
+    if (!userData) throw new Error('Dati utente non disponibili');
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: phone,
+      type: 'template',
+      template: {
+        name: templateName,
+        language: { code: 'it' },
+      },
+    };
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+    const data = await res.json();
+    if (!data.messages) {
+      throw new Error(data.error?.message || 'Errore invio template');
+    }
   };
 
-  // Invio massivo template a tutti i contatti della categoria
+  // Invio massivo template a contatti categoria con log e report
   const sendTemplateMassive = async () => {
     if (!templateToSend || !currentCat) return alert('Seleziona un template.');
 
     setSending(true);
-    setSendLog(`Invio template "${templateToSend.name}" a tutti i contatti di ${categories.find(c => c.id === currentCat)?.name}...\n`);
+    setSendLog(`Inizio invio template "${templateToSend.name}"...\n`);
+
+    let successCount = 0;
+    const errorList = [];
 
     try {
-      const contactsToSend = contacts;
-      for (let i = 0; i < contactsToSend.length; i++) {
-        const c = contactsToSend[i];
-        setSendLog(prev => prev + `Invio a ${c.name} (${c.id})... `);
-        await sendTemplateToContact(c.id, templateToSend.name);
-        setSendLog(prev => prev + '✔️\n');
-        // Puoi mettere un delay per non superare rate limit:
+      for (let i = 0; i < contacts.length; i++) {
+        const c = contacts[i];
+        try {
+          await sendTemplateToContact(c.id, templateToSend.name);
+          successCount++;
+        } catch (err) {
+          errorList.push({ phone: c.id, name: c.name, error: err.message });
+        }
+        if ((i + 1) % 10 === 0 || i === contacts.length - 1) {
+          setSendLog(
+            `Inviati: ${successCount}, Errori: ${errorList.length} su ${contacts.length}\n`
+          );
+        }
         await new Promise(r => setTimeout(r, 200));
       }
-      setSendLog(prev => prev + 'Invio completato!');
+
+      setSendLog(prev => prev + `\nInvio completato! Messaggi inviati: ${successCount}\n`);
+      if (errorList.length > 0) {
+        setSendLog(
+          prev =>
+            prev +
+            `\nErrori (${errorList.length}):\n` +
+            errorList.map(e => `- ${e.name} (${e.phone}): ${e.error}`).join('\n')
+        );
+      }
     } catch (err) {
-      setSendLog(prev => prev + `Errore: ${err.message}`);
+      setSendLog(prev => prev + `Errore fatale: ${err.message}\n`);
     }
+
     setSending(false);
     setModalOpen(false);
   };
@@ -187,7 +207,7 @@ export default function ContactsPage() {
               <span onClick={() => setCurrentCat(cat.id)}>{cat.name}</span>
               <button
                 title={`Invia template a tutta la categoria ${cat.name}`}
-                onClick={() => setCurrentCat(cat.id) || setModalOpen(true)}
+                onClick={() => { setCurrentCat(cat.id); setModalOpen(true); }}
                 className="text-blue-600 hover:text-blue-800"
               >
                 <Send size={18} />

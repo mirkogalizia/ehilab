@@ -2,27 +2,27 @@ import Image from 'next/image';
 
 export default function Home() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-white font-sans">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-white font-sans px-4 sm:px-8">
       {/* Logo grande e frase */}
       <Image
         src="/logo.png"
         alt="EHI! Lab Logo"
-        width={400}
-        height={400}
-        className="mb-10"
+        width={320}
+        height={320}
+        className="mb-12"
         priority
       />
-      <p className="text-2xl font-semibold text-neutral-800 max-w-xl text-center tracking-tight mb-10">
+      <p className="text-3xl sm:text-4xl font-semibold text-neutral-900 max-w-3xl text-center tracking-tight mb-14 leading-snug">
         L’automazione che si fa sentire.<br />
-        <span className="text-blue-600 font-bold">
-          Digitalizza il tuo business, con stile.
-        </span>
+        <span className="text-blue-600 font-extrabold">Digitalizza il tuo business, con stile.</span>
       </p>
 
-      {/* Sezione servizi uniforme */}
-      <section className="w-full max-w-5xl mx-auto mt-8 px-2">
-        <h2 className="text-2xl font-bold text-center mb-10 tracking-tight">I nostri servizi</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Sezione servizi */}
+      <section className="w-full max-w-6xl mx-auto">
+        <h2 className="text-3xl font-extrabold text-center mb-12 tracking-tight text-neutral-900">
+          I nostri servizi
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
           {[
             {
               icon: "🛒",
@@ -55,14 +55,14 @@ export default function Home() {
               ),
             },
           ].map(({ icon, title, text }) => (
-            <div
+            <article
               key={title}
-              className="flex flex-col items-center rounded-3xl bg-white shadow-xl border border-neutral-200 px-6 py-8 transition hover:shadow-2xl"
+              className="flex flex-col items-center rounded-3xl bg-white shadow-lg border border-neutral-200 p-8 hover:shadow-2xl transition-shadow duration-300"
             >
-              <span className="text-4xl mb-4">{icon}</span>
-              <h3 className="font-semibold text-lg mb-3 text-neutral-800 text-center">{title}</h3>
-              <div className="text-gray-600 text-sm text-center">{text}</div>
-            </div>
+              <span className="text-5xl mb-5">{icon}</span>
+              <h3 className="font-semibold text-xl mb-4 text-neutral-900 text-center">{title}</h3>
+              <p className="text-gray-700 text-base text-center">{text}</p>
+            </article>
           ))}
         </div>
       </section>
