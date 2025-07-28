@@ -35,10 +35,7 @@ export default function ChatPage() {
         const snapshot = await getDocs(usersRef);
         const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
         const currentUserData = allUsers.find((u) => u.email === user.email);
-
-        if (currentUserData) {
-          setUserData(currentUserData);
-        }
+        if (currentUserData) setUserData(currentUserData);
       } catch (error) {
         console.error('❌ Errore nel recupero dati utente:', error);
       }
@@ -125,20 +122,9 @@ export default function ChatPage() {
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   return (
-    <div className="flex h-screen bg-gray-50 font-sans">
-      {/* Sidebar */}
-      <aside className="w-20 bg-white border-r flex flex-col items-center py-6 shadow-md">
-        <div className="text-2xl font-bold text-green-600 mb-10">💬</div>
-        <nav className="flex flex-col gap-6">
-          <Button variant="ghost" size="icon">🏠</Button>
-          <Button variant="ghost" size="icon">💬</Button>
-          <Button variant="ghost" size="icon">📊</Button>
-          <Button variant="ghost" size="icon">⚙️</Button>
-        </nav>
-      </aside>
-
+    <div className="flex flex-col md:flex-row h-screen bg-gray-50">
       {/* Lista contatti */}
-      <div className="w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
+      <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
         <h2 className="text-xl font-semibold text-gray-700 mb-6">Conversazioni</h2>
         <ul className="space-y-3">
           {phoneList.map((phone) => (
@@ -157,7 +143,7 @@ export default function ChatPage() {
         </ul>
       </div>
 
-      {/* Chat */}
+      {/* Conversazione */}
       <div className="flex flex-col flex-1 bg-gray-100">
         {/* Header */}
         <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
