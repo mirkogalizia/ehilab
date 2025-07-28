@@ -10,6 +10,8 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
+  doc,
+  updateDoc,
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -30,24 +32,18 @@ export default function ChatPage() {
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
-  // Recupera userData
   useEffect(() => {
     if (!user) return;
     const fetchUserDataByEmail = async () => {
-      try {
-        const usersRef = collection(db, 'users');
-        const snapshot = await getDocs(usersRef);
-        const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        const currentUserData = allUsers.find((u) => u.email === user.email);
-        if (currentUserData) setUserData(currentUserData);
-      } catch (error) {
-        console.error('❌ Errore nel recupero dati utente:', error);
-      }
+      const usersRef = collection(db, 'users');
+      const snapshot = await getDocs(usersRef);
+      const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const currentUserData = allUsers.find((u) => u.email === user.email);
+      if (currentUserData) setUserData(currentUserData);
     };
     fetchUserDataByEmail();
   }, [user]);
 
-  // Recupera messaggi realtime
   useEffect(() => {
     const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
     const unsubscribe = onSnapshot(q, async (snapshot) => {
@@ -66,41 +62,31 @@ export default function ChatPage() {
       });
       setContactNames(namesMap);
     });
-
     return () => unsubscribe();
   }, []);
 
-  // Scroll automatico
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [allMessages, selectedPhone]);
 
-  // Carica template APPROVED
   useEffect(() => {
     if (!user?.email) return;
     const fetchTemplates = async () => {
-      try {
-        const res = await fetch('/api/list-templates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: user.email }),
-        });
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
-        } else {
-          setTemplates([]);
-        }
-      } catch (err) {
-        console.error('❌ Errore caricamento template:', err);
+      const res = await fetch('/api/list-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email }),
+      });
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
       }
     };
     fetchTemplates();
   }, [user]);
 
-  // Invio messaggio testo
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -109,7 +95,6 @@ export default function ChatPage() {
       type: 'text',
       text: { body: messageText },
     };
-
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -121,7 +106,6 @@ export default function ChatPage() {
         body: JSON.stringify(payload),
       }
     );
-
     const data = await res.json();
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
@@ -141,13 +125,10 @@ export default function ChatPage() {
     }
   };
 
-  // Invio template
   const sendTemplate = async (templateName) => {
     if (!selectedPhone || !templateName || !userData) return;
-
     const tpl = templates.find((t) => t.name === templateName);
     const bodyText = tpl?.components?.[0]?.text || `Template inviato: ${templateName}`;
-
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
@@ -157,7 +138,6 @@ export default function ChatPage() {
         language: { code: 'it' },
       },
     };
-
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -169,7 +149,6 @@ export default function ChatPage() {
         body: JSON.stringify(payload),
       }
     );
-
     const data = await res.json();
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
@@ -190,14 +169,11 @@ export default function ChatPage() {
     }
   };
 
-  // Upload generico con fix messaging_product e fetch url
   const uploadMedia = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('type', file.type);
     formData.append('messaging_product', 'whatsapp');
-
-    // Upload file per ottenere mediaId
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
       {
@@ -208,17 +184,14 @@ export default function ChatPage() {
         body: formData,
       }
     );
-
     const data = await res.json();
     if (!data.id) {
       console.error('❌ Errore upload media:', data);
       alert('Upload fallito: ' + JSON.stringify(data.error));
       return null;
     }
-
     const mediaId = data.id;
-
-    // Ora chiedi l'URL diretto con GET
+    // Get media URL
     const urlRes = await fetch(
       `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
       {
@@ -229,21 +202,23 @@ export default function ChatPage() {
       }
     );
     const urlData = await urlRes.json();
-
     if (!urlData.url) {
       console.error('❌ Errore fetching media URL:', urlData);
       alert('Errore nel recupero URL immagine');
-      return null;
+      return { mediaId, mediaUrl: null };
     }
-
-    // Ritorna oggetto con mediaId e mediaUrl
     return { mediaId, mediaUrl: urlData.url };
   };
 
-  // Funzione comune invio media
-  const sendMediaMessage = async (payload, file, type, mediaId, mediaUrl) => {
-    payload.messaging_product = 'whatsapp';
-
+  const sendMediaMessage = async (file, type) => {
+    const { mediaId, mediaUrl } = await uploadMedia(file) || {};
+    if (!mediaId) return;
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type,
+      [type]: { id: mediaId, caption: file.name },
+    };
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -255,9 +230,9 @@ export default function ChatPage() {
         body: JSON.stringify(payload),
       }
     );
-
     const data = await res.json();
     if (data.messages) {
+      // Salva con preview locale e url ufficiale
       await addDoc(collection(db, 'messages'), {
         text: file.name,
         to: selectedPhone,
@@ -268,7 +243,7 @@ export default function ChatPage() {
         user_uid: user.uid,
         message_id: data.messages[0].id,
         mediaId,
-        mediaUrl,
+        mediaUrl: mediaUrl || URL.createObjectURL(file),
       });
     } else {
       console.error('❌ Errore invio media:', data);
@@ -276,39 +251,6 @@ export default function ChatPage() {
     }
   };
 
-  // Upload Foto
-  const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !userData) return;
-    const { mediaId, mediaUrl } = await uploadMedia(file) || {};
-    if (!mediaId || !mediaUrl) return;
-
-    const payload = {
-      to: selectedPhone,
-      type: 'image',
-      image: { id: mediaId, caption: file.name },
-    };
-
-    await sendMediaMessage(payload, file, 'image', mediaId, mediaUrl);
-  };
-
-  // Upload Documenti
-  const handleDocUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !userData) return;
-    const { mediaId, mediaUrl } = await uploadMedia(file) || {};
-    if (!mediaId || !mediaUrl) return;
-
-    const payload = {
-      to: selectedPhone,
-      type: 'document',
-      document: { id: mediaId, filename: file.name },
-    };
-
-    await sendMediaMessage(payload, file, 'document', mediaId, mediaUrl);
-  };
-
-  // Funzione tempo
   const parseTime = (val) => {
     if (!val) return 0;
     if (typeof val === 'string') return parseInt(val) * 1000;
@@ -449,7 +391,6 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Input */}
         <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner relative">
           <Input
             placeholder="Scrivi un messaggio..."
@@ -459,7 +400,6 @@ export default function ChatPage() {
             className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
           />
 
-          {/* Template */}
           <div className="relative">
             <button
               type="button"
@@ -469,13 +409,13 @@ export default function ChatPage() {
               📑
             </button>
             {showTemplates && (
-              <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50">
+              <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 max-h-64 overflow-y-auto">
                 {templates.length === 0 ? (
                   <p className="p-3 text-sm text-gray-500 text-center">
                     Nessun template approvato
                   </p>
                 ) : (
-                  <ul className="py-2 max-h-64 overflow-y-auto">
+                  <ul>
                     {templates.map((tpl) => (
                       <li
                         key={tpl.name}
@@ -494,7 +434,6 @@ export default function ChatPage() {
             )}
           </div>
 
-          {/* Foto */}
           <div>
             <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
               📷
@@ -502,12 +441,11 @@ export default function ChatPage() {
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={(e) => handleImageUpload(e)}
+                onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'image')}
               />
             </label>
           </div>
 
-          {/* Documenti */}
           <div>
             <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
               📎
@@ -515,7 +453,7 @@ export default function ChatPage() {
                 type="file"
                 accept=".pdf,.doc,.docx,.xls,.xlsx"
                 className="hidden"
-                onChange={(e) => handleDocUpload(e)}
+                onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'document')}
               />
             </label>
           </div>
