@@ -30,6 +30,9 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Impostaz.', icon: Settings, path: '/chatboost/impostazioni/info' },
   ];
 
+  // Nascondo la bottom nav su mobile se sono dentro una chat
+  const hideBottomNav = pathname.startsWith('/chatboost/dashboard/chat/');
+
   return (
     <div className="h-screen w-screen flex font-[Montserrat] bg-gray-50 overflow-hidden">
       {/* Sidebar desktop */}
@@ -72,39 +75,39 @@ export default function ChatBoostLayout({ children }) {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto bg-[#f7f7f7] p-4 pb-24 md:pb-6">
-        {children}
-      </main>
+      <main className="flex-1 overflow-hidden bg-[#f7f7f7]">{children}</main>
 
       {/* Bottom Nav mobile */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around items-center py-3 shadow-lg md:hidden z-50">
-        {navItems.map(({ label, icon: Icon, path }) => {
-          const active = pathname.startsWith(path);
-          return (
-            <button
-              key={path}
-              onClick={() => router.push(path)}
-              className={`flex flex-col items-center text-xs transition-all ${
-                active ? 'text-black' : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              <Icon size={22} className={`${active ? 'scale-110' : ''}`} />
-              <span className="text-[10px] mt-1">{label}</span>
-            </button>
-          );
-        })}
+      {!hideBottomNav && (
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around items-center py-3 shadow-lg md:hidden z-50">
+          {navItems.map(({ label, icon: Icon, path }) => {
+            const active = pathname.startsWith(path);
+            return (
+              <button
+                key={path}
+                onClick={() => router.push(path)}
+                className={`flex flex-col items-center text-xs transition-all ${
+                  active ? 'text-black' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <Icon size={22} className={`${active ? 'scale-110' : ''}`} />
+                <span className="text-[10px] mt-1">{label}</span>
+              </button>
+            );
+          })}
 
-        <button
-          onClick={() => {
-            localStorage.removeItem('firebaseAuthToken');
-            router.push('/wa/login');
-          }}
-          className="flex flex-col items-center text-xs text-gray-500 hover:text-red-500"
-        >
-          <LogOut size={22} />
-          <span className="text-[10px] mt-1">Logout</span>
-        </button>
-      </nav>
+          <button
+            onClick={() => {
+              localStorage.removeItem('firebaseAuthToken');
+              router.push('/wa/login');
+            }}
+            className="flex flex-col items-center text-xs text-gray-500 hover:text-red-500"
+          >
+            <LogOut size={22} />
+            <span className="text-[10px] mt-1">Logout</span>
+          </button>
+        </nav>
+      )}
     </div>
   );
 }
