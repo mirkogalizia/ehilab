@@ -194,7 +194,7 @@ export default function ChatPage() {
   const uploadMedia = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('type', file.type); // fix importante
+    formData.append('type', file.type);
 
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
@@ -216,42 +216,10 @@ export default function ChatPage() {
     return data.id;
   };
 
-  // Upload Foto
-  const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !userData) return;
-    const mediaId = await uploadMedia(file);
-    if (!mediaId) return;
-
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: selectedPhone,
-      type: 'image',
-      image: { id: mediaId, caption: file.name },
-    };
-
-    await sendMediaMessage(payload, file, 'image', mediaId);
-  };
-
-  // Upload Documenti
-  const handleDocUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !userData) return;
-    const mediaId = await uploadMedia(file);
-    if (!mediaId) return;
-
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: selectedPhone,
-      type: 'document',
-      document: { id: mediaId, filename: file.name },
-    };
-
-    await sendMediaMessage(payload, file, 'document', mediaId);
-  };
-
   // Funzione comune invio media
   const sendMediaMessage = async (payload, file, type, mediaId) => {
+    payload.messaging_product = 'whatsapp';
+
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -281,6 +249,38 @@ export default function ChatPage() {
       console.error('❌ Errore invio media:', data);
       alert('Errore invio media: ' + JSON.stringify(data.error));
     }
+  };
+
+  // Upload Foto
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !userData) return;
+    const mediaId = await uploadMedia(file);
+    if (!mediaId) return;
+
+    const payload = {
+      to: selectedPhone,
+      type: 'image',
+      image: { id: mediaId, caption: file.name },
+    };
+
+    await sendMediaMessage(payload, file, 'image', mediaId);
+  };
+
+  // Upload Documenti
+  const handleDocUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !userData) return;
+    const mediaId = await uploadMedia(file);
+    if (!mediaId) return;
+
+    const payload = {
+      to: selectedPhone,
+      type: 'document',
+      document: { id: mediaId, filename: file.name },
+    };
+
+    await sendMediaMessage(payload, file, 'document', mediaId);
   };
 
   // Funzione tempo
