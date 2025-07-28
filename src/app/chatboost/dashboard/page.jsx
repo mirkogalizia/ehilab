@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus } from 'lucide-react';
+import { Send, Plus, ChevronLeft } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
@@ -29,6 +29,8 @@ export default function ChatPage() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [newPhone, setNewPhone] = useState('');
+  const [mobileView, setMobileView] = useState('list'); // 'list' or 'chat' on mobile
+
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
@@ -91,7 +93,7 @@ export default function ChatPage() {
     fetchTemplates();
   }, [user]);
 
-  // Invia messaggio testo
+  // Invio messaggio testo
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -130,7 +132,7 @@ export default function ChatPage() {
     }
   };
 
-  // Invia template
+  // Invio template
   const sendTemplate = async (templateName) => {
     if (!selectedPhone || !templateName || !userData) return;
     const tpl = templates.find((t) => t.name === templateName);
@@ -172,7 +174,7 @@ export default function ChatPage() {
     }
   };
 
-  // Upload media con preview + update URL Meta
+  // Upload media (image/document) con preview + update URL remoto
   const uploadMedia = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -283,10 +285,16 @@ export default function ChatPage() {
     .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
+  // Toggle vista mobile (lista/chat)
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+
   return (
     <div className="flex flex-col md:flex-row h-screen bg-gray-50 font-[Montserrat]">
       {/* Lista contatti */}
-      <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
+      <div
+        className={`bg-white border-r overflow-y-auto p-6 shadow-sm
+          ${isMobile ? (mobileView === 'list' ? 'block w-full' : 'hidden') : 'w-1/4 block'}`}
+      >
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-gray-800">Conversazioni</h2>
           <button
@@ -301,7 +309,10 @@ export default function ChatPage() {
           {phoneList.map((phone) => (
             <li
               key={phone}
-              onClick={() => setSelectedPhone(phone)}
+              onClick={() => {
+                setSelectedPhone(phone);
+                if (isMobile) setMobileView('chat');
+              }}
               className={`cursor-pointer px-4 py-3 rounded-xl shadow-sm transition ${
                 selectedPhone === phone
                   ? 'bg-gray-200 text-gray-900 font-semibold'
@@ -332,6 +343,7 @@ export default function ChatPage() {
                     }
                     setShowNewChat(false);
                     setNewPhone('');
+                    if (isMobile) setMobileView('chat');
                   }
                 }}
                 className="bg-black text-white hover:bg-gray-800 flex-1"
@@ -347,8 +359,20 @@ export default function ChatPage() {
       </div>
 
       {/* Conversazione */}
-      <div className="flex flex-col flex-1 bg-gray-100">
-        <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
+      <div
+        className={`flex flex-col flex-1 bg-gray-100
+          ${isMobile ? (mobileView === 'chat' ? 'block w-full' : 'hidden') : 'block'}`}
+      >
+        <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700 flex items-center">
+          {isMobile && (
+            <button
+              onClick={() => setMobileView('list')}
+              className="mr-3 p-1 rounded hover:bg-gray-200 transition"
+              aria-label="Torna alla lista contatti"
+            >
+              <ChevronLeft size={24} />
+            </button>
+          )}
           {selectedPhone
             ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
             : 'Seleziona una chat'}
@@ -486,3 +510,4 @@ export default function ChatPage() {
     </div>
   );
 }
+
