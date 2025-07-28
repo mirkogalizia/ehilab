@@ -10,8 +10,6 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
-  doc,
-  updateDoc,
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -23,10 +21,8 @@ export default function ChatPage() {
   const [phoneList, setPhoneList] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
-  const [templates, setTemplates] = useState([]);
   const [userData, setUserData] = useState(null);
   const [contactNames, setContactNames] = useState({});
-  const [showTemplates, setShowTemplates] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
   const [newPhone, setNewPhone] = useState('');
   const messagesEndRef = useRef(null);
@@ -67,31 +63,14 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  // Scroll automatico in fondo chat
+  // Scroll automatico in fondo
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [allMessages, selectedPhone]);
 
-  // Carica template APPROVED
-  useEffect(() => {
-    if (!user?.email) return;
-    const fetchTemplates = async () => {
-      const res = await fetch('/api/list-templates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email }),
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
-      }
-    };
-    fetchTemplates();
-  }, [user]);
-
-  // Funzioni invio messaggi (invariate)
+  // Invia messaggio
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -142,15 +121,14 @@ export default function ChatPage() {
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   return (
-    <div className="flex h-screen font-[Montserrat]">
-      {/* DESKTOP: lista + chat | MOBILE: solo una alla volta */}
+    <div className="flex h-screen font-[Montserrat] bg-gray-50">
       {/* Lista contatti */}
       <div
         className={`${
-          selectedPhone ? 'hidden md:block md:w-1/4' : 'w-full md:w-1/4'
-        } bg-white border-r overflow-y-auto p-6 shadow-sm`}
+          selectedPhone ? 'hidden md:block md:w-1/3' : 'w-full md:w-1/3'
+        } bg-white border-r overflow-y-auto px-3 py-4`}
       >
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-800">Conversazioni</h2>
           <button
             onClick={() => setShowNewChat(true)}
@@ -160,14 +138,14 @@ export default function ChatPage() {
           </button>
         </div>
 
-        <ul className="space-y-3">
+        <ul className="divide-y divide-gray-100">
           {phoneList.map((phone) => (
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              className={`cursor-pointer px-4 py-3 rounded-xl shadow-sm transition ${
+              className={`cursor-pointer px-4 py-3 text-base rounded-lg transition ${
                 selectedPhone === phone
-                  ? 'bg-gray-200 text-gray-900 font-semibold'
+                  ? 'bg-gray-200 font-semibold text-gray-900'
                   : 'hover:bg-gray-100'
               }`}
             >
@@ -177,10 +155,10 @@ export default function ChatPage() {
         </ul>
       </div>
 
-      {/* Conversazione */}
+      {/* Chat */}
       {selectedPhone && (
-        <div className="flex flex-col flex-1 bg-gray-100">
-          {/* Header con back su mobile */}
+        <div className="flex flex-col flex-1 bg-gray-100 pb-20 md:pb-6">
+          {/* Header */}
           <div className="p-4 bg-white border-b shadow-sm flex items-center gap-3">
             <button
               onClick={() => setSelectedPhone('')}
@@ -193,7 +171,8 @@ export default function ChatPage() {
             </span>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6">
+          {/* Messaggi */}
+          <div className="flex-1 overflow-y-auto px-3 py-4">
             <div className="flex flex-col gap-3">
               {filteredMessages.map((msg, idx) => {
                 const isOperator = msg.from === 'operator';
@@ -208,15 +187,15 @@ export default function ChatPage() {
                     className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}
                   >
                     <div
-                      className={`max-w-[70%] px-5 py-3 rounded-2xl text-sm shadow-md ${
+                      className={`px-4 py-2 rounded-lg text-sm shadow ${
                         isOperator
-                          ? 'bg-black text-white rounded-br-none'
-                          : 'bg-white text-gray-900 rounded-bl-none'
-                      }`}
+                          ? 'bg-black text-white rounded-br-none ml-auto'
+                          : 'bg-white text-gray-900 rounded-bl-none mr-auto'
+                      } max-w-[90%]`}
                     >
                       {msg.text}
                     </div>
-                    <div className="text-[10px] text-gray-400 mt-1">{time}</div>
+                    <div className="text-[11px] text-gray-400 mt-1">{time}</div>
                   </div>
                 );
               })}
@@ -224,14 +203,14 @@ export default function ChatPage() {
             </div>
           </div>
 
-          {/* Input messaggi */}
-          <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner">
+          {/* Input */}
+          <div className="flex items-center gap-3 p-3 bg-white border-t shadow-inner">
             <Input
               placeholder="Scrivi un messaggio..."
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-              className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
+              className="flex-1 rounded-full px-4 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
             />
             <Button
               onClick={sendMessage}
