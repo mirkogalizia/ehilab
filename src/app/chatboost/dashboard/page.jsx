@@ -24,6 +24,7 @@ export default function ChatPage() {
   const [templates, setTemplates] = useState([]);
   const [userData, setUserData] = useState(null);
   const [contactNames, setContactNames] = useState({});
+  const [showTemplates, setShowTemplates] = useState(false);
   const messagesEndRef = useRef(null);
   const { user } = useAuth();
 
@@ -76,7 +77,7 @@ export default function ChatPage() {
     }
   }, [allMessages, selectedPhone]);
 
-  // Carica template APPROVED dalla tua API
+  // Carica template APPROVED
   useEffect(() => {
     if (!user?.email) return;
 
@@ -179,6 +180,7 @@ export default function ChatPage() {
         user_uid: user.uid,
         message_id: data.messages[0].id,
       });
+      setShowTemplates(false);
     } else {
       console.warn('❌ Errore invio template:', data);
     }
@@ -261,7 +263,7 @@ export default function ChatPage() {
         </div>
 
         {/* Input + Template */}
-        <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner">
+        <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner relative">
           <Input
             placeholder="Scrivi un messaggio..."
             value={messageText}
@@ -270,34 +272,40 @@ export default function ChatPage() {
             className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
           />
 
-          {/* Dropdown Template */}
-          <div className="relative group">
+          {/* Bottone Template */}
+          <div className="relative">
             <button
               type="button"
+              onClick={() => setShowTemplates((prev) => !prev)}
               className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition text-sm text-gray-700"
             >
               📑 Template
             </button>
-            <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition">
-              {templates.length === 0 ? (
-                <p className="p-3 text-sm text-gray-500 text-center">Nessun template approvato</p>
-              ) : (
-                <ul className="py-2 max-h-64 overflow-y-auto">
-                  {templates.map((tpl) => (
-                    <li
-                      key={tpl.name}
-                      onClick={() => sendTemplate(tpl.name)}
-                      className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
-                    >
-                      <div className="font-medium">{tpl.name}</div>
-                      <div className="text-xs text-gray-500 truncate">
-                        {tpl.components?.[0]?.text || '—'}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+
+            {showTemplates && (
+              <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50">
+                {templates.length === 0 ? (
+                  <p className="p-3 text-sm text-gray-500 text-center">
+                    Nessun template approvato
+                  </p>
+                ) : (
+                  <ul className="py-2 max-h-64 overflow-y-auto">
+                    {templates.map((tpl) => (
+                      <li
+                        key={tpl.name}
+                        onClick={() => sendTemplate(tpl.name)}
+                        className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+                      >
+                        <div className="font-medium">{tpl.name}</div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {tpl.components?.[0]?.text || '—'}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
 
           <Button
