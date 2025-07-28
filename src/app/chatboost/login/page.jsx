@@ -1,65 +1,84 @@
-"use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/firebase";
+'use client';
+
+import { useState } from 'react';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
+import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setError("");
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      router.push("/chatboost/dashboard");
+      router.push('/chatboost/dashboard'); // vai in dashboard
     } catch (err) {
-      setError("Credenziali non valide. Riprova.");
+      setError('❌ Email o password errati');
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8">
-        <h2 className="text-2xl font-bold mb-6 text-center text-black">Login ChatBoost</h2>
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Email</label>
-            <input
-              type="email"
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-black focus:border-black"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Password</label>
-            <input
-              type="password"
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-black focus:border-black"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
+    <div className="flex h-screen bg-gradient-to-br from-green-50 to-green-100 items-center justify-center">
+      <div className="max-w-lg w-full bg-white shadow-xl rounded-2xl p-10 space-y-8">
+        <div className="text-center">
+          <h1 className="text-3xl font-extrabold text-green-600">EHI! Chat Boost</h1>
+          <p className="mt-2 text-gray-500">
+            🚀 Aumenta il tuo fatturato con l’automazione WhatsApp
+          </p>
+        </div>
+
+        <form onSubmit={handleLogin} className="space-y-6">
+          <input
+            type="email"
+            placeholder="Email"
+            className="w-full border rounded-lg px-4 py-3"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+
+          <input
+            type="password"
+            placeholder="Password"
+            className="w-full border rounded-lg px-4 py-3"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+
           {error && <p className="text-red-500 text-sm">{error}</p>}
+
           <button
             type="submit"
-            className="w-full bg-black text-white py-2 rounded-md hover:bg-gray-800 transition"
+            className="w-full py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition"
           >
-            Login
+            🚪 Accedi
           </button>
         </form>
-        <p className="mt-4 text-center text-sm text-gray-600">
-          Non hai un account?{" "}
-          <a href="/chatboost/register" className="text-black font-semibold hover:underline">
-            Registrati
-          </a>
-        </p>
+
+        <div className="text-center text-gray-500 text-sm">
+          Nessun account? <a href="#" className="text-green-600 font-medium hover:underline">Contattaci</a>
+        </div>
+
+        {/* Sezione marketing */}
+        <div className="grid grid-cols-3 gap-4 text-center mt-6">
+          <div>
+            <span className="text-2xl">📈</span>
+            <p className="text-sm mt-2 font-semibold">Incrementa vendite</p>
+          </div>
+          <div>
+            <span className="text-2xl">⚡</span>
+            <p className="text-sm mt-2 font-semibold">Automatizza processi</p>
+          </div>
+          <div>
+            <span className="text-2xl">💬</span>
+            <p className="text-sm mt-2 font-semibold">Fidelizza clienti</p>
+          </div>
+        </div>
       </div>
     </div>
   );
