@@ -39,11 +39,11 @@ export default function ChatBoostLayout({ children }) {
   return (
     <div className="flex h-screen bg-gray-50 font-[Montserrat]">
       {/* Sidebar */}
-      <aside className="w-24 bg-white border-r flex flex-col items-center py-8 shadow-lg">
+      <aside className="w-24 bg-white border-r flex flex-col items-center py-8 shadow-md">
         {/* Logo */}
         <div
           onClick={() => router.push('/chatboost/dashboard')}
-          className="text-xl font-extrabold text-green-600 mb-12 cursor-pointer tracking-tight hover:scale-105 transition-transform"
+          className="text-xl font-extrabold text-gray-900 mb-12 cursor-pointer tracking-tight hover:scale-105 transition-transform"
         >
           EHI!
         </div>
@@ -58,8 +58,8 @@ export default function ChatBoostLayout({ children }) {
                 onClick={() => router.push(path)}
                 className={`flex flex-col items-center text-sm font-medium transition-all ${
                   active
-                    ? 'text-green-600'
-                    : 'text-gray-500 hover:text-green-500'
+                    ? 'text-black'
+                    : 'text-gray-500 hover:text-gray-800'
                 }`}
               >
                 <Icon size={22} className={`${active ? 'scale-110' : ''}`} />
@@ -75,7 +75,7 @@ export default function ChatBoostLayout({ children }) {
             localStorage.removeItem('firebaseAuthToken');
             router.push('/wa/login');
           }}
-          className="text-red-500 hover:text-red-600 transition flex flex-col items-center"
+          className="text-gray-500 hover:text-red-500 transition flex flex-col items-center"
         >
           <LogOut size={22} />
           <span className="text-[11px] mt-1">Logout</span>
