@@ -190,13 +190,14 @@ export default function ChatPage() {
     }
   };
 
-  // Upload generico con fix messaging_product
+  // Upload generico con fix messaging_product e fetch url
   const uploadMedia = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('type', file.type);
-    formData.append('messaging_product', 'whatsapp'); // FIX aggiunto
+    formData.append('messaging_product', 'whatsapp');
 
+    // Upload file per ottenere mediaId
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
       {
@@ -214,11 +215,33 @@ export default function ChatPage() {
       alert('Upload fallito: ' + JSON.stringify(data.error));
       return null;
     }
-    return data.id;
+
+    const mediaId = data.id;
+
+    // Ora chiedi l'URL diretto con GET
+    const urlRes = await fetch(
+      `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        },
+      }
+    );
+    const urlData = await urlRes.json();
+
+    if (!urlData.url) {
+      console.error('❌ Errore fetching media URL:', urlData);
+      alert('Errore nel recupero URL immagine');
+      return null;
+    }
+
+    // Ritorna oggetto con mediaId e mediaUrl
+    return { mediaId, mediaUrl: urlData.url };
   };
 
   // Funzione comune invio media
-  const sendMediaMessage = async (payload, file, type, mediaId) => {
+  const sendMediaMessage = async (payload, file, type, mediaId, mediaUrl) => {
     payload.messaging_product = 'whatsapp';
 
     const res = await fetch(
@@ -245,6 +268,7 @@ export default function ChatPage() {
         user_uid: user.uid,
         message_id: data.messages[0].id,
         mediaId,
+        mediaUrl,
       });
     } else {
       console.error('❌ Errore invio media:', data);
@@ -256,8 +280,8 @@ export default function ChatPage() {
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !userData) return;
-    const mediaId = await uploadMedia(file);
-    if (!mediaId) return;
+    const { mediaId, mediaUrl } = await uploadMedia(file) || {};
+    if (!mediaId || !mediaUrl) return;
 
     const payload = {
       to: selectedPhone,
@@ -265,15 +289,15 @@ export default function ChatPage() {
       image: { id: mediaId, caption: file.name },
     };
 
-    await sendMediaMessage(payload, file, 'image', mediaId);
+    await sendMediaMessage(payload, file, 'image', mediaId, mediaUrl);
   };
 
   // Upload Documenti
   const handleDocUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !userData) return;
-    const mediaId = await uploadMedia(file);
-    if (!mediaId) return;
+    const { mediaId, mediaUrl } = await uploadMedia(file) || {};
+    if (!mediaId || !mediaUrl) return;
 
     const payload = {
       to: selectedPhone,
@@ -281,7 +305,7 @@ export default function ChatPage() {
       document: { id: mediaId, filename: file.name },
     };
 
-    await sendMediaMessage(payload, file, 'document', mediaId);
+    await sendMediaMessage(payload, file, 'document', mediaId, mediaUrl);
   };
 
   // Funzione tempo
@@ -393,15 +417,15 @@ export default function ChatPage() {
                         : 'bg-white text-gray-900 rounded-bl-none'
                     }`}
                   >
-                    {msg.type === 'image' && msg.mediaId ? (
+                    {msg.type === 'image' && msg.mediaUrl ? (
                       <img
-                        src={`https://graph.facebook.com/v17.0/${msg.mediaId}`}
+                        src={msg.mediaUrl}
                         alt="Immagine"
-                        className="max-w-[200px] rounded-lg shadow-md"
+                        className="max-w-full h-auto rounded-lg shadow-md"
                       />
-                    ) : msg.type === 'document' && msg.mediaId ? (
+                    ) : msg.type === 'document' && msg.mediaUrl ? (
                       <a
-                        href={`https://graph.facebook.com/v17.0/${msg.mediaId}`}
+                        href={msg.mediaUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-2 text-blue-600 underline text-sm"
