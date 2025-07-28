@@ -5,25 +5,21 @@ import {
   collection,
   doc,
   setDoc,
-  getDocs,
   writeBatch,
   onSnapshot,
+  getDocs,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import * as XLSX from 'xlsx';
 import {
-  Plus,
-  Users,
-  Send,
-  X,
-  Loader2,
+  Plus, Users, Send, X, Loader2
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ContactsPage() {
-  const { user, userData, templates } = useAuth(); // Assumi userData e templates disponibili qui
+  const { user } = useAuth();
 
   // Stati base
   const [categories, setCategories] = useState([]);
@@ -33,18 +29,22 @@ export default function ContactsPage() {
 
   // Nuova categoria
   const [newCat, setNewCat] = useState('');
-
   // Nuovo contatto manuale
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
 
-  // Modal invio massivo
+  // Modal gestione invio massivo
   const [modalOpen, setModalOpen] = useState(false);
   const [templateToSend, setTemplateToSend] = useState(null);
 
   // Stato invio massivo
   const [sending, setSending] = useState(false);
   const [sendLog, setSendLog] = useState('');
+
+  // Templates WhatsApp
+  const [templates, setTemplates] = useState([]);
+  // Dati API utente
+  const [userData, setUserData] = useState(null);
 
   // Carica categorie realtime
   useEffect(() => {
@@ -64,12 +64,37 @@ export default function ContactsPage() {
     const unsub = onSnapshot(collection(db, 'contacts'), snap => {
       const arr = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(c => c.categories?.includes(currentCat));
+        .filter(c => Array.isArray(c.categories) && c.categories.includes(currentCat));
       setContacts(arr);
       setSelected(new Set());
     });
     return () => unsub();
   }, [currentCat]);
+
+  // Carica templates (approvati)
+  useEffect(() => {
+    if (!user?.email) return;
+    (async () => {
+      const res = await fetch('/api/list-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email }),
+      });
+      const data = await res.json();
+      setTemplates(Array.isArray(data) ? data.filter(t => t.status === 'APPROVED') : []);
+    })();
+  }, [user]);
+
+  // Carica dati utente (phone_number_id ecc)
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const usersRef = collection(db, 'users');
+      const snap = await getDocs(usersRef);
+      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      if (me) setUserData(me);
+    })();
+  }, [user]);
 
   // Crea categoria
   const createCategory = async () => {
@@ -115,7 +140,7 @@ export default function ContactsPage() {
     setSelected(s);
   };
 
-  // Invio template singolo contatto via API WhatsApp
+  // INVIO TEMPLATE SINGOLO come ChatPage
   const sendTemplateToContact = async (phone, templateName) => {
     if (!userData) throw new Error('Dati utente non disponibili');
     const payload = {
@@ -144,60 +169,42 @@ export default function ContactsPage() {
     }
   };
 
-  // Invio massivo template a contatti categoria con log e report
+  // Invio massivo template a tutti i contatti della categoria
   const sendTemplateMassive = async () => {
     if (!templateToSend || !currentCat) return alert('Seleziona un template.');
-
     setSending(true);
-    setSendLog(`Inizio invio template "${templateToSend.name}"...\n`);
-
-    let successCount = 0;
-    const errorList = [];
-
-    try {
-      for (let i = 0; i < contacts.length; i++) {
-        const c = contacts[i];
-        try {
-          await sendTemplateToContact(c.id, templateToSend.name);
-          successCount++;
-        } catch (err) {
-          errorList.push({ phone: c.id, name: c.name, error: err.message });
-        }
-        if ((i + 1) % 10 === 0 || i === contacts.length - 1) {
-          setSendLog(
-            `Inviati: ${successCount}, Errori: ${errorList.length} su ${contacts.length}\n`
-          );
-        }
-        await new Promise(r => setTimeout(r, 200));
+    setSendLog('');
+    let successCount = 0, failCount = 0, failDetails = [];
+    for (let i = 0; i < contacts.length; i++) {
+      const c = contacts[i];
+      try {
+        await sendTemplateToContact(c.id, templateToSend.name);
+        successCount++;
+      } catch (err) {
+        failCount++;
+        failDetails.push(`${c.name} (${c.id}): ${err.message}`);
       }
-
-      setSendLog(prev => prev + `\nInvio completato! Messaggi inviati: ${successCount}\n`);
-      if (errorList.length > 0) {
-        setSendLog(
-          prev =>
-            prev +
-            `\nErrori (${errorList.length}):\n` +
-            errorList.map(e => `- ${e.name} (${e.phone}): ${e.error}`).join('\n')
-        );
-      }
-    } catch (err) {
-      setSendLog(prev => prev + `Errore fatale: ${err.message}\n`);
+      // Se vuoi evitare il rate limit abbassa questo numero
+      await new Promise(r => setTimeout(r, 200));
     }
-
+    let report = `Invio terminato!\nTotale: ${contacts.length}\nInviati: ${successCount}\nErrori: ${failCount}`;
+    if (failCount) report += `\nErrori:\n${failDetails.join('\n')}`;
+    setSendLog(report);
     setSending(false);
     setModalOpen(false);
+    setTimeout(()=>setSendLog(''), 10000); // Log visibile per 10 secondi
   };
 
+  // ----- RENDER -----
   return (
     <div className="h-screen flex flex-col md:flex-row">
       {/* Sidebar categorie */}
       <aside className="w-full md:w-1/4 bg-white border-r p-4 overflow-y-auto">
         <h2 className="text-xl font-semibold mb-2 flex items-center gap-1">
-          <Users />
-          Categorie
+          <Users /> Categorie
         </h2>
         <ul className="space-y-1 mb-4">
-          {categories.map(cat => (
+          {Array.isArray(categories) && categories.map(cat => (
             <li
               key={cat.id}
               className={`flex justify-between items-center p-2 rounded cursor-pointer hover:bg-gray-200 ${
@@ -222,8 +229,7 @@ export default function ContactsPage() {
             onChange={e => setNewCat(e.target.value)}
           />
           <Button onClick={createCategory} className="flex items-center gap-1">
-            <Plus />
-            Crea
+            <Plus /> Crea
           </Button>
         </div>
       </aside>
@@ -289,7 +295,7 @@ export default function ContactsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {contacts.map(c => (
+                  {Array.isArray(contacts) && contacts.map(c => (
                     <tr key={c.id} className="hover:bg-gray-50">
                       <td className="p-2">
                         <input
@@ -331,13 +337,13 @@ export default function ContactsPage() {
               <select
                 value={templateToSend?.name || ''}
                 onChange={e => {
-                  const tpl = templates.find(t => t.name === e.target.value);
+                  const tpl = (templates||[]).find(t => t.name === e.target.value);
                   setTemplateToSend(tpl || null);
                 }}
                 className="w-full border border-gray-300 rounded px-3 py-2"
               >
                 <option value="">-- Scegli un template --</option>
-                {templates.map(tpl => (
+                {(templates||[]).map(tpl => (
                   <option key={tpl.name} value={tpl.name}>
                     {tpl.name}
                   </option>
