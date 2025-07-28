@@ -188,6 +188,120 @@ export default function ChatPage() {
     }
   };
 
+  // Upload Foto
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !userData) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        },
+        body: formData,
+      }
+    );
+
+    const data = await res.json();
+    if (!data.id) return;
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'image',
+      image: { id: data.id, caption: file.name },
+    };
+
+    const sendRes = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const sendData = await sendRes.json();
+    if (sendData.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text: file.name,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'image',
+        user_uid: user.uid,
+        message_id: sendData.messages[0].id,
+        mediaId: data.id,
+      });
+    }
+  };
+
+  // Upload Documenti
+  const handleDocUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !userData) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        },
+        body: formData,
+      }
+    );
+
+    const data = await res.json();
+    if (!data.id) return;
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'document',
+      document: { id: data.id, filename: file.name },
+    };
+
+    const sendRes = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const sendData = await sendRes.json();
+    if (sendData.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text: file.name,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'document',
+        user_uid: user.uid,
+        message_id: sendData.messages[0].id,
+        mediaId: data.id,
+      });
+    }
+  };
+
   // Funzione tempo
   const parseTime = (val) => {
     if (!val) return 0;
@@ -231,7 +345,6 @@ export default function ChatPage() {
           ))}
         </ul>
 
-        {/* Modal nuova chat */}
         {showNewChat && (
           <div className="mt-4 p-4 bg-gray-100 rounded-xl shadow-md">
             <h3 className="font-medium mb-2">📞 Inserisci numero</h3>
@@ -271,14 +384,12 @@ export default function ChatPage() {
 
       {/* Conversazione */}
       <div className="flex flex-col flex-1 bg-gray-100">
-        {/* Header */}
         <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
           {selectedPhone
             ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
             : 'Seleziona una chat'}
         </div>
 
-        {/* Messaggi */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="flex flex-col gap-3">
             {filteredMessages.map((msg, idx) => {
@@ -300,7 +411,21 @@ export default function ChatPage() {
                         : 'bg-white text-gray-900 rounded-bl-none'
                     }`}
                   >
-                    {msg.type === 'template' ? (
+                    {msg.type === 'image' ? (
+                      <img
+                        src={`https://graph.facebook.com/v17.0/${msg.mediaId}`}
+                        alt="Immagine"
+                        className="max-w-[200px] rounded-lg shadow-md"
+                      />
+                    ) : msg.type === 'document' ? (
+                      <a
+                        href={`https://graph.facebook.com/v17.0/${msg.mediaId}`}
+                        target="_blank"
+                        className="flex items-center gap-2 text-blue-600 underline text-sm"
+                      >
+                        📎 {msg.text}
+                      </a>
+                    ) : msg.type === 'template' ? (
                       <>
                         <span className="font-semibold">📑 </span>
                         {msg.text}
@@ -317,7 +442,7 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Input + Template */}
+        {/* Input */}
         <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner relative">
           <Input
             placeholder="Scrivi un messaggio..."
@@ -327,14 +452,14 @@ export default function ChatPage() {
             className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
           />
 
-          {/* Bottone Template */}
+          {/* Template */}
           <div className="relative">
             <button
               type="button"
               onClick={() => setShowTemplates((prev) => !prev)}
               className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition text-sm text-gray-700"
             >
-              📑 Template
+              📑
             </button>
 
             {showTemplates && (
@@ -361,6 +486,32 @@ export default function ChatPage() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* Foto */}
+          <div>
+            <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
+              📷
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => handleImageUpload(e)}
+              />
+            </label>
+          </div>
+
+          {/* Documenti */}
+          <div>
+            <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
+              📎
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.xls,.xlsx"
+                className="hidden"
+                onChange={(e) => handleDocUpload(e)}
+              />
+            </label>
           </div>
 
           <Button
