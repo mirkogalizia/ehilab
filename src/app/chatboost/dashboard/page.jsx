@@ -13,7 +13,7 @@ import {
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus } from 'lucide-react';
+import { Send, Plus, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
@@ -65,7 +65,7 @@ export default function ChatPage() {
     return () => unsubscribe();
   }, []);
 
-  // Scroll automatico in fondo chat
+  // Scroll automatico
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
@@ -89,7 +89,7 @@ export default function ChatPage() {
     fetchTemplates();
   }, [user]);
 
-  // Invia messaggio testo
+  // Invio messaggio
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     const payload = {
@@ -123,12 +123,11 @@ export default function ChatPage() {
       });
       setMessageText('');
     } else {
-      console.error('❌ Errore invio messaggio:', data);
-      alert('Errore invio messaggio: ' + JSON.stringify(data.error));
+      alert('Errore invio: ' + JSON.stringify(data.error));
     }
   };
 
-  // Funzione per parse timestamp
+  // Parse timestamp
   const parseTime = (val) => {
     if (!val) return 0;
     if (typeof val === 'string') return parseInt(val) * 1000;
@@ -137,95 +136,20 @@ export default function ChatPage() {
     return 0;
   };
 
-  // Invia media (immagini / documenti)
-  const sendMediaMessage = async (file, mediaType) => {
-    if (!selectedPhone || !userData) return;
-
-    try {
-      // 1) Upload del file a WhatsApp Graph API (messaging_product richiesto!)
-      const form = new FormData();
-      form.append('file', file);
-      form.append('type', mediaType);
-      form.append('messaging_product', 'whatsapp'); // IMPORTANTE!
-
-      const uploadRes = await fetch(
-        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            // NON mettere Content-Type, ci pensa FormData
-          },
-          body: form,
-        }
-      );
-      const uploadData = await uploadRes.json();
-      if (!uploadData.id) throw new Error(JSON.stringify(uploadData));
-
-      const mediaId = uploadData.id;
-
-      // 2) Recupera URL pubblico del media
-      const urlRes = await fetch(
-        `https://graph.facebook.com/v17.0/${mediaId}?fields=url&messaging_product=whatsapp`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          },
-        }
-      );
-      const { url: mediaUrl } = await urlRes.json();
-
-      // 3) Invia il messaggio WhatsApp con riferimento a mediaId
-      const payload = {
-        messaging_product: 'whatsapp',
-        to: selectedPhone,
-        type: mediaType,
-        [mediaType]: {
-          id: mediaId,
-          caption: file.name,
-        },
-      };
-      const res = await fetch(
-        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        }
-      );
-      const result = await res.json();
-      if (!result.messages) throw new Error(JSON.stringify(result));
-
-      // 4) Registra in Firestore
-      await addDoc(collection(db, 'messages'), {
-        text: file.name,
-        mediaUrl,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: mediaType,
-        user_uid: user.uid,
-        message_id: result.messages[0].id,
-      });
-    } catch (err) {
-      console.error('❌ Errore sendMediaMessage:', err);
-      alert('Errore invio media: ' + err.message);
-    }
-  };
-
+  // Filtra messaggi
   const filteredMessages = allMessages
     .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   return (
-    <div className="flex flex-col md:flex-row h-screen bg-gray-50 font-[Montserrat]">
+    <div className="h-screen w-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* Lista contatti */}
-      <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-6">
+      <div
+        className={`${
+          selectedPhone ? 'hidden md:block md:w-1/4' : 'w-full md:w-1/4'
+        } bg-white border-r overflow-y-auto px-4 py-5`}
+      >
+        <div className="flex items-center justify-between mb-5">
           <h2 className="text-xl font-semibold text-gray-800">Conversazioni</h2>
           <button
             onClick={() => setShowNewChat(true)}
@@ -235,14 +159,14 @@ export default function ChatPage() {
           </button>
         </div>
 
-        <ul className="space-y-3">
+        <ul className="divide-y divide-gray-100">
           {phoneList.map((phone) => (
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              className={`cursor-pointer px-4 py-3 rounded-xl shadow-sm transition ${
+              className={`cursor-pointer px-4 py-3 text-base rounded-lg transition ${
                 selectedPhone === phone
-                  ? 'bg-gray-200 text-gray-900 font-semibold'
+                  ? 'bg-gray-200 font-semibold text-gray-900'
                   : 'hover:bg-gray-100'
               }`}
             >
@@ -250,177 +174,74 @@ export default function ChatPage() {
             </li>
           ))}
         </ul>
-
-        {showNewChat && (
-          <div className="mt-4 p-4 bg-gray-100 rounded-xl shadow-md">
-            <h3 className="font-medium mb-2">📞 Inserisci numero</h3>
-            <Input
-              placeholder="Es: 3931234567"
-              value={newPhone}
-              onChange={(e) => setNewPhone(e.target.value)}
-              className="mb-3"
-            />
-            <div className="flex gap-2">
-              <Button
-                onClick={() => {
-                  if (newPhone) {
-                    setSelectedPhone(newPhone);
-                    if (!phoneList.includes(newPhone)) {
-                      setPhoneList((prev) => [newPhone, ...prev]);
-                    }
-                    setShowNewChat(false);
-                    setNewPhone('');
-                  }
-                }}
-                className="bg-black text-white hover:bg-gray-800 flex-1"
-              >
-                Avvia
-              </Button>
-              <Button variant="outline" onClick={() => setShowNewChat(false)} className="flex-1">
-                Annulla
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Conversazione */}
-      <div className="flex flex-col flex-1 bg-gray-100">
-        <div className="p-4 bg-white border-b shadow-sm text-lg font-semibold text-gray-700">
-          {selectedPhone
-            ? `Chat con ${contactNames[selectedPhone] || selectedPhone}`
-            : 'Seleziona una chat'}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="flex flex-col gap-3">
-            {filteredMessages.map((msg, idx) => {
-              const isOperator = msg.from === 'operator';
-              const time = new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
-                hour: '2-digit',
-                minute: '2-digit',
-              });
-
-              return (
-                <div
-                  key={msg.id || idx}
-                  className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}
-                >
-                  <div
-                    className={`max-w-[70%] px-5 py-3 rounded-2xl text-sm shadow-md ${
-                      isOperator
-                        ? 'bg-black text-white rounded-br-none'
-                        : 'bg-white text-gray-900 rounded-bl-none'
-                    }`}
-                  >
-                    {msg.type === 'image' && msg.mediaUrl ? (
-                      <img
-                        src={msg.mediaUrl}
-                        alt={msg.text}
-                        className="max-w-full h-auto rounded-lg shadow-md"
-                      />
-                    ) : msg.type === 'document' && msg.mediaUrl ? (
-                      <a
-                        href={msg.mediaUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 text-blue-600 underline text-sm"
-                      >
-                        📎 {msg.text}
-                      </a>
-                    ) : msg.type === 'template' ? (
-                      <>
-                        <span className="font-semibold">📑 </span>
-                        {msg.text}
-                      </>
-                    ) : (
-                      msg.text
-                    )}
-                  </div>
-                  <div className="text-[10px] text-gray-400 mt-1">{time}</div>
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 p-4 bg-white border-t shadow-inner relative">
-          <Input
-            placeholder="Scrivi un messaggio..."
-            value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-            className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
-          />
-
-          <div className="relative">
+      {selectedPhone && (
+        <div className="flex flex-col flex-1 bg-gray-100 pb-20 md:pb-6">
+          {/* Header */}
+          <div className="p-4 bg-white border-b shadow-sm flex items-center gap-3">
             <button
-              type="button"
-              onClick={() => setShowTemplates((prev) => !prev)}
-              className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition text-sm text-gray-700"
+              onClick={() => setSelectedPhone('')}
+              className="md:hidden text-gray-600 hover:text-black"
             >
-              📑
+              <ArrowLeft size={22} />
             </button>
-            {showTemplates && (
-              <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 max-h-64 overflow-y-auto">
-                {templates.length === 0 ? (
-                  <p className="p-3 text-sm text-gray-500 text-center">
-                    Nessun template approvato
-                  </p>
-                ) : (
-                  <ul>
-                    {templates.map((tpl) => (
-                      <li
-                        key={tpl.name}
-                        onClick={() => sendTemplate(tpl.name)}
-                        className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
-                      >
-                        <div className="font-medium">{tpl.name}</div>
-                        <div className="text-xs text-gray-500 truncate">
-                          {tpl.components?.[0]?.text || '—'}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
+            <span className="text-lg font-semibold text-gray-700 truncate">
+              {contactNames[selectedPhone] || selectedPhone}
+            </span>
           </div>
 
-          <div>
-            <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
-              📷
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'image')}
-              />
-            </label>
+          {/* Messaggi */}
+          <div className="flex-1 overflow-y-auto px-3 py-4">
+            <div className="flex flex-col gap-3">
+              {filteredMessages.map((msg, idx) => {
+                const isOperator = msg.from === 'operator';
+                const time = new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString(
+                  'it-IT',
+                  { hour: '2-digit', minute: '2-digit' }
+                );
+                return (
+                  <div
+                    key={msg.id || idx}
+                    className={`flex flex-col ${isOperator ? 'items-end' : 'items-start'}`}
+                  >
+                    <div
+                      className={`px-4 py-2 rounded-lg text-base shadow ${
+                        isOperator
+                          ? 'bg-black text-white rounded-br-none ml-auto'
+                          : 'bg-white text-gray-900 rounded-bl-none mr-auto'
+                      } max-w-[90%]`}
+                    >
+                      {msg.text}
+                    </div>
+                    <div className="text-[11px] text-gray-400 mt-1">{time}</div>
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
           </div>
 
-          <div>
-            <label className="cursor-pointer flex items-center px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200 text-sm text-gray-700">
-              📎
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx,.xls,.xlsx"
-                className="hidden"
-                onChange={(e) => e.target.files[0] && sendMediaMessage(e.target.files[0], 'document')}
-              />
-            </label>
+          {/* Input */}
+          <div className="flex items-center gap-3 p-3 bg-white border-t shadow-inner">
+            <Input
+              placeholder="Scrivi un messaggio..."
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+              className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
+            />
+            <Button
+              onClick={sendMessage}
+              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 transition"
+              disabled={!userData || !selectedPhone || !messageText}
+            >
+              <Send size={18} />
+            </Button>
           </div>
-
-          <Button
-            onClick={sendMessage}
-            className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 transition"
-            disabled={!userData || !selectedPhone || !messageText}
-          >
-            <Send size={18} />
-          </Button>
         </div>
-      </div>
+      )}
     </div>
   );
 }
