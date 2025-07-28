@@ -9,8 +9,8 @@ export default function ChatBoostLayout({ children }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [mobileView, setMobileView] = useState('list'); // 'list' or 'chat' for mobile
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [mobileView, setMobileView] = useState('list'); // 'list' or 'chat' on mobile
 
   useEffect(() => {
     if (!loading && !user) {
@@ -19,11 +19,7 @@ export default function ChatBoostLayout({ children }) {
   }, [user, loading, router]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">
-        ⏳ Verifica login...
-      </div>
-    );
+    return <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">⏳ Verifica login...</div>;
   }
   if (!user) return null;
 
@@ -33,8 +29,8 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Impostaz.', icon: Settings, path: '/chatboost/impostazioni/info' },
   ];
 
-  // Controlla se siamo su mobile (window check)
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  // Mobile toggle handler
+  const toggleView = () => setMobileView(mobileView === 'list' ? 'chat' : 'list');
 
   return (
     <div className="flex h-screen bg-gray-50 font-[Montserrat]">
@@ -43,7 +39,6 @@ export default function ChatBoostLayout({ children }) {
         <div
           onClick={() => router.push('/chatboost/dashboard')}
           className="text-xl font-extrabold text-black mb-12 cursor-pointer tracking-tight hover:scale-105 transition-transform"
-          title="EHI!"
         >
           EHI!
         </div>
@@ -70,7 +65,6 @@ export default function ChatBoostLayout({ children }) {
             router.push('/wa/login');
           }}
           className="text-red-500 hover:text-red-600 transition flex flex-col items-center"
-          title="Logout"
         >
           <LogOut size={22} />
           <span className="text-[11px] mt-1">Logout</span>
@@ -79,11 +73,7 @@ export default function ChatBoostLayout({ children }) {
 
       {/* Mobile header */}
       <header className="md:hidden flex items-center justify-between bg-white p-4 border-b shadow-md w-full">
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="text-black"
-          aria-label="Toggle menu"
-        >
+        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-black">
           {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
         </button>
         <h1 className="font-bold text-lg">EHI! Chat Boost</h1>
@@ -92,23 +82,12 @@ export default function ChatBoostLayout({ children }) {
 
       {/* Mobile sidebar drawer */}
       {sidebarOpen && (
-        <aside
-          className="fixed inset-0 bg-black bg-opacity-50 z-50"
-          onClick={() => setSidebarOpen(false)}
-          aria-hidden="true"
-        >
+        <aside className="fixed inset-0 bg-black bg-opacity-50 z-50" onClick={() => setSidebarOpen(false)}>
           <nav
             className="absolute top-0 left-0 bg-white w-64 h-full p-6 flex flex-col"
             onClick={(e) => e.stopPropagation()}
-            aria-label="Mobile navigation"
           >
-            <div
-              className="mb-8 text-2xl font-bold cursor-pointer"
-              onClick={() => {
-                router.push('/chatboost/dashboard');
-                setSidebarOpen(false);
-              }}
-            >
+            <div className="mb-8 text-2xl font-bold cursor-pointer" onClick={() => { router.push('/chatboost/dashboard'); setSidebarOpen(false); }}>
               EHI!
             </div>
             {navItems.map(({ label, icon: Icon, path }) => {
@@ -143,43 +122,44 @@ export default function ChatBoostLayout({ children }) {
         </aside>
       )}
 
-      {/* Main content area */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Mobile toggle nav (lista/chat) - opzionale, se vuoi integrare toggle manuale */}
-        {isMobile && (
-          <div className="flex justify-center gap-4 bg-white border-b p-2 shadow-sm">
-            <button
-              onClick={() => children.props.setMobileView('list')}
-              className={`px-4 py-2 rounded ${
-                children.props.mobileView === 'list' ? 'bg-black text-white' : 'bg-gray-100'
-              }`}
-            >
-              Lista
-            </button>
-            <button
-              onClick={() => children.props.setMobileView('chat')}
-              className={`px-4 py-2 rounded ${
-                children.props.mobileView === 'chat' ? 'bg-black text-white' : 'bg-gray-100'
-              }`}
-            >
-              Chat
-            </button>
-          </div>
-        )}
+      {/* Content area: mostra solo lista contatti o chat su mobile */}
+      <main className="flex-1 flex flex-col">
+        {/* Mobile toggle nav */}
+        <div className="md:hidden flex justify-center gap-4 bg-white border-b p-2 shadow-sm">
+          <button
+            onClick={() => setMobileView('list')}
+            className={`px-4 py-2 rounded ${mobileView === 'list' ? 'bg-black text-white' : 'bg-gray-100'}`}
+          >
+            Lista
+          </button>
+          <button
+            onClick={() => setMobileView('chat')}
+            className={`px-4 py-2 rounded ${mobileView === 'chat' ? 'bg-black text-white' : 'bg-gray-100'}`}
+            disabled={!mobileView === 'list'}
+          >
+            Chat
+          </button>
+        </div>
 
-        {/* Contenuti responsive: lista contatti e chat */}
+        {/* Contenuti responsive */}
         <div className="flex flex-1 overflow-hidden">
+          {/* Lista contatti */}
           <div
-            className={`transition-all duration-300 ease-in-out border-r bg-white overflow-y-auto
-              ${isMobile ? (children.props.mobileView === 'list' ? 'block w-full' : 'hidden') : 'block w-1/4'}`}
+            className={`bg-white border-r overflow-y-auto p-6 transition-all duration-300 ease-in-out ${
+              mobileView === 'list' ? 'block w-full md:w-1/4' : 'hidden md:block md:w-1/4'
+            }`}
           >
-            {children.props.phoneListComponent}
+            {children.props.pageType === 'chat' && children.props.phoneListComponent}
           </div>
+
+          {/* Chat e contenuti */}
           <div
-            className={`flex-1 overflow-y-auto p-6
-              ${isMobile ? (children.props.mobileView === 'chat' ? 'block' : 'hidden') : 'block'}`}
+            className={`flex-1 overflow-y-auto p-6 ${
+              mobileView === 'chat' ? 'block' : 'hidden md:block'
+            }`}
           >
-            {children.props.chatComponent}
+            {children.props.pageType === 'chat' && children.props.chatComponent}
+            {children.props.pageType !== 'chat' && children}
           </div>
         </div>
       </main>
