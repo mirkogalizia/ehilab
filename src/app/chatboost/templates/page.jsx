@@ -70,13 +70,13 @@ export default function TemplatePage() {
     }
   };
 
-  const handleDelete = async (templateId) => {
+  const handleDelete = async (templateName) => {
     if (!userData?.email) return;
 
     const res = await fetch('/api/delete-template', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: userData.email, template_id: templateId }),
+      body: JSON.stringify({ email: userData.email, template_name: templateName }),
     });
 
     const data = await res.json();
@@ -108,7 +108,11 @@ export default function TemplatePage() {
     <div className="p-6 space-y-6">
       <h1 className="text-2xl font-bold">📄 Crea nuovo Template</h1>
 
-      <Input placeholder="Nome template" value={name} onChange={(e) => setName(e.target.value)} />
+      <Input
+        placeholder="Nome template"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
 
       <select
         className="border px-3 py-2 rounded w-full"
@@ -120,7 +124,11 @@ export default function TemplatePage() {
         <option value="OTP">OTP</option>
       </select>
 
-      <Input placeholder="Lingua (es. it, en_US)" value={language} onChange={(e) => setLanguage(e.target.value)} />
+      <Input
+        placeholder="Lingua (es. it, en_US)"
+        value={language}
+        onChange={(e) => setLanguage(e.target.value)}
+      />
 
       <textarea
         placeholder="Corpo del messaggio"
@@ -133,7 +141,9 @@ export default function TemplatePage() {
       <Button onClick={handleSubmit}>📤 Invia Template</Button>
 
       {response && (
-        <pre className="bg-gray-100 p-4 rounded text-sm">{JSON.stringify(response, null, 2)}</pre>
+        <pre className="bg-gray-100 p-4 rounded text-sm">
+          {JSON.stringify(response, null, 2)}
+        </pre>
       )}
 
       <div className="pt-6">
@@ -151,13 +161,15 @@ export default function TemplatePage() {
                     <div>
                       <strong>{tpl.name}</strong> – {tpl.language} – {tpl.category}
                       <br />
-                      <span className="text-xs text-gray-500">{tpl.components?.[0]?.text}</span>
+                      <span className="text-xs text-gray-500">
+                        {tpl.components?.[0]?.text}
+                      </span>
                       <br />
                       <span className="text-[10px] text-gray-400">ID: {tpl.id}</span>
                     </div>
                     <button
                       className="text-red-500 hover:text-red-700 text-sm ml-4"
-                      onClick={() => handleDelete(tpl.id)}
+                      onClick={() => handleDelete(tpl.name)}
                     >
                       ❌
                     </button>

@@ -2,9 +2,9 @@ import { db } from '@/lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
 export async function POST(req) {
-  const { email, template_id } = await req.json();
+  const { email, template_name } = await req.json();
 
-  if (!email || !template_id) {
+  if (!email || !template_name) {
     return new Response(JSON.stringify({ error: 'Campi mancanti' }), { status: 400 });
   }
 
@@ -21,29 +21,25 @@ export async function POST(req) {
     const wabaId = matchedUser.waba_id;
     const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
 
-    // Richiesta DELETE verso Meta
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${wabaId}/message_templates/${template_id}`,
-      {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
-    );
+    // DELETE via nome template
+    const url = `https://graph.facebook.com/v17.0/${wabaId}/message_templates?name=${encodeURIComponent(template_name)}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
     const data = await res.json();
 
     if (!res.ok) {
-      console.error('❌ Errore eliminazione da Meta:', data);
+      console.error('❌ Errore eliminazione Meta:', data);
       return new Response(JSON.stringify({ error: data }), { status: res.status });
     }
 
-    console.log('✅ Template eliminato:', template_id);
-
-    return new Response(JSON.stringify({ success: true, result: data }), { status: 200 });
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
   } catch (err) {
-    console.error('❌ Errore interno eliminazione:', err.message);
+    console.error('❌ Errore interno:', err.message);
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
