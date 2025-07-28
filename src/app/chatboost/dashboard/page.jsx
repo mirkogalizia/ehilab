@@ -33,7 +33,6 @@ export default function ChatPage() {
   // Recupera userData
   useEffect(() => {
     if (!user) return;
-
     const fetchUserDataByEmail = async () => {
       try {
         const usersRef = collection(db, 'users');
@@ -45,7 +44,6 @@ export default function ChatPage() {
         console.error('❌ Errore nel recupero dati utente:', error);
       }
     };
-
     fetchUserDataByEmail();
   }, [user]);
 
@@ -82,7 +80,6 @@ export default function ChatPage() {
   // Carica template APPROVED
   useEffect(() => {
     if (!user?.email) return;
-
     const fetchTemplates = async () => {
       try {
         const res = await fetch('/api/list-templates', {
@@ -100,7 +97,6 @@ export default function ChatPage() {
         console.error('❌ Errore caricamento template:', err);
       }
     };
-
     fetchTemplates();
   }, [user]);
 
@@ -139,6 +135,9 @@ export default function ChatPage() {
         message_id: data.messages[0].id,
       });
       setMessageText('');
+    } else {
+      console.error('❌ Errore invio messaggio:', data);
+      alert('Errore invio messaggio: ' + JSON.stringify(data.error));
     }
   };
 
@@ -185,96 +184,75 @@ export default function ChatPage() {
         message_id: data.messages[0].id,
       });
       setShowTemplates(false);
+    } else {
+      console.error('❌ Errore invio template:', data);
+      alert('Errore invio template: ' + JSON.stringify(data.error));
     }
+  };
+
+  // Upload generico
+  const uploadMedia = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('type', file.type); // fix importante
+
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        },
+        body: formData,
+      }
+    );
+
+    const data = await res.json();
+    if (!data.id) {
+      console.error('❌ Errore upload media:', data);
+      alert('Upload fallito: ' + JSON.stringify(data.error));
+      return null;
+    }
+    return data.id;
   };
 
   // Upload Foto
   const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !userData) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        },
-        body: formData,
-      }
-    );
-
-    const data = await res.json();
-    if (!data.id) return;
+    const mediaId = await uploadMedia(file);
+    if (!mediaId) return;
 
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
       type: 'image',
-      image: { id: data.id, caption: file.name },
+      image: { id: mediaId, caption: file.name },
     };
 
-    const sendRes = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    const sendData = await sendRes.json();
-    if (sendData.messages) {
-      await addDoc(collection(db, 'messages'), {
-        text: file.name,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: 'image',
-        user_uid: user.uid,
-        message_id: sendData.messages[0].id,
-        mediaId: data.id,
-      });
-    }
+    await sendMediaMessage(payload, file, 'image', mediaId);
   };
 
   // Upload Documenti
   const handleDocUpload = async (e) => {
     const file = e.target.files[0];
     if (!file || !userData) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        },
-        body: formData,
-      }
-    );
-
-    const data = await res.json();
-    if (!data.id) return;
+    const mediaId = await uploadMedia(file);
+    if (!mediaId) return;
 
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
       type: 'document',
-      document: { id: data.id, filename: file.name },
+      document: { id: mediaId, filename: file.name },
     };
 
-    const sendRes = await fetch(
+    await sendMediaMessage(payload, file, 'document', mediaId);
+  };
+
+  // Funzione comune invio media
+  const sendMediaMessage = async (payload, file, type, mediaId) => {
+    const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
         method: 'POST',
@@ -286,19 +264,22 @@ export default function ChatPage() {
       }
     );
 
-    const sendData = await sendRes.json();
-    if (sendData.messages) {
+    const data = await res.json();
+    if (data.messages) {
       await addDoc(collection(db, 'messages'), {
         text: file.name,
         to: selectedPhone,
         from: 'operator',
         timestamp: Date.now(),
         createdAt: serverTimestamp(),
-        type: 'document',
+        type,
         user_uid: user.uid,
-        message_id: sendData.messages[0].id,
-        mediaId: data.id,
+        message_id: data.messages[0].id,
+        mediaId,
       });
+    } else {
+      console.error('❌ Errore invio media:', data);
+      alert('Errore invio media: ' + JSON.stringify(data.error));
     }
   };
 
@@ -461,7 +442,6 @@ export default function ChatPage() {
             >
               📑
             </button>
-
             {showTemplates && (
               <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50">
                 {templates.length === 0 ? (
