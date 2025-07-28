@@ -1,30 +1,56 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { collection, doc, setDoc, getDocs, writeBatch, onSnapshot } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  setDoc,
+  getDocs,
+  writeBatch,
+  onSnapshot,
+} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import * as XLSX from 'xlsx';
-import { Plus, Users, ArrowLeft } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import {
+  Plus,
+  Users,
+  Send,
+  X,
+  CheckCircle,
+  Loader2,
+} from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ContactsPage() {
   const { user } = useAuth();
-  const router = useRouter();
+
+  // Stati base
   const [categories, setCategories] = useState([]);
-  const [newCat, setNewCat] = useState('');
   const [currentCat, setCurrentCat] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
-  const [assignCat, setAssignCat] = useState('');
+
+  // Nuova categoria
+  const [newCat, setNewCat] = useState('');
 
   // Nuovo contatto manuale
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
 
-  // Carica categorie
+  // Template disponibili per invio massivo
+  const [templates, setTemplates] = useState([]);
+
+  // Modal gestione invio massivo
+  const [modalOpen, setModalOpen] = useState(false);
+  const [templateToSend, setTemplateToSend] = useState(null);
+
+  // Stato invio massivo
+  const [sending, setSending] = useState(false);
+  const [sendLog, setSendLog] = useState('');
+
+  // Carica categorie realtime
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'categories'), snap => {
       setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -32,25 +58,45 @@ export default function ContactsPage() {
     return () => unsub();
   }, []);
 
-  // Carica contatti quando cambia categoria
+  // Carica contatti realtime filtrati per categoria
   useEffect(() => {
     if (!currentCat) {
       setContacts([]);
+      setSelected(new Set());
       return;
     }
     const unsub = onSnapshot(collection(db, 'contacts'), snap => {
       const arr = snap.docs
-        .map(d => ({ id: d.id, name: d.data().name, cats: d.data().categories || [] }))
-        .filter(c => c.cats.includes(currentCat));
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(c => c.categories?.includes(currentCat));
       setContacts(arr);
+      setSelected(new Set());
     });
     return () => unsub();
   }, [currentCat]);
 
+  // Carica templates (puoi adattare qui o caricare da API)
+  useEffect(() => {
+    async function loadTemplates() {
+      // Esempio fetch da API
+      const res = await fetch('/api/list-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user?.email }),
+      });
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setTemplates(data.filter(tpl => tpl.status === 'APPROVED'));
+      }
+    }
+    if (user?.email) loadTemplates();
+  }, [user]);
+
   // Crea categoria
   const createCategory = async () => {
-    if (!newCat.trim()) return;
-    await setDoc(doc(db, 'categories', newCat.trim()), { name: newCat.trim(), createdBy: user.uid });
+    const name = newCat.trim();
+    if (!name) return;
+    await setDoc(doc(db, 'categories', name), { name, createdBy: user.uid });
     setNewCat('');
   };
 
@@ -72,7 +118,7 @@ export default function ContactsPage() {
     await batch.commit();
   };
 
-  // Aggiungi nuovo contatto manuale
+  // Nuovo contatto manuale
   const addNewContact = async () => {
     const phone = newContactPhone.trim();
     const name = newContactName.trim();
@@ -83,24 +129,43 @@ export default function ContactsPage() {
     setNewContactPhone('');
   };
 
-  // Toggle selezione contatti
-  const toggle = id => {
+  // Toggle selezione contatto
+  const toggleSelect = id => {
     const s = new Set(selected);
     s.has(id) ? s.delete(id) : s.add(id);
     setSelected(s);
   };
 
-  // Assegna categoria a selezionati
-  const assign = async () => {
-    if (!assignCat) return;
-    const batch = writeBatch(db);
-    selected.forEach(id => {
-      const ref = doc(db, 'contacts', id);
-      batch.update(ref, { categories: [...new Set([...(contacts.find(c => c.id === id)?.cats || []), assignCat])] });
-    });
-    await batch.commit();
-    setSelected(new Set());
-    setAssignCat('');
+  // Funzione invio template singolo contatto (adattare col tuo codice reale)
+  const sendTemplateToContact = async (phone, templateName) => {
+    // Qui devi mettere la tua logica reale di invio API WhatsApp
+    // Simulazione con delay:
+    return new Promise(resolve => setTimeout(resolve, 300));
+  };
+
+  // Invio massivo template a tutti i contatti della categoria
+  const sendTemplateMassive = async () => {
+    if (!templateToSend || !currentCat) return alert('Seleziona un template.');
+
+    setSending(true);
+    setSendLog(`Invio template "${templateToSend.name}" a tutti i contatti di ${categories.find(c => c.id === currentCat)?.name}...\n`);
+
+    try {
+      const contactsToSend = contacts;
+      for (let i = 0; i < contactsToSend.length; i++) {
+        const c = contactsToSend[i];
+        setSendLog(prev => prev + `Invio a ${c.name} (${c.id})... `);
+        await sendTemplateToContact(c.id, templateToSend.name);
+        setSendLog(prev => prev + '✔️\n');
+        // Puoi mettere un delay per non superare rate limit:
+        await new Promise(r => setTimeout(r, 200));
+      }
+      setSendLog(prev => prev + 'Invio completato!');
+    } catch (err) {
+      setSendLog(prev => prev + `Errore: ${err.message}`);
+    }
+    setSending(false);
+    setModalOpen(false);
   };
 
   return (
@@ -115,17 +180,30 @@ export default function ContactsPage() {
           {categories.map(cat => (
             <li
               key={cat.id}
-              onClick={() => setCurrentCat(cat.id)}
-              className={`p-2 rounded cursor-pointer ${currentCat === cat.id ? 'bg-gray-200' : ''}`}
+              className={`flex justify-between items-center p-2 rounded cursor-pointer hover:bg-gray-200 ${
+                currentCat === cat.id ? 'bg-gray-200' : ''
+              }`}
             >
-              {cat.name}
+              <span onClick={() => setCurrentCat(cat.id)}>{cat.name}</span>
+              <button
+                title={`Invia template a tutta la categoria ${cat.name}`}
+                onClick={() => setCurrentCat(cat.id) || setModalOpen(true)}
+                className="text-blue-600 hover:text-blue-800"
+              >
+                <Send size={18} />
+              </button>
             </li>
           ))}
         </ul>
         <div className="flex gap-2">
-          <Input placeholder="Nuova categoria" value={newCat} onChange={e => setNewCat(e.target.value)} />
-          <Button onClick={createCategory}>
+          <Input
+            placeholder="Nuova categoria"
+            value={newCat}
+            onChange={e => setNewCat(e.target.value)}
+          />
+          <Button onClick={createCategory} className="flex items-center gap-1">
             <Plus />
+            Crea
           </Button>
         </div>
       </aside>
@@ -148,7 +226,6 @@ export default function ContactsPage() {
                 />
               </label>
 
-              {/* Form nuovo contatto */}
               <div className="flex gap-2 items-center">
                 <Input
                   placeholder="Nome nuovo contatto"
@@ -162,7 +239,10 @@ export default function ContactsPage() {
                   onChange={e => setNewContactPhone(e.target.value)}
                   className="w-40"
                 />
-                <Button onClick={addNewContact} className="bg-green-600 hover:bg-green-700 text-white">
+                <Button
+                  onClick={addNewContact}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
                   Aggiungi
                 </Button>
               </div>
@@ -176,7 +256,11 @@ export default function ContactsPage() {
                     <th className="p-2">
                       <input
                         type="checkbox"
-                        onChange={e => (e.target.checked ? setSelected(new Set(contacts.map(c => c.id))) : setSelected(new Set()))}
+                        onChange={e =>
+                          e.target.checked
+                            ? setSelected(new Set(contacts.map(c => c.id)))
+                            : setSelected(new Set())
+                        }
                         checked={selected.size === contacts.length && contacts.length > 0}
                       />
                     </th>
@@ -188,7 +272,11 @@ export default function ContactsPage() {
                   {contacts.map(c => (
                     <tr key={c.id} className="hover:bg-gray-50">
                       <td className="p-2">
-                        <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} />
+                        <input
+                          type="checkbox"
+                          checked={selected.has(c.id)}
+                          onChange={() => toggleSelect(c.id)}
+                        />
                       </td>
                       <td className="p-2">{c.name}</td>
                       <td className="p-2">{c.id}</td>
@@ -197,30 +285,69 @@ export default function ContactsPage() {
                 </tbody>
               </table>
             </div>
-
-            {/* Azioni batch */}
-            {selected.size > 0 && (
-              <div className="mt-4 flex items-center gap-2">
-                <select
-                  value={assignCat}
-                  onChange={e => setAssignCat(e.target.value)}
-                  className="border px-2 py-1 rounded"
-                >
-                  <option value="">Assegna a...</option>
-                  {categories.filter(c => c.id !== currentCat).map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                <Button onClick={assign} disabled={!assignCat}>
-                  Applica a {selected.size} contatti
-                </Button>
-              </div>
-            )}
           </>
         )}
       </main>
+
+      {/* Modal invio massivo */}
+      {modalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
+            <button
+              onClick={() => setModalOpen(false)}
+              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
+              title="Chiudi"
+            >
+              <X size={20} />
+            </button>
+
+            <h3 className="text-lg font-semibold mb-4">
+              Invia template a tutta la categoria{' '}
+              {categories.find(c => c.id === currentCat)?.name}
+            </h3>
+
+            <div className="mb-4">
+              <label className="block mb-1 font-medium">Seleziona template:</label>
+              <select
+                value={templateToSend?.name || ''}
+                onChange={e => {
+                  const tpl = templates.find(t => t.name === e.target.value);
+                  setTemplateToSend(tpl || null);
+                }}
+                className="w-full border border-gray-300 rounded px-3 py-2"
+              >
+                <option value="">-- Scegli un template --</option>
+                {templates.map(tpl => (
+                  <option key={tpl.name} value={tpl.name}>
+                    {tpl.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={sendTemplateMassive}
+                disabled={sending || !templateToSend}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {sending && <Loader2 className="animate-spin" size={18} />}
+                Invia a tutti
+              </Button>
+              <Button onClick={() => setModalOpen(false)} variant="outline">
+                Annulla
+              </Button>
+            </div>
+
+            {sendLog && (
+              <pre className="mt-4 max-h-40 overflow-y-auto bg-gray-100 p-2 rounded text-xs whitespace-pre-wrap">
+                {sendLog}
+              </pre>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
