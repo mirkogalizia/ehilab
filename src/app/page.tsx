@@ -1,126 +1,167 @@
-import Image from "next/image";
-import Link from "next/link";
+'use client';
+
+import Image from 'next/image';
+import { motion } from 'framer-motion';
+
+const services = [
+  {
+    icon: "💬",
+    title: "WhatsApp Marketing Platform",
+    text: "Automazione completa: reminder, campagne, raccolta recensioni, funnel e CRM.",
+  },
+  {
+    icon: "🛒",
+    title: "Siti Web & E-commerce",
+    text: "Realizzazione siti moderni e shop Shopify con automazioni integrate.",
+  },
+  {
+    icon: "🤖",
+    title: "Automazioni Business",
+    text: "App web, integrazioni API e processi digitali su misura per la tua azienda.",
+  },
+  {
+    icon: "🍽️",
+    title: "Smart Menu QR",
+    text: "Menù digitali per ristoranti, prenotazioni e ordini touch-free.",
+  },
+  {
+    icon: "⭐",
+    title: "Dashboard Recensioni",
+    text: "Raccolta recensioni a pagamento, landing e area VIP con missioni.",
+  },
+  {
+    icon: "🚀",
+    title: "Performance Ads & Analytics",
+    text: "Gestione campagne Google & Meta, dashboard analytics e lead generation locale.",
+  },
+];
 
 export default function Home() {
   return (
-    <main className="relative flex min-h-screen flex-col items-center bg-gradient-to-br from-[#e1eaff] to-[#faf6ff] pb-16 font-[Montserrat]">
-      {/* HERO */}
-      <section className="pt-12 pb-6 flex flex-col items-center">
-        <Image
-          src="/logo.png"
-          alt="EHI! Lab Logo"
-          width={120}
-          height={120}
-          className="mb-5 drop-shadow-lg animate-bounce-slow"
-          priority
-        />
-        <h1 className="text-3xl sm:text-5xl font-extrabold text-center tracking-tight text-neutral-900 mb-2">
-          L’automazione che <span className="text-blue-600 animate-pulse">si fa sentire</span>
-        </h1>
-        <p className="text-lg sm:text-2xl text-center text-neutral-700 font-semibold mb-6 max-w-xl">
-          Digitalizza il tuo business, <span className="text-blue-600 font-bold">con stile.</span>
-        </p>
-        <Link href="#contattaci">
-          <button className="bg-blue-600 text-white text-lg px-7 py-3 rounded-full font-bold shadow-lg hover:bg-blue-700 transition-all animate-pop-in">
-            Prenota una demo gratuita
-          </button>
-        </Link>
+    <main className="relative flex min-h-screen flex-col items-center bg-[#f7f8fa] overflow-x-hidden font-[Geist,sans-serif]">
+
+      {/* HERO SECTION */}
+      <section className="relative flex flex-col items-center justify-center w-full min-h-[70vh] pt-16 px-4 md:pt-24 select-none z-10">
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7 }}
+          className="flex flex-col items-center"
+        >
+          <Image
+            src="/logo.png"
+            alt="EHI! Lab"
+            width={128}
+            height={128}
+            priority
+            className="mb-8 drop-shadow-2xl"
+          />
+          <h1 className="text-4xl md:text-6xl font-black tracking-tight text-gray-900 text-center leading-tight mb-6">
+            L'automazione <span className="text-blue-600">che si fa sentire</span>
+          </h1>
+          <p className="text-lg md:text-2xl text-gray-700 text-center mb-6 max-w-2xl">
+            Digitalizza il tuo business, <span className="font-semibold text-blue-600">con stile</span>.<br />
+            Soluzioni professionali per marketing, customer care e automazioni aziendali.
+          </p>
+          <div className="flex gap-4 mt-2">
+            <a
+              href="/wa/login"
+              className="rounded-full bg-blue-600 hover:bg-blue-700 transition px-7 py-3 text-white text-base font-semibold shadow-lg"
+            >
+              Prova Chat Boost
+            </a>
+            <a
+              href="#servizi"
+              className="rounded-full bg-white border border-blue-600 text-blue-600 hover:bg-blue-50 transition px-7 py-3 text-base font-semibold shadow"
+            >
+              Scopri i servizi
+            </a>
+          </div>
+        </motion.div>
+
+        {/* sfondo animato */}
+        <div className="absolute inset-0 z-0 flex items-center justify-center pointer-events-none">
+          <div className="blur-[80px] w-[70vw] h-[40vw] md:w-[45vw] md:h-[22vw] bg-gradient-to-tr from-blue-100/60 via-blue-300/20 to-purple-100/30 rounded-full opacity-90" />
+        </div>
       </section>
 
       {/* SERVIZI */}
-      <section className="w-full max-w-6xl mx-auto mt-6 px-4">
-        <h2 className="text-2xl sm:text-3xl font-bold text-center mb-8 tracking-tight">
+      <section id="servizi" className="relative w-full py-20 px-4 md:px-0 z-10">
+        <motion.h2
+          initial={{ opacity: 0, y: 40 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.7, delay: 0.1 }}
+          className="text-3xl md:text-4xl font-bold text-center mb-12 text-gray-900 tracking-tight"
+        >
           I nostri servizi
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-7">
-          {[
-            {
-              icon: "🛒",
-              title: "Siti Web & E-commerce",
-              text: "Realizzazione siti professionali e store Shopify su misura.",
-            },
-            {
-              icon: "🤖",
-              title: "Automazioni & Dashboard",
-              text: "Automazioni WhatsApp, dashboard su misura, integrazione API.",
-            },
-            {
-              icon: "🍽️",
-              title: "Smart Menu & Prenotazioni",
-              text: "Menu digitali QR, prenotazioni smart e gestione clienti.",
-            },
-            {
-              icon: "💬",
-              title: "EHI! Chat Boost",
-              text: (
-                <>
-                  Customer care WhatsApp e campagne marketing automatizzate.<br />
-                  <a
-                    href="/wa/login"
-                    className="font-semibold text-blue-600 hover:underline"
-                  >
-                    Accedi alla piattaforma
-                  </a>
-                </>
-              ),
-            },
-          ].map(({ icon, title, text }) => (
-            <div
-              key={title}
-              className="flex flex-col items-center bg-white rounded-3xl shadow-xl border border-neutral-200 px-6 py-8 transition hover:shadow-2xl hover:-translate-y-1 hover:scale-105 duration-200 animate-fade-in"
+        </motion.h2>
+        <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+          {services.map((srv, i) => (
+            <motion.div
+              key={srv.title}
+              initial={{ opacity: 0, y: 50 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: i * 0.07 }}
+              className="flex flex-col items-center bg-white rounded-3xl border border-neutral-200 shadow-xl hover:shadow-2xl transition p-8 group"
             >
-              <span className="text-5xl mb-3 animate-wiggle">{icon}</span>
-              <h3 className="font-semibold text-lg mb-2 text-neutral-800 text-center">{title}</h3>
-              <div className="text-gray-600 text-sm text-center">{text}</div>
-            </div>
+              <span className="text-4xl mb-5 group-hover:scale-110 transition-transform">{srv.icon}</span>
+              <h3 className="font-semibold text-lg mb-3 text-neutral-900 text-center">{srv.title}</h3>
+              <div className="text-gray-600 text-sm text-center">{srv.text}</div>
+            </motion.div>
           ))}
         </div>
       </section>
 
-      {/* SHOWCASE */}
-      <section className="w-full max-w-4xl mx-auto mt-16 mb-8 px-4">
-        <h3 className="text-xl font-bold mb-6 text-center text-neutral-900">Guarda cosa puoi fare con EHI! Lab</h3>
-        {/* Qui metti carousel con screenshot, esempio: */}
-        <div className="flex flex-row justify-center gap-6 overflow-x-auto">
-          <Image src="/mockup1.png" alt="Dashboard EHI" width={240} height={160} className="rounded-xl shadow-lg" />
-          <Image src="/mockup2.png" alt="Menu QR" width={240} height={160} className="rounded-xl shadow-lg" />
-          <Image src="/mockup3.png" alt="Chat WhatsApp" width={240} height={160} className="rounded-xl shadow-lg" />
+      {/* VANTAGGI/INFO */}
+      <section className="w-full py-14 px-4 md:px-0 bg-gradient-to-tr from-blue-50 via-white to-blue-100 border-t border-b border-blue-100">
+        <div className="max-w-5xl mx-auto grid md:grid-cols-3 gap-8 items-center">
+          <div>
+            <h3 className="font-bold text-lg mb-2 text-blue-700">Veloce, modulare, su misura</h3>
+            <p className="text-gray-600 text-base">
+              Sviluppiamo soluzioni personalizzate per ogni esigenza: dalla semplice automazione WhatsApp a CRM e dashboard avanzate.
+            </p>
+          </div>
+          <div>
+            <h3 className="font-bold text-lg mb-2 text-blue-700">Automatizza, semplifica, scala</h3>
+            <p className="text-gray-600 text-base">
+              Dimentica processi manuali e sprechi di tempo: digitalizza la gestione clienti, vendite e marketing.
+            </p>
+          </div>
+          <div>
+            <h3 className="font-bold text-lg mb-2 text-blue-700">Supporto diretto & locale</h3>
+            <p className="text-gray-600 text-base">
+              Lavoriamo da Modena: appuntamenti, consulenza, formazione, assistenza tecnica rapida.
+            </p>
+          </div>
         </div>
       </section>
 
-      {/* PERCHÉ SCEGLIERCI */}
-      <section className="w-full max-w-3xl mx-auto mb-14 px-4">
-        <div className="rounded-3xl bg-white shadow-2xl border border-blue-100 p-7 flex flex-col items-center text-center gap-3 animate-pop-in">
-          <span className="text-2xl font-extrabold text-blue-600 mb-2">Perché scegliere EHI! Lab?</span>
-          <ul className="flex flex-wrap justify-center gap-6 mt-2">
-            {[
-              "Automazione facile e su misura",
-              "Gestione umana e reale (niente bot invadenti)",
-              "Integrazione con Shopify, WhatsApp, ristoranti e molto altro",
-              "Supporto italiano sempre presente",
-            ].map(x => (
-              <li key={x} className="bg-blue-50 text-blue-800 px-4 py-2 rounded-lg font-medium shadow">
-                {x}
-              </li>
-            ))}
-          </ul>
-        </div>
+      {/* CTA */}
+      <section className="w-full flex flex-col items-center py-16 px-4 md:px-0 bg-white">
+        <motion.h3
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.7 }}
+          className="text-2xl md:text-3xl font-bold text-center mb-6"
+        >
+          Porta il tuo business <span className="text-blue-600">nel futuro</span>
+        </motion.h3>
+        <a
+          href="/wa/login"
+          className="rounded-full bg-blue-600 hover:bg-blue-700 transition px-9 py-4 text-white text-lg font-semibold shadow-lg"
+        >
+          Inizia ora
+        </a>
       </section>
 
-      {/* CTA FINALE */}
-      <section id="contattaci" className="w-full flex flex-col items-center mt-4">
-        <div className="bg-blue-600 rounded-full py-6 px-10 shadow-2xl flex flex-col items-center gap-2 animate-fade-in">
-          <span className="text-2xl font-bold text-white">Contattaci ora!</span>
-          <a
-            href="https://wa.me/393664116232"
-            target="_blank"
-            rel="noopener"
-            className="mt-2 bg-white text-blue-700 px-8 py-2 rounded-full font-bold shadow hover:bg-blue-100 transition"
-          >
-            Scrivici su WhatsApp
-          </a>
-        </div>
-      </section>
+      {/* FOOTER */}
+      <footer className="w-full text-center text-xs text-gray-400 py-8 px-2">
+        © {new Date().getFullYear()} EHI! Lab - MM GROUP SRL | P.IVA 03970420364 | Modena
+      </footer>
     </main>
   );
 }
+
