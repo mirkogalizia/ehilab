@@ -1,86 +1,91 @@
 'use client';
 
 import { useAuth } from '@/lib/useAuth';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import { MessageSquare, FileText, Settings, LogOut } from 'lucide-react';
 
 export default function ChatBoostLayout({ children }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/chatboost/login');
+      router.push('/wa/login'); // redirect verso login dedicato
     }
   }, [user, loading, router]);
 
-  // 1. Se loading → mostra solo loader
+  // Loader mentre verifica login
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen text-gray-600 text-lg">
+      <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">
         ⏳ Verifica login...
       </div>
     );
   }
 
-  // 2. Se non c'è user → ritorna null (nessun layout/sidebar)
+  // Se non loggato → niente sidebar
   if (!user) {
     return null;
   }
 
-  // 3. Se user esiste → mostra sidebar + contenuto
+  const navItems = [
+    { label: 'Chat', icon: MessageSquare, path: '/chatboost/dashboard' },
+    { label: 'Template', icon: FileText, path: '/chatboost/templates' },
+    { label: 'Impostaz.', icon: Settings, path: '/chatboost/impostazioni/info' },
+  ];
+
   return (
-    <div className="flex h-screen bg-gray-50 font-sans">
+    <div className="flex h-screen bg-gray-50 font-[Montserrat]">
       {/* Sidebar */}
-      <aside className="w-20 bg-white border-r flex flex-col items-center py-6 shadow-md">
+      <aside className="w-24 bg-white border-r flex flex-col items-center py-8 shadow-lg">
+        {/* Logo */}
         <div
           onClick={() => router.push('/chatboost/dashboard')}
-          className="text-xl font-bold text-green-600 mb-10 cursor-pointer"
+          className="text-xl font-extrabold text-green-600 mb-12 cursor-pointer tracking-tight hover:scale-105 transition-transform"
         >
           EHI!
         </div>
 
-        <nav className="flex flex-col gap-8 items-center">
-          <button
-            onClick={() => router.push('/chatboost/dashboard')}
-            className="flex flex-col items-center text-gray-600 hover:text-green-600 transition"
-          >
-            <MessageSquare size={22} />
-            <span className="text-[10px] mt-1">Chat</span>
-          </button>
-
-          <button
-            onClick={() => router.push('/chatboost/templates')}
-            className="flex flex-col items-center text-gray-600 hover:text-green-600 transition"
-          >
-            <FileText size={22} />
-            <span className="text-[10px] mt-1">Template</span>
-          </button>
-
-          <button
-            onClick={() => router.push('/chatboost/impostazioni/info')}
-            className="flex flex-col items-center text-gray-600 hover:text-green-600 transition"
-          >
-            <Settings size={22} />
-            <span className="text-[10px] mt-1">Impostaz.</span>
-          </button>
+        {/* Menu */}
+        <nav className="flex flex-col gap-10 items-center flex-1">
+          {navItems.map(({ label, icon: Icon, path }) => {
+            const active = pathname.startsWith(path);
+            return (
+              <button
+                key={path}
+                onClick={() => router.push(path)}
+                className={`flex flex-col items-center text-sm font-medium transition-all ${
+                  active
+                    ? 'text-green-600'
+                    : 'text-gray-500 hover:text-green-500'
+                }`}
+              >
+                <Icon size={22} className={`${active ? 'scale-110' : ''}`} />
+                <span className="text-[11px] mt-1">{label}</span>
+              </button>
+            );
+          })}
         </nav>
 
+        {/* Logout */}
         <button
           onClick={() => {
             localStorage.removeItem('firebaseAuthToken');
-            router.push('/chatboost/login');
+            router.push('/wa/login');
           }}
-          className="mt-auto text-red-500 hover:text-red-600 transition flex flex-col items-center"
+          className="text-red-500 hover:text-red-600 transition flex flex-col items-center"
         >
           <LogOut size={22} />
-          <span className="text-[10px] mt-1">Logout</span>
+          <span className="text-[11px] mt-1">Logout</span>
         </button>
       </aside>
 
-      {/* Contenuto dinamico */}
-      <main className="flex-1 overflow-y-auto bg-[#f7f7f7] p-6">{children}</main>
+      {/* Contenuto */}
+      <main className="flex-1 overflow-y-auto bg-[#f7f7f7] p-6">
+        {children}
+      </main>
     </div>
   );
 }

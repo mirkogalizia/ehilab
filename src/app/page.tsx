@@ -46,10 +46,10 @@ export default function Home() {
                 <>
                   Automazione WhatsApp, CRM integrato e campagne marketing.<br />
                   <a
-                    href="/chat-boost"
+                    href="/wa/login"
                     className="inline font-semibold text-blue-600 hover:underline"
                   >
-                    Scopri la piattaforma
+                    Accedi alla piattaforma
                   </a>
                 </>
               ),
