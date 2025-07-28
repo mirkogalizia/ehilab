@@ -4,17 +4,17 @@ import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 
-export default function ChatBoostLayout({ children }) {
+export default function ChatboostLayout({ children }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
-  // Se sei nella pagina login → non mostrare mai sidebar
-  if (pathname.startsWith('/chatboost/login')) {
+  // Se siamo su login → niente menù
+  if (pathname === '/chatboost/login') {
     return <main className="flex-1 overflow-y-auto bg-[#f7f7f7]">{children}</main>;
   }
 
-  // Redirect automatico se non loggato
+  // Se non loggato → redirect al login
   useEffect(() => {
     if (!loading && !user) {
       router.push('/chatboost/login');
@@ -29,10 +29,12 @@ export default function ChatBoostLayout({ children }) {
     return null;
   }
 
+  // Dashboard con sidebar
   return (
     <div className="flex h-screen">
+      {/* Sidebar */}
       <aside className="w-64 bg-white border-r p-4 space-y-6 shadow-md">
-        <h2 className="text-2xl font-bold text-green-600">EHI! Chat Boost</h2>
+        <h2 className="text-2xl font-bold text-gray-900">EHI! Chat Boost</h2>
         <nav className="space-y-2">
           <a
             href="/chatboost/dashboard"
@@ -71,8 +73,8 @@ export default function ChatBoostLayout({ children }) {
         </nav>
       </aside>
 
-      <main className="flex-1 overflow-y-auto bg-[#f7f7f7]">{children}</main>
+      {/* Contenuto */}
+      <main className="flex-1 overflow-y-auto bg-[#f7f7f7] p-6">{children}</main>
     </div>
   );
 }
-
