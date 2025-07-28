@@ -2,15 +2,16 @@
 
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
-import { useState, useEffect } from 'react';
-import { MessageSquare, FileText, Settings, LogOut, Menu, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { MessageSquare, FileText, Settings, LogOut } from 'lucide-react';
 
 export default function ChatBoostLayout({ children }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [mobileView, setMobileView] = useState('list'); // 'list' or 'chat' for mobile
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Stato per mostrare/nascondere lista contatti su mobile
+  const [showContactsMobile, setShowContactsMobile] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -19,8 +20,13 @@ export default function ChatBoostLayout({ children }) {
   }, [user, loading, router]);
 
   if (loading) {
-    return <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">⏳ Verifica login...</div>;
+    return (
+      <div className="flex items-center justify-center h-screen text-gray-600 font-[Montserrat]">
+        ⏳ Verifica login...
+      </div>
+    );
   }
+
   if (!user) return null;
 
   const navItems = [
@@ -29,138 +35,79 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Impostaz.', icon: Settings, path: '/chatboost/impostazioni/info' },
   ];
 
-  // Mobile toggle handler
-  const toggleView = () => setMobileView(mobileView === 'list' ? 'chat' : 'list');
-
+  // Mostra/Nascondi sidebar full per mobile
+  // Su desktop sidebar stretta + menu laterale
   return (
-    <div className="flex h-screen bg-gray-50 font-[Montserrat]">
-      {/* Sidebar desktop */}
-      <aside className="hidden md:flex w-24 bg-white border-r flex flex-col items-center py-8 shadow-lg">
+    <div className="flex h-screen font-[Montserrat]">
+      {/* Sidebar desktop stretta */}
+      <aside className="hidden md:flex flex-col w-16 bg-white border-r p-2 shadow-lg">
         <div
           onClick={() => router.push('/chatboost/dashboard')}
-          className="text-xl font-extrabold text-black mb-12 cursor-pointer tracking-tight hover:scale-105 transition-transform"
+          className="text-xl font-extrabold text-black mb-8 cursor-pointer select-none"
         >
           EHI!
         </div>
-        <nav className="flex flex-col gap-10 items-center flex-1">
+
+        <nav className="flex flex-col gap-8 items-center flex-1">
           {navItems.map(({ label, icon: Icon, path }) => {
             const active = pathname.startsWith(path);
             return (
               <button
                 key={path}
                 onClick={() => router.push(path)}
-                className={`flex flex-col items-center text-sm font-medium transition-all ${
-                  active ? 'text-black scale-110' : 'text-gray-500 hover:text-black'
+                className={`flex flex-col items-center text-sm transition-all ${
+                  active ? 'text-black scale-110' : 'text-gray-400 hover:text-black'
                 }`}
+                aria-label={label}
               >
-                <Icon size={22} />
-                <span className="text-[11px] mt-1">{label}</span>
+                <Icon size={24} />
+                <span className="sr-only">{label}</span>
               </button>
             );
           })}
         </nav>
+
         <button
           onClick={() => {
             localStorage.removeItem('firebaseAuthToken');
             router.push('/wa/login');
           }}
-          className="text-red-500 hover:text-red-600 transition flex flex-col items-center"
+          className="text-red-600 hover:text-red-800 transition flex flex-col items-center mb-2"
+          aria-label="Logout"
         >
-          <LogOut size={22} />
-          <span className="text-[11px] mt-1">Logout</span>
+          <LogOut size={24} />
+          <span className="sr-only">Logout</span>
         </button>
       </aside>
 
-      {/* Mobile header */}
-      <header className="md:hidden flex items-center justify-between bg-white p-4 border-b shadow-md w-full">
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="text-black">
-          {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
-        <h1 className="font-bold text-lg">EHI! Chat Boost</h1>
-        <div />
-      </header>
-
-      {/* Mobile sidebar drawer */}
-      {sidebarOpen && (
-        <aside className="fixed inset-0 bg-black bg-opacity-50 z-50" onClick={() => setSidebarOpen(false)}>
-          <nav
-            className="absolute top-0 left-0 bg-white w-64 h-full p-6 flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-8 text-2xl font-bold cursor-pointer" onClick={() => { router.push('/chatboost/dashboard'); setSidebarOpen(false); }}>
-              EHI!
-            </div>
-            {navItems.map(({ label, icon: Icon, path }) => {
-              const active = pathname.startsWith(path);
-              return (
-                <button
-                  key={path}
-                  onClick={() => {
-                    router.push(path);
-                    setSidebarOpen(false);
-                  }}
-                  className={`flex items-center gap-3 py-2 px-4 rounded transition ${
-                    active ? 'bg-gray-200 font-semibold' : 'hover:bg-gray-100'
-                  }`}
-                >
-                  <Icon size={20} />
-                  {label}
-                </button>
-              );
-            })}
-            <button
-              onClick={() => {
-                localStorage.removeItem('firebaseAuthToken');
-                router.push('/wa/login');
-              }}
-              className="mt-auto text-red-600 hover:text-red-800 transition flex items-center gap-2"
-            >
-              <LogOut size={20} />
-              Logout
-            </button>
-          </nav>
-        </aside>
-      )}
-
-      {/* Content area: mostra solo lista contatti o chat su mobile */}
-      <main className="flex-1 flex flex-col">
-        {/* Mobile toggle nav */}
-        <div className="md:hidden flex justify-center gap-4 bg-white border-b p-2 shadow-sm">
+      {/* Lista contatti mobile full screen */}
+      <div
+        className={`
+          fixed top-0 left-0 bottom-0 bg-white w-full max-w-xs z-50 p-4 md:hidden shadow-lg
+          ${showContactsMobile ? 'block' : 'hidden'}
+        `}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-bold text-xl">Chat</h2>
           <button
-            onClick={() => setMobileView('list')}
-            className={`px-4 py-2 rounded ${mobileView === 'list' ? 'bg-black text-white' : 'bg-gray-100'}`}
+            aria-label="Chiudi lista"
+            className="text-2xl font-bold"
+            onClick={() => setShowContactsMobile(false)}
           >
-            Lista
-          </button>
-          <button
-            onClick={() => setMobileView('chat')}
-            className={`px-4 py-2 rounded ${mobileView === 'chat' ? 'bg-black text-white' : 'bg-gray-100'}`}
-            disabled={!mobileView === 'list'}
-          >
-            Chat
+            ×
           </button>
         </div>
+        {/* Qui il contenuto lista contatti sarà inserito dentro le pagine */}
+        {/* Puoi aggiungere un prop/context per far gestire l'apertura/chiusura */}
+        {/* oppure lasciare la gestione nel componente chat/dashboard */}
+      </div>
 
-        {/* Contenuti responsive */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Lista contatti */}
-          <div
-            className={`bg-white border-r overflow-y-auto p-6 transition-all duration-300 ease-in-out ${
-              mobileView === 'list' ? 'block w-full md:w-1/4' : 'hidden md:block md:w-1/4'
-            }`}
-          >
-            {children.props.pageType === 'chat' && children.props.phoneListComponent}
-          </div>
-
-          {/* Chat e contenuti */}
-          <div
-            className={`flex-1 overflow-y-auto p-6 ${
-              mobileView === 'chat' ? 'block' : 'hidden md:block'
-            }`}
-          >
-            {children.props.pageType === 'chat' && children.props.chatComponent}
-            {children.props.pageType !== 'chat' && children}
-          </div>
+      {/* Contenuto principale */}
+      <main className="flex-1 flex flex-col overflow-hidden bg-gray-50 p-4 md:p-6">
+        {/* Se siamo su mobile e la lista contatti è aperta nascondiamo il main */}
+        <div className={`${showContactsMobile ? 'hidden md:block' : 'block'}`}>
+          {/* Qui dentro vengono renderizzati i figli (dashboard/chat/templates) */}
+          {children({ setShowContactsMobile })}
         </div>
       </main>
     </div>
