@@ -94,11 +94,11 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Link registrati */}
+        {/* Link registrati aggiornato */}
         <div className="mt-6 flex items-center justify-center">
           <span className="text-gray-500 text-sm">
             Non hai un account?{' '}
-            <Link href="/chatboost/register" className="text-green-700 hover:underline font-semibold">
+            <Link href="/wa/register" className="text-green-700 hover:underline font-semibold">
               Registrati
             </Link>
           </span>
