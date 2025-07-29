@@ -5,8 +5,8 @@ import { db } from '@/lib/firebase';
 import {
   collection,
   query,
-  where,
   orderBy,
+  where,
   onSnapshot,
   addDoc,
   serverTimestamp,
@@ -42,7 +42,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Ascolta SOLO messaggi utente loggato
+  // Ascolta solo i messaggi del proprio utente loggato
   useEffect(() => {
     if (!user) return;
     const q = query(
@@ -52,10 +52,13 @@ export default function ChatPage() {
     );
     const unsub = onSnapshot(q, async snap => {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
       setAllMessages(msgs);
 
-      // lista numeri
-      const phones = Array.from(new Set(msgs.map(m => m.from !== 'operator' ? m.from : m.to)));
+      // Popola la lista numeri: prendi sia from che to (eccetto "operator")
+      const phones = Array.from(new Set(
+        msgs.map(m => m.from !== 'operator' ? m.from : m.to)
+      ));
       setPhoneList(phones);
 
       // nomi contatti
@@ -93,21 +96,10 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
-  // Filtro messaggi chat corrente
+  // FILTRO: mostra SOLO i messaggi relativi al numero selezionato
   const filtered = allMessages
     .filter(m => m.from === selectedPhone || m.to === selectedPhone)
     .sort((a,b) => parseTime(a.timestamp||a.createdAt) - parseTime(b.timestamp||b.createdAt));
-
-  // GESTIONE FINESTRA 24H (solo template dopo 24h)
-  const lastInbound = filtered
-    .filter(m => m.from === selectedPhone)
-    .sort((a, b) => parseTime(b.timestamp || b.createdAt) - parseTime(a.timestamp || a.createdAt))[0];
-
-  let windowOpen = false;
-  if (lastInbound) {
-    const lastTime = parseTime(lastInbound.timestamp || lastInbound.createdAt);
-    windowOpen = (Date.now() - lastTime) < 24 * 60 * 60 * 1000; // meno di 24h
-  }
 
   const sendMessage = async () => {
     if (!selectedPhone||!messageText||!userData) return;
@@ -246,56 +238,39 @@ export default function ChatPage() {
             </div>
           </div>
           {/* Input + Attach */}
-          <div className="flex flex-col items-stretch gap-1 p-3 bg-white border-t sticky bottom-0">
-            {/* Avviso se finestra 24h chiusa */}
-            {!windowOpen && (
-              <div className="mb-2 p-3 bg-yellow-100 text-yellow-900 text-sm rounded-lg font-medium border border-yellow-300 shadow-sm">
-                ⚠️ <b>Non puoi inviare messaggi liberi:</b><br />
-                La <b>finestra di conversazione WhatsApp</b> è scaduta (oltre 24h dall'ultimo messaggio ricevuto da questo numero).<br />
-                Puoi inviare solo <b>template approvati</b> finché il cliente non risponde nuovamente.
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              {/* Template */}
-              <div className="relative">
-                <button onClick={()=>setShowTemplates(!showTemplates)} className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">📑</button>
-                {showTemplates && (
-                  <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                    {templates.length>0 ? templates.map(tpl=>(
-                      <div key={tpl.name} onClick={()=>sendTemplate(tpl.name)} className="px-4 py-2 hover:bg-gray-100 cursor-pointer">
-                        <div className="font-medium">{tpl.name}</div>
-                        <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text||'—'}</div>
-                      </div>
-                    )): <div className="p-3 text-sm text-gray-500">Nessun template</div>}
-                  </div>
-                )}
-              </div>
-              {/* Media */}
-              <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
-                📷<input type="file" accept="image/*" className="hidden" onChange={e=>e.target.files[0]&&sendMedia(e.target.files[0],'image')} />
-              </label>
-              <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
-                📎<input type="file" accept=".pdf,.doc,.xls" className="hidden" onChange={e=>e.target.files[0]&&sendMedia(e.target.files[0],'document')} />
-              </label>
-              {/* Text */}
-              <Input
-                placeholder={windowOpen ? "Scrivi un messaggio..." : "Solo template..."}
-                value={messageText}
-                onChange={e=>setMessageText(e.target.value)}
-                onKeyDown={e=>e.key==='Enter'&&windowOpen&&sendMessage()}
-                className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
-                disabled={!windowOpen}
-                style={!windowOpen ? { background: '#fff6db', color: '#999', cursor: 'not-allowed' } : {}}
-              />
-              <Button
-                onClick={sendMessage}
-                disabled={!windowOpen || !messageText}
-                className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
-              >
-                <Send size={18} />
-              </Button>
+          <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
+            {/* Template */}
+            <div className="relative">
+              <button onClick={()=>setShowTemplates(!showTemplates)} className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">📑</button>
+              {showTemplates && (
+                <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                  {templates.length>0 ? templates.map(tpl=>(
+                    <div key={tpl.name} onClick={()=>sendTemplate(tpl.name)} className="px-4 py-2 hover:bg-gray-100 cursor-pointer">
+                      <div className="font-medium">{tpl.name}</div>
+                      <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text||'—'}</div>
+                    </div>
+                  )): <div className="p-3 text-sm text-gray-500">Nessun template</div>}
+                </div>
+              )}
             </div>
+            {/* Media */}
+            <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
+              📷<input type="file" accept="image/*" className="hidden" onChange={e=>e.target.files[0]&&sendMedia(e.target.files[0],'image')} />
+            </label>
+            <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
+              📎<input type="file" accept=".pdf,.doc,.xls" className="hidden" onChange={e=>e.target.files[0]&&sendMedia(e.target.files[0],'document')} />
+            </label>
+            {/* Text */}
+            <Input
+              placeholder="Scrivi un messaggio..."
+              value={messageText}
+              onChange={e=>setMessageText(e.target.value)}
+              onKeyDown={e=>e.key==='Enter'&&sendMessage()}
+              className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
+            />
+            <Button onClick={sendMessage} disabled={!messageText} className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800">
+              <Send size={18} />
+            </Button>
           </div>
         </div>
       )}

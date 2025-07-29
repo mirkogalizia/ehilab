@@ -1,0 +1,3 @@
+Error: firestore:documents is not a Firebase command
+
+Did you mean firestore:delete?
