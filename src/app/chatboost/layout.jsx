@@ -4,6 +4,8 @@ import React, { useEffect } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
 import { MessageSquare, FileText, Settings, LogOut, Users } from 'lucide-react';
+import { signOut } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
 
 export default function ChatBoostLayout({ children }) {
   const { user, loading } = useAuth();
@@ -16,6 +18,19 @@ export default function ChatBoostLayout({ children }) {
       router.push('/wa/login');
     }
   }, [loading, user, router]);
+
+  // Handler logout
+  const handleLogout = async () => {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+      await signOut(auth);
+      router.push('/wa/login');
+    } catch (err) {
+      console.error('Errore logout:', err);
+      router.push('/wa/login');
+    }
+  };
 
   // Loader
   if (loading) {
@@ -67,10 +82,7 @@ export default function ChatBoostLayout({ children }) {
           })}
         </nav>
         <button
-          onClick={() => {
-            localStorage.removeItem('firebaseAuthToken');
-            router.push('/wa/login');
-          }}
+          onClick={handleLogout}
           className="text-gray-500 hover:text-red-500 transition flex flex-col items-center"
         >
           <LogOut size={22} />
@@ -102,10 +114,7 @@ export default function ChatBoostLayout({ children }) {
             );
           })}
           <button
-            onClick={() => {
-              localStorage.removeItem('firebaseAuthToken');
-              router.push('/wa/login');
-            }}
+            onClick={handleLogout}
             className="flex flex-col items-center text-xs text-gray-500 hover:text-red-500"
           >
             <LogOut size={22} />
