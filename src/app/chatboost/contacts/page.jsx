@@ -10,6 +10,8 @@ import {
   onSnapshot,
   addDoc,
   serverTimestamp,
+  updateDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Input } from '@/components/ui/input';
@@ -22,6 +24,8 @@ import {
   X,
   Loader2,
   CheckCircle,
+  Trash2,
+  CornerDownRight
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
@@ -56,6 +60,10 @@ export default function ContactsPage() {
   // Dati utente per API WhatsApp (phone_number_id)
   const [userData, setUserData] = useState(null);
 
+  // Modal riassegna contatti orfani
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [categoryToAssign, setCategoryToAssign] = useState('');
+
   // Carica userData (phone_number_id)
   useEffect(() => {
     if (!user) return;
@@ -77,15 +85,15 @@ export default function ContactsPage() {
 
   // Carica contatti realtime filtrati per categoria
   useEffect(() => {
-    if (!currentCat) {
-      setContacts([]);
-      setSelected(new Set());
-      return;
-    }
     const unsub = onSnapshot(collection(db, 'contacts'), snap => {
-      const arr = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(c => c.categories?.includes(currentCat));
+      let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (currentCat === 'NO_CAT') {
+        arr = arr.filter(c => !c.categories || c.categories.length === 0);
+      } else if (currentCat) {
+        arr = arr.filter(c => c.categories?.includes(currentCat));
+      } else {
+        arr = [];
+      }
       setContacts(arr);
       setSelected(new Set());
     });
@@ -116,6 +124,29 @@ export default function ContactsPage() {
     setNewCat('');
   };
 
+  // Elimina categoria (opzionale: elimina anche i contatti)
+  const deleteCategory = async (catId) => {
+    if (!window.confirm('Vuoi eliminare la categoria? I contatti resteranno senza categoria.')) return;
+    await deleteDoc(doc(db, 'categories', catId));
+    // Rimuovi categoria da tutti i contatti
+    const conts = await getDocs(collection(db, 'contacts'));
+    const batch = writeBatch(db);
+    conts.forEach(c => {
+      if (c.data().categories?.includes(catId)) {
+        const cats = (c.data().categories || []).filter(x => x !== catId);
+        batch.update(doc(db, 'contacts', c.id), { categories: cats });
+      }
+    });
+    await batch.commit();
+    setCurrentCat(null);
+  };
+
+  // Elimina contatto
+  const deleteContact = async (contactId) => {
+    if (!window.confirm('Eliminare questo contatto?')) return;
+    await deleteDoc(doc(db, 'contacts', contactId));
+  };
+
   // Import Excel/CSV
   const importFile = async f => {
     const data = await f.arrayBuffer();
@@ -138,7 +169,8 @@ export default function ContactsPage() {
   const addNewContact = async () => {
     const phone = newContactPhone.trim();
     const name = newContactName.trim();
-    if (!phone || !name || !currentCat) return alert('Compila nome, telefono e seleziona una categoria.');
+    if (!phone || !name || !currentCat || currentCat === 'NO_CAT')
+      return alert('Compila nome, telefono e seleziona una categoria.');
     const ref = doc(db, 'contacts', phone);
     await setDoc(ref, { name, categories: [currentCat] }, { merge: true });
     setNewContactName('');
@@ -150,6 +182,20 @@ export default function ContactsPage() {
     const s = new Set(selected);
     s.has(id) ? s.delete(id) : s.add(id);
     setSelected(s);
+  };
+
+  // Multi-assegnazione contatti orfani
+  const assignToCategory = async () => {
+    if (!categoryToAssign || selected.size === 0) return;
+    const batch = writeBatch(db);
+    Array.from(selected).forEach(id => {
+      const ref = doc(db, 'contacts', id);
+      batch.update(ref, { categories: [categoryToAssign] });
+    });
+    await batch.commit();
+    setShowAssignModal(false);
+    setSelected(new Set());
+    setCategoryToAssign('');
   };
 
   // Invio template a un singolo contatto (salva anche su Firestore!)
@@ -195,7 +241,7 @@ export default function ContactsPage() {
   const sendTemplateMassive = async () => {
     if (!templateToSend || !currentCat) return alert('Seleziona un template.');
     setSending(true);
-    setSendLog(`Invio template "${templateToSend.name}" a tutti i contatti di ${categories.find(c => c.id === currentCat)?.name}...\n`);
+    setSendLog(`Invio template "${templateToSend.name}" a tutti i contatti...\n`);
     setReport([]);
     try {
       const contactsToSend = contacts;
@@ -230,25 +276,49 @@ export default function ContactsPage() {
           <Users />
           Categorie
         </h2>
-        <ul className="space-y-1 mb-4">
+        <div className="flex flex-wrap gap-2 mb-4">
+          {/* Bottone "Senza categoria" */}
+          <button
+            className={`px-3 py-2 rounded-lg font-semibold border flex items-center gap-1 transition ${
+              currentCat === 'NO_CAT'
+                ? 'bg-blue-600 text-white border-blue-700'
+                : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-blue-100'
+            }`}
+            onClick={() => setCurrentCat('NO_CAT')}
+          >
+            <Users size={16} /> Senza categoria
+          </button>
           {categories.map(cat => (
-            <li
-              key={cat.id}
-              className={`flex justify-between items-center p-2 rounded cursor-pointer hover:bg-gray-200 ${
-                currentCat === cat.id ? 'bg-gray-200' : ''
-              }`}
-            >
-              <span onClick={() => setCurrentCat(cat.id)}>{cat.name}</span>
+            <div key={cat.id} className="relative flex items-center">
+              <button
+                className={`px-3 py-2 rounded-lg font-semibold border flex items-center gap-1 transition ${
+                  currentCat === cat.id
+                    ? 'bg-blue-600 text-white border-blue-700'
+                    : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-blue-100'
+                }`}
+                onClick={() => setCurrentCat(cat.id)}
+              >
+                {cat.name}
+              </button>
+              {/* Invio template a categoria */}
               <button
                 title={`Invia template a tutta la categoria ${cat.name}`}
                 onClick={() => { setCurrentCat(cat.id); setModalOpen(true); }}
-                className="text-blue-600 hover:text-blue-800"
+                className="ml-1 text-blue-600 hover:text-blue-800"
               >
-                <Send size={18} />
+                <Send size={17} />
               </button>
-            </li>
+              {/* Elimina categoria */}
+              <button
+                title="Elimina categoria"
+                className="ml-1 text-red-500 hover:text-red-700"
+                onClick={() => deleteCategory(cat.id)}
+              >
+                <Trash2 size={17} />
+              </button>
+            </div>
           ))}
-        </ul>
+        </div>
         <div className="flex gap-2">
           <Input
             placeholder="Nuova categoria"
@@ -270,36 +340,50 @@ export default function ContactsPage() {
           <>
             {/* Import e nuovo contatto */}
             <div className="mb-4 flex flex-wrap gap-4 items-center">
-              <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
-                Importa Excel/CSV
-                <input
-                  type="file"
-                  accept=".xls,.xlsx,.csv"
-                  className="hidden"
-                  onChange={e => e.target.files[0] && importFile(e.target.files[0])}
-                />
-              </label>
+              {currentCat !== 'NO_CAT' && (
+                <>
+                  <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
+                    Importa Excel/CSV
+                    <input
+                      type="file"
+                      accept=".xls,.xlsx,.csv"
+                      className="hidden"
+                      onChange={e => e.target.files[0] && importFile(e.target.files[0])}
+                    />
+                  </label>
+                  <div className="flex gap-2 items-center">
+                    <Input
+                      placeholder="Nome nuovo contatto"
+                      value={newContactName}
+                      onChange={e => setNewContactName(e.target.value)}
+                      className="w-48"
+                    />
+                    <Input
+                      placeholder="Telefono"
+                      value={newContactPhone}
+                      onChange={e => setNewContactPhone(e.target.value)}
+                      className="w-40"
+                    />
+                    <Button
+                      onClick={addNewContact}
+                      className="bg-green-600 hover:bg-green-700 text-white"
+                    >
+                      Aggiungi
+                    </Button>
+                  </div>
+                </>
+              )}
 
-              <div className="flex gap-2 items-center">
-                <Input
-                  placeholder="Nome nuovo contatto"
-                  value={newContactName}
-                  onChange={e => setNewContactName(e.target.value)}
-                  className="w-48"
-                />
-                <Input
-                  placeholder="Telefono"
-                  value={newContactPhone}
-                  onChange={e => setNewContactPhone(e.target.value)}
-                  className="w-40"
-                />
+              {/* Bottone "Riassegna" se siamo su Senza categoria e c'è almeno un contatto selezionato */}
+              {currentCat === 'NO_CAT' && selected.size > 0 && (
                 <Button
-                  onClick={addNewContact}
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  onClick={() => setShowAssignModal(true)}
+                  className="flex items-center gap-2 bg-yellow-500 hover:bg-yellow-600 text-white"
                 >
-                  Aggiungi
+                  <CornerDownRight size={16} />
+                  Riassegna a categoria
                 </Button>
-              </div>
+              )}
             </div>
 
             {/* Tabella contatti */}
@@ -320,6 +404,7 @@ export default function ContactsPage() {
                     </th>
                     <th className="p-2 text-left">Nome</th>
                     <th className="p-2 text-left">Telefono</th>
+                    <th className="p-2 text-left">Azioni</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -334,6 +419,15 @@ export default function ContactsPage() {
                       </td>
                       <td className="p-2">{c.name}</td>
                       <td className="p-2">{c.id}</td>
+                      <td className="p-2">
+                        <button
+                          className="text-red-500 hover:text-red-700"
+                          onClick={() => deleteContact(c.id)}
+                          title="Elimina contatto"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -357,7 +451,9 @@ export default function ContactsPage() {
 
             <h3 className="text-lg font-semibold mb-4">
               Invia template a tutta la categoria{' '}
-              {categories.find(c => c.id === currentCat)?.name}
+              {currentCat === 'NO_CAT'
+                ? 'Senza categoria'
+                : categories.find(c => c.id === currentCat)?.name}
             </h3>
 
             <div className="mb-4">
@@ -415,6 +511,43 @@ export default function ContactsPage() {
           </div>
         </div>
       )}
+
+      {/* Modal Riassegna contatti orfani */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
+            <button
+              onClick={() => setShowAssignModal(false)}
+              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
+              title="Chiudi"
+            >
+              <X size={20} />
+            </button>
+            <h3 className="text-lg font-semibold mb-4">Riassegna a categoria</h3>
+            <select
+              value={categoryToAssign}
+              onChange={e => setCategoryToAssign(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 mb-4"
+            >
+              <option value="">-- Scegli una categoria --</option>
+              {categories.map(c => (
+                <option value={c.id} key={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <Button
+                onClick={assignToCategory}
+                disabled={!categoryToAssign || selected.size === 0}
+                className="bg-yellow-500 hover:bg-yellow-600 text-white flex-1"
+              >
+                Riassegna
+              </Button>
+              <Button onClick={() => setShowAssignModal(false)} variant="outline" className="flex-1">Annulla</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
