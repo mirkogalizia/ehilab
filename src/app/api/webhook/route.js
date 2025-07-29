@@ -1,58 +1,3 @@
-import { db } from "@/firebase";
-import {
-  collection,
-  getDocs,
-  updateDoc,
-  addDoc,
-  doc,
-  setDoc,
-  serverTimestamp,
-  query,
-  where
-} from "firebase/firestore";
-
-export async function GET(req) {
-  const { searchParams } = new URL(req.url);
-
-  // ---- 1. VERIFICA WEBHOOK
-  const mode = searchParams.get("hub.mode");
-  const token = searchParams.get("hub.verify_token");
-  const challenge = searchParams.get("hub.challenge");
-  if (mode === "subscribe" && token === "chatboost_verify_token") {
-    console.log("✅ Webhook verificato");
-    return new Response(challenge, { status: 200 });
-  }
-
-  // ---- 2. ONBOARDING WHATSAPP
-  // (Meta chiama questa url con state/email, waba_id, phone_number_id, numeroWhatsapp)
-  const email = searchParams.get("state");
-  const waba_id = searchParams.get("waba_id");
-  const phone_number_id = searchParams.get("phone_number_id");
-  const numeroWhatsapp = searchParams.get("numeroWhatsapp");
-
-  if (email && waba_id && phone_number_id && numeroWhatsapp) {
-    // Cerca utente tramite email (campo "email" in users)
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, where("email", "==", email));
-    const querySnapshot = await getDocs(q);
-    if (querySnapshot.empty) {
-      return new Response("❌ Utente non trovato", { status: 404 });
-    }
-    const userDoc = querySnapshot.docs[0];
-    await updateDoc(userDoc.ref, {
-      waba_id,
-      phone_number_id,
-      numeroWhatsapp,
-      wa_status: "connected"
-    });
-    // Redirect automatico a InfoPage (UX perfetta)
-    return Response.redirect("https://ehi-lab.it/chatboost/impostazioni/info", 302);
-  }
-
-  // ---- 3. SE NESSUNO DEI DUE: FORBIDDEN
-  return new Response("❌ Forbidden", { status: 403 });
-}
-
 export async function POST(req) {
   try {
     const body = await req.json();
@@ -89,7 +34,9 @@ export async function POST(req) {
       const wa_id = contact?.wa_id || message.from;
       const profile_name = contact?.profile?.name || "";
 
-      // 1. Salva messaggio con profile_name
+      // **Se il messaggio viene dal cliente (cioè non dall'operatore), metti read: false**
+      const isIncoming = message.from !== "operator";
+
       await addDoc(collection(db, "messages"), {
         user_uid,
         from: wa_id,
@@ -97,7 +44,8 @@ export async function POST(req) {
         timestamp: message.timestamp,
         type: message.type,
         text: message.text?.body || "",
-        profile_name, // salva nome profilo qui
+        profile_name,
+        read: isIncoming ? false : true,   // <--- Campo read qui!
         createdAt: serverTimestamp(),
       });
 
@@ -116,6 +64,7 @@ export async function POST(req) {
     return new Response("Errore interno", { status: 500 });
   }
 }
+
 
 
 

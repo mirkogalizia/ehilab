@@ -10,7 +10,8 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
-  where
+  where,
+  writeBatch
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -20,7 +21,6 @@ import { useAuth } from '@/lib/useAuth';
 export default function ChatPage() {
   const { user } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
-  const [phoneList, setPhoneList] = useState([]);
   const [contactNames, setContactNames] = useState({});
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
@@ -30,21 +30,20 @@ export default function ChatPage() {
   const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(true);
-  const [last24MsgDate, setLast24MsgDate] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Recupera dati utente (phone_number_id) per invio
+  // Recupera dati utente
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user) return;
     (async () => {
       const usersRef = collection(db, 'users');
       const snap = await getDocs(usersRef);
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.uid === user.uid);
+      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
       if (me) setUserData(me);
     })();
   }, [user]);
 
-  // Ascolta messaggi realtime SOLO dell'utente corrente tramite user.uid
+  // Ascolta messaggi realtime SOLO dell'utente corrente
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -56,42 +55,88 @@ export default function ChatPage() {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setAllMessages(msgs);
 
-      // lista numeri (contatti)
-      const phones = Array.from(new Set(msgs.map(m => (m.from !== 'operator' ? m.from : m.to))));
-      setPhoneList(phones);
-
-      // nomi contatti (filtrati per createdBy = user.uid)
+      // nomi contatti (filtrati per utente!)
       const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
       const map = {};
-      cs.forEach(d => (map[d.id] = d.data().name));
+      cs.forEach(d => map[d.id] = d.data().name);
       setContactNames(map);
-
-      // Verifica finestra 24h per numero selezionato
-      if (selectedPhone) {
-        const lastMsg = msgs
-          .filter(m => (m.from === selectedPhone || m.to === selectedPhone) && m.from !== 'operator')
-          .slice(-1)[0];
-        if (!lastMsg) {
-          setCanSendMessage(true);
-          setLast24MsgDate(null);
-          return;
-        }
-        const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
-        setLast24MsgDate(lastTimestamp);
-        const now = Date.now();
-        setCanSendMessage(now - lastTimestamp < 86400000);
-      }
     });
     return () => unsub();
-    // eslint-disable-next-line
+  }, [user]);
+
+  // Ordina contatti per ultimo messaggio e calcola badge non letti
+  const phonesData = (() => {
+    // Raggruppa messaggi per contatto
+    const chatMap = {};
+    allMessages.forEach(m => {
+      const phone = m.from !== 'operator' ? m.from : m.to;
+      if (!chatMap[phone]) chatMap[phone] = [];
+      chatMap[phone].push(m);
+    });
+
+    return Object.entries(chatMap)
+      .map(([phone, msgs]) => {
+        // Ordina messaggi per tempo crescente
+        msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+        // Ultimo messaggio
+        const lastMsg = msgs[msgs.length - 1];
+        // Conta i messaggi non letti ricevuti
+        const unread = msgs.filter(m => m.from === phone && !m.read).length;
+        return {
+          phone,
+          name: contactNames[phone] || phone,
+          lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
+          lastMsgText: lastMsg.text,
+          unread,
+        };
+      })
+      .sort((a, b) => b.lastMsgTime - a.lastMsgTime); // Ordina per ultimo messaggio DESC
+  })();
+
+  // Reset messaggi non letti quando apro la chat
+  useEffect(() => {
+    async function markMessagesAsRead(userUid, phone) {
+      if (!userUid || !phone) return;
+      const q = query(
+        collection(db, 'messages'),
+        where('user_uid', '==', userUid),
+        where('from', '==', phone),
+        where('read', '==', false)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.forEach(docu => {
+          batch.update(docu.ref, { read: true });
+        });
+        await batch.commit();
+      }
+    }
+    if (user?.uid && selectedPhone) {
+      markMessagesAsRead(user.uid, selectedPhone);
+    }
   }, [user, selectedPhone]);
+
+  // Verifica finestra 24h
+  useEffect(() => {
+    if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
+    const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
+    const lastMsg = msgs.filter(m => m.from !== 'operator').slice(-1)[0];
+    if (!lastMsg) {
+      setCanSendMessage(true);
+      return;
+    }
+    const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
+    const now = Date.now();
+    setCanSendMessage(now - lastTimestamp < 86400000);
+  }, [user, allMessages, selectedPhone]);
 
   // Scroll automatico
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // Carica templates APPROVED tramite user_uid
+  // Carica templates APPROVED
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -105,7 +150,6 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Parse timestamp
   const parseTime = val => {
     if (!val) return 0;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -117,7 +161,6 @@ export default function ChatPage() {
     .filter(m => m.from === selectedPhone || m.to === selectedPhone)
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
-  // INVIO MESSAGGIO NORMALE
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     if (!canSendMessage) {
@@ -141,6 +184,7 @@ export default function ChatPage() {
         type: "text",
         user_uid: user.uid,
         message_id: data.messages[0].id,
+        read: true, // sempre letto se inviato dall'operatore
       });
       setMessageText("");
     } else {
@@ -148,7 +192,6 @@ export default function ChatPage() {
     }
   };
 
-  // INVIO TEMPLATE
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "template", template: { name, language: { code: "it" } } };
@@ -168,16 +211,12 @@ export default function ChatPage() {
         type: "template",
         user_uid: user.uid,
         message_id: data.messages[0].id,
+        read: true,
       });
       setShowTemplates(false);
     } else {
       alert("Err template: " + JSON.stringify(data.error));
     }
-  };
-
-  // Placeholder per media
-  const sendMedia = async (file, type) => {
-    alert('🚧 Funzione invio file in sviluppo');
   };
 
   return (
@@ -191,13 +230,19 @@ export default function ChatPage() {
           </button>
         </div>
         <ul className="space-y-2">
-          {phoneList.map(phone => (
+          {phonesData.map(({ phone, name, lastMsgText, unread }) => (
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              className={`p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
+              className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
             >
-              {contactNames[phone] || phone}
+              <div>
+                <span>{name}</span>
+                <span className="block text-xs text-gray-400">{lastMsgText}</span>
+              </div>
+              {unread > 0 && (
+                <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
+              )}
             </li>
           ))}
         </ul>
@@ -215,7 +260,6 @@ export default function ChatPage() {
               <Button
                 onClick={() => {
                   if (newPhone) {
-                    setPhoneList([newPhone, ...phoneList]);
                     setSelectedPhone(newPhone);
                     setNewPhone("");
                     setShowNewChat(false);
@@ -236,8 +280,16 @@ export default function ChatPage() {
       {/* CHAT */}
       {selectedPhone && (
         <div className="flex flex-col flex-1 bg-gray-100 relative">
+          {/* Avviso finestra 24h */}
+          {!canSendMessage && (
+            <div className="absolute top-0 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-10">
+              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
+              È possibile inviare solo template WhatsApp.
+            </div>
+          )}
+
           {/* Header */}
-          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
+          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-8 z-20">
             <button onClick={() => setSelectedPhone("")} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
@@ -271,85 +323,72 @@ export default function ChatPage() {
             </div>
           </div>
 
-          {/* Input + Template + Attach */}
-          <div className="bg-white border-t px-3 py-3 relative">
-            {/* Avviso finestra 24h (sopra l'input, mai fuori viewport) */}
-            {!canSendMessage && (
-              <div className="absolute -top-12 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold rounded-xl shadow z-20 mx-2">
-                ⚠️ Finestra 24h chiusa. Puoi solo inviare template WhatsApp.
-                {last24MsgDate && (
-                  <div className="text-xs font-normal text-gray-700 mt-1">
-                    Ultimo messaggio ricevuto: {new Date(last24MsgDate).toLocaleString('it-IT')}
-                  </div>
-                )}
-              </div>
-            )}
-            <div className="flex items-center gap-2 relative z-10">
-              {/* Template */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowTemplates(!showTemplates)}
-                  className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
-                >
-                  📑
-                </button>
-                {showTemplates && (
-                  <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto z-30">
-                    {templates.length > 0 ? (
-                      templates.map(tpl => (
-                        <div
-                          key={tpl.name}
-                          onClick={() => sendTemplate(tpl.name)}
-                          className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
-                        >
-                          <div className="font-medium">{tpl.name}</div>
-                          <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text || "—"}</div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="p-3 text-sm text-gray-500">Nessun template</div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Media */}
-              <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
-                📷
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "image")}
-                />
-              </label>
-              <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
-                📎
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.xls"
-                  className="hidden"
-                  onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "document")}
-                />
-              </label>
-
-              {/* Text */}
-              <Input
-                placeholder="Scrivi un messaggio..."
-                value={messageText}
-                onChange={e => setMessageText(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && sendMessage()}
-                className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
-                disabled={!canSendMessage}
-              />
-              <Button
-                onClick={sendMessage}
-                disabled={!messageText || !canSendMessage}
-                className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
+          {/* Input + Attach */}
+          <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
+            {/* Template */}
+            <div className="relative">
+              <button
+                onClick={() => setShowTemplates(!showTemplates)}
+                className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
               >
-                <Send size={18} />
-              </Button>
+                📑
+              </button>
+              {showTemplates && (
+                <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                  {templates.length > 0 ? (
+                    templates.map(tpl => (
+                      <div
+                        key={tpl.name}
+                        onClick={() => sendTemplate(tpl.name)}
+                        className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                      >
+                        <div className="font-medium">{tpl.name}</div>
+                        <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text || "—"}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-3 text-sm text-gray-500">Nessun template</div>
+                  )}
+                </div>
+              )}
             </div>
+
+            {/* Media (da implementare se serve) */}
+            {/* <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
+              📷
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "image")}
+              />
+            </label>
+            <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
+              📎
+              <input
+                type="file"
+                accept=".pdf,.doc,.xls"
+                className="hidden"
+                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "document")}
+              />
+            </label> */}
+
+            {/* Text */}
+            <Input
+              placeholder="Scrivi un messaggio..."
+              value={messageText}
+              onChange={e => setMessageText(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && sendMessage()}
+              className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
+              disabled={!canSendMessage}
+            />
+            <Button
+              onClick={sendMessage}
+              disabled={!messageText || !canSendMessage}
+              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
+            >
+              <Send size={18} />
+            </Button>
           </div>
         </div>
       )}
