@@ -1,5 +1,3 @@
-// File: src/app/chatboost/register/page.jsx
-
 'use client';
 
 import { useState } from 'react';
@@ -31,6 +29,7 @@ const schema = z.object({
 
 export default function RegisterPage() {
   const [autoComplete, setAutoComplete] = useState(null);
+  const [success, setSuccess] = useState(false);
   const router = useRouter();
 
   const {
@@ -53,7 +52,12 @@ export default function RegisterPage() {
         createdAt: new Date(),
       });
 
-      router.push('/chatboost/dashboard');
+      setSuccess(true);
+
+      // Redirect automatico dopo 2 secondi alla pagina login
+      setTimeout(() => {
+        router.push('/wa/login');
+      }, 2000);
     } catch (error) {
       alert('Errore durante la registrazione.');
       console.error(error);
@@ -135,6 +139,24 @@ export default function RegisterPage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Popup Success */}
+      {success && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 flex flex-col items-center gap-4 max-w-sm w-full animate-fade-in">
+            <svg width="48" height="48" className="mb-2 text-green-600" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="24" cy="24" r="22" stroke="currentColor" strokeWidth="4" fill="#E6FAEA"/>
+              <path d="M14 24l6 6 14-14" stroke="#22C55E" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <h3 className="text-xl font-semibold text-green-700 text-center">Registrazione avvenuta con successo!</h3>
+            <p className="text-gray-500 text-center text-sm mb-2">
+              Ora puoi effettuare l’accesso con le tue credenziali.
+            </p>
+            <span className="text-xs text-gray-400">Verrai reindirizzato al login...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

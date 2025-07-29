@@ -12,6 +12,8 @@ import {
   deleteDoc,
   addDoc,
   serverTimestamp,
+  where,
+  query
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Input } from '@/components/ui/input';
@@ -76,17 +78,21 @@ export default function ContactsPage() {
     })();
   }, [user]);
 
-  // Carica categorie realtime
+  // Carica categorie realtime SOLO per utente corrente
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'categories'), snap => {
+    if (!user?.uid) return;
+    const qCat = query(collection(db, 'categories'), where('createdBy', '==', user.uid));
+    const unsub = onSnapshot(qCat, snap => {
       setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
-  }, []);
+  }, [user]);
 
-  // Carica contatti realtime filtrati per categoria o "senza categoria"
+  // Carica contatti realtime SOLO per utente corrente
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'contacts'), snap => {
+    if (!user?.uid) return;
+    const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
+    const unsub = onSnapshot(qContacts, snap => {
       const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       if (showUnassigned) {
         setContacts(arr.filter(c => !c.categories || c.categories.length === 0));
@@ -98,7 +104,7 @@ export default function ContactsPage() {
       setSelected(new Set());
     });
     return () => unsub();
-  }, [currentCat, showUnassigned]);
+  }, [user, currentCat, showUnassigned]);
 
   // Carica templates
   useEffect(() => {
@@ -116,7 +122,7 @@ export default function ContactsPage() {
     if (user?.email) loadTemplates();
   }, [user]);
 
-  // Crea categoria
+  // Crea categoria con createdBy
   const createCategory = async () => {
     const name = newCat.trim();
     if (!name) return;
@@ -124,7 +130,7 @@ export default function ContactsPage() {
     setNewCat('');
   };
 
-  // Import Excel/CSV
+  // Import Excel/CSV con createdBy
   const importFile = async f => {
     const data = await f.arrayBuffer();
     const wb = XLSX.read(data, { type: 'array' });
@@ -136,19 +142,19 @@ export default function ContactsPage() {
       const name = r.name;
       if (phone && name) {
         const ref = doc(db, 'contacts', phone);
-        batch.set(ref, { name, categories: currentCat ? [currentCat] : [] }, { merge: true });
+        batch.set(ref, { name, categories: currentCat ? [currentCat] : [], createdBy: user.uid }, { merge: true });
       }
     });
     await batch.commit();
   };
 
-  // Nuovo contatto manuale
+  // Nuovo contatto manuale con createdBy
   const addNewContact = async () => {
     const phone = newContactPhone.trim();
     const name = newContactName.trim();
     if (!phone || !name || (!currentCat && !showUnassigned)) return alert('Compila nome, telefono e seleziona una categoria.');
     const ref = doc(db, 'contacts', phone);
-    await setDoc(ref, { name, categories: currentCat ? [currentCat] : [] }, { merge: true });
+    await setDoc(ref, { name, categories: currentCat ? [currentCat] : [], createdBy: user.uid }, { merge: true });
     setNewContactName('');
     setNewContactPhone('');
   };
@@ -167,7 +173,6 @@ export default function ContactsPage() {
     contacts.forEach(c => {
       if (selected.has(c.id)) {
         let categoriesToSet = [...targetCategories];
-        // se non sono senza categoria, rimuovi la categoria attuale e aggiungi la destinazione
         if (!showUnassigned && currentCat) {
           categoriesToSet = [...new Set([...(c.categories||[]).filter(cat=>cat!==currentCat), ...targetCategories])];
         }
@@ -277,7 +282,7 @@ export default function ContactsPage() {
   // Layout responsive
   return (
     <div className="h-screen flex flex-col md:flex-row">
-      {/* Sidebar categorie (verticale desktop, orizzontale scrollabile mobile) */}
+      {/* Sidebar categorie */}
       <aside className="w-full md:w-1/4 bg-white border-r p-4 overflow-y-auto">
         <div className="flex items-center gap-2 mb-4">
           <Users />
@@ -319,8 +324,7 @@ export default function ContactsPage() {
                   onClick={async e => {
                     e.stopPropagation();
                     if (window.confirm('Eliminare questa categoria?')) {
-                      // Rimuovi la categoria dai contatti che la contengono
-                      const snap = await getDocs(collection(db, 'contacts'));
+                      const snap = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
                       const batch = writeBatch(db);
                       snap.forEach(docu => {
                         const c = docu.data();
@@ -584,4 +588,3 @@ export default function ContactsPage() {
     </div>
   );
 }
-

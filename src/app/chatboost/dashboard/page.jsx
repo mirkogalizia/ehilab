@@ -10,6 +10,7 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
+  where
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -41,9 +42,14 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Ascolta messaggi realtime
+  // Ascolta messaggi realtime SOLO dell'utente corrente
   useEffect(() => {
-    const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
+    if (!user?.uid) return;
+    const q = query(
+      collection(db, 'messages'),
+      where('user_uid', '==', user.uid),
+      orderBy('timestamp', 'asc')
+    );
     const unsub = onSnapshot(q, async snap => {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setAllMessages(msgs);
@@ -52,14 +58,14 @@ export default function ChatPage() {
       const phones = Array.from(new Set(msgs.map(m => m.from !== 'operator' ? m.from : m.to)));
       setPhoneList(phones);
 
-      // nomi contatti
-      const cs = await getDocs(collection(db, 'contacts'));
+      // nomi contatti (filtrati per utente!)
+      const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
       const map = {};
       cs.forEach(d => map[d.id] = d.data().name);
       setContactNames(map);
     });
     return () => unsub();
-  }, []);
+  }, [user]);
 
   // Scroll automatico
   useEffect(() => {
