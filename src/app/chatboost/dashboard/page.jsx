@@ -30,16 +30,16 @@ export default function ChatPage() {
   const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(true);
+  const [last24MsgDate, setLast24MsgDate] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Recupera dati utente (phone_number_id) con lookup mail (solo per dati accessori)
+  // Recupera dati utente (phone_number_id) per invio
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) return;
     (async () => {
       const usersRef = collection(db, 'users');
       const snap = await getDocs(usersRef);
-      // NON filtrare con uid ma con mail, per ottenere dati accessori
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.uid === user.uid);
       if (me) setUserData(me);
     })();
   }, [user]);
@@ -49,7 +49,7 @@ export default function ChatPage() {
     if (!user?.uid) return;
     const q = query(
       collection(db, 'messages'),
-      where('user_uid', '==', user.uid), // filtro per UID auth!
+      where('user_uid', '==', user.uid),
       orderBy('timestamp', 'asc')
     );
     const unsub = onSnapshot(q, async snap => {
@@ -73,15 +73,17 @@ export default function ChatPage() {
           .slice(-1)[0];
         if (!lastMsg) {
           setCanSendMessage(true);
+          setLast24MsgDate(null);
           return;
         }
-        const lastTimestamp = lastMsg.timestamp || lastMsg.createdAt?.seconds * 1000 || 0;
+        const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
+        setLast24MsgDate(lastTimestamp);
         const now = Date.now();
-        // 24 ore in ms = 86400000
         setCanSendMessage(now - lastTimestamp < 86400000);
       }
     });
     return () => unsub();
+    // eslint-disable-next-line
   }, [user, selectedPhone]);
 
   // Scroll automatico
@@ -89,20 +91,21 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // Carica templates APPROVED
+  // Carica templates APPROVED tramite user_uid
   useEffect(() => {
-    if (!user?.email) return;
+    if (!user?.uid) return;
     (async () => {
       const res = await fetch('/api/list-templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email }),
+        body: JSON.stringify({ user_uid: user.uid }),
       });
       const data = await res.json();
       if (Array.isArray(data)) setTemplates(data.filter(t => t.status === 'APPROVED'));
     })();
   }, [user]);
 
+  // Parse timestamp
   const parseTime = val => {
     if (!val) return 0;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -114,6 +117,7 @@ export default function ChatPage() {
     .filter(m => m.from === selectedPhone || m.to === selectedPhone)
     .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
+  // INVIO MESSAGGIO NORMALE
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     if (!canSendMessage) {
@@ -144,6 +148,7 @@ export default function ChatPage() {
     }
   };
 
+  // INVIO TEMPLATE
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "template", template: { name, language: { code: "it" } } };
@@ -168,6 +173,11 @@ export default function ChatPage() {
     } else {
       alert("Err template: " + JSON.stringify(data.error));
     }
+  };
+
+  // Placeholder per media
+  const sendMedia = async (file, type) => {
+    alert('🚧 Funzione invio file in sviluppo');
   };
 
   return (
@@ -226,16 +236,8 @@ export default function ChatPage() {
       {/* CHAT */}
       {selectedPhone && (
         <div className="flex flex-col flex-1 bg-gray-100 relative">
-          {/* Avviso finestra 24h */}
-          {!canSendMessage && (
-            <div className="absolute top-0 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-10">
-              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
-              È possibile inviare solo template WhatsApp.
-            </div>
-          )}
-
           {/* Header */}
-          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-8 z-20">
+          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
             <button onClick={() => setSelectedPhone("")} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
@@ -269,72 +271,85 @@ export default function ChatPage() {
             </div>
           </div>
 
-          {/* Input + Attach */}
-          <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
-            {/* Template */}
-            <div className="relative">
-              <button
-                onClick={() => setShowTemplates(!showTemplates)}
-                className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
+          {/* Input + Template + Attach */}
+          <div className="bg-white border-t px-3 py-3 relative">
+            {/* Avviso finestra 24h (sopra l'input, mai fuori viewport) */}
+            {!canSendMessage && (
+              <div className="absolute -top-12 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold rounded-xl shadow z-20 mx-2">
+                ⚠️ Finestra 24h chiusa. Puoi solo inviare template WhatsApp.
+                {last24MsgDate && (
+                  <div className="text-xs font-normal text-gray-700 mt-1">
+                    Ultimo messaggio ricevuto: {new Date(last24MsgDate).toLocaleString('it-IT')}
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex items-center gap-2 relative z-10">
+              {/* Template */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowTemplates(!showTemplates)}
+                  className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
+                >
+                  📑
+                </button>
+                {showTemplates && (
+                  <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto z-30">
+                    {templates.length > 0 ? (
+                      templates.map(tpl => (
+                        <div
+                          key={tpl.name}
+                          onClick={() => sendTemplate(tpl.name)}
+                          className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                        >
+                          <div className="font-medium">{tpl.name}</div>
+                          <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text || "—"}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-3 text-sm text-gray-500">Nessun template</div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Media */}
+              <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
+                📷
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "image")}
+                />
+              </label>
+              <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
+                📎
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.xls"
+                  className="hidden"
+                  onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "document")}
+                />
+              </label>
+
+              {/* Text */}
+              <Input
+                placeholder="Scrivi un messaggio..."
+                value={messageText}
+                onChange={e => setMessageText(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && sendMessage()}
+                className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
+                disabled={!canSendMessage}
+              />
+              <Button
+                onClick={sendMessage}
+                disabled={!messageText || !canSendMessage}
+                className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
               >
-                📑
-              </button>
-              {showTemplates && (
-                <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto">
-                  {templates.length > 0 ? (
-                    templates.map(tpl => (
-                      <div
-                        key={tpl.name}
-                        onClick={() => sendTemplate(tpl.name)}
-                        className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
-                      >
-                        <div className="font-medium">{tpl.name}</div>
-                        <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text || "—"}</div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="p-3 text-sm text-gray-500">Nessun template</div>
-                  )}
-                </div>
-              )}
+                <Send size={18} />
+              </Button>
             </div>
-
-            {/* Media */}
-            <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
-              📷
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "image")}
-              />
-            </label>
-            <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
-              📎
-              <input
-                type="file"
-                accept=".pdf,.doc,.xls"
-                className="hidden"
-                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "document")}
-              />
-            </label>
-
-            {/* Text */}
-            <Input
-              placeholder="Scrivi un messaggio..."
-              value={messageText}
-              onChange={e => setMessageText(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && sendMessage()}
-              className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
-              disabled={!canSendMessage}
-            />
-            <Button
-              onClick={sendMessage}
-              disabled={!messageText || !canSendMessage}
-              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
-            >
-              <Send size={18} />
-            </Button>
           </div>
         </div>
       )}
