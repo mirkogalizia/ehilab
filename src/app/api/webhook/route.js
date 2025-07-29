@@ -1,5 +1,3 @@
-// src/app/api/webhook/route.js
-
 import { db } from "@/firebase";
 import {
   collection,
@@ -49,7 +47,6 @@ export async function GET(req) {
     });
     // Redirect automatico a InfoPage (UX perfetta)
     return Response.redirect("https://ehi-lab.it/chatboost/impostazioni/info", 302);
-    // In alternativa, return new Response("✅ WhatsApp collegato!", { status: 200 });
   }
 
   // ---- 3. SE NESSUNO DEI DUE: FORBIDDEN
@@ -59,6 +56,7 @@ export async function GET(req) {
 export async function POST(req) {
   try {
     const body = await req.json();
+
     // ---- 4. RICEZIONE MESSAGGI WHATSAPP
     const entry = body?.entry?.[0];
     const change = entry?.changes?.[0];
@@ -91,7 +89,7 @@ export async function POST(req) {
       const wa_id = contact?.wa_id || message.from;
       const profile_name = contact?.profile?.name || "";
 
-      // 1. Salva messaggio
+      // 1. Salva messaggio con profile_name
       await addDoc(collection(db, "messages"), {
         user_uid,
         from: wa_id,
@@ -99,13 +97,15 @@ export async function POST(req) {
         timestamp: message.timestamp,
         type: message.type,
         text: message.text?.body || "",
+        profile_name, // salva nome profilo qui
         createdAt: serverTimestamp(),
       });
 
-      // 2. Salva nome contatto se presente
+      // 2. Salva nome contatto se presente, con createdBy per filtro frontend
       if (profile_name) {
         await setDoc(doc(db, "contacts", wa_id), {
           name: profile_name,
+          createdBy: user_uid
         }, { merge: true });
       }
     }
@@ -116,5 +116,6 @@ export async function POST(req) {
     return new Response("Errore interno", { status: 500 });
   }
 }
+
 
 
