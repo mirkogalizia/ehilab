@@ -9,10 +9,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { useRouter } from 'next/navigation';
-import { GoogleMap, LoadScript, Autocomplete } from '@react-google-maps/api';
+import { LoadScript, Autocomplete } from '@react-google-maps/api';
 import { auth, db } from '@/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { collection, doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
 
 const schema = z.object({
   firstName: z.string().min(1, 'Il nome è obbligatorio'),
@@ -46,9 +46,10 @@ export default function RegisterPage() {
       const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
       const user = userCredential.user;
 
+      // Salva il documento con ID = user.uid
       await setDoc(doc(db, 'users', user.uid), {
         ...data,
-        uid: user.uid,
+        uid: user.uid, // salva anche come campo
         createdAt: new Date(),
       });
 

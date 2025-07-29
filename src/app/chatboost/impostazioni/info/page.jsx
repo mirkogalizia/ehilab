@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { db } from "@/firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { useAuth } from "@/lib/useAuth";
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
@@ -18,16 +18,15 @@ export default function InfoPage() {
     ? `https://www.facebook.com/v18.0/dialog/oauth?client_id=1578488926445019&redirect_uri=https%3A%2F%2Fehi-lab.it%2Fapi%2Fwebhook&state=${encodeURIComponent(user.email)}`
     : "";
 
-  // Recupero dati utente Firestore
+  // Recupero dati utente Firestore SOLO by UID
   useEffect(() => {
-    if (!user?.email) return;
+    if (!user?.uid) return;
     setLoading(true);
     const fetchUserData = async () => {
       try {
-        const snapshot = await getDocs(collection(db, "users"));
-        const allUsers = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-        const match = allUsers.find((u) => u.email === user.email);
-        setUserData(match || null);
+        const ref = doc(db, "users", user.uid);
+        const snap = await getDoc(ref);
+        setUserData(snap.exists() ? { id: snap.id, ...snap.data() } : null);
       } catch (error) {
         console.error("Errore nel recupero dati utente:", error);
       } finally {
@@ -133,6 +132,4 @@ export default function InfoPage() {
     </div>
   );
 }
-
-
 

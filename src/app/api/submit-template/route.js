@@ -1,25 +1,25 @@
 import { db } from '@/lib/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 export async function POST(req) {
-  const { name, category, language, bodyText, email } = await req.json();
+  const { name, category, language, bodyText, user_uid } = await req.json();
 
-  if (!name || !category || !language || !bodyText || !email) {
+  if (!name || !category || !language || !bodyText || !user_uid) {
     return new Response(JSON.stringify({ error: 'Campi mancanti' }), { status: 400 });
   }
 
   try {
-    // Cerca l’utente tramite email
-    const snapshot = await getDocs(collection(db, 'users'));
-    const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const matchedUser = allUsers.find(u => u.email === email);
+    // Cerca l’utente direttamente tramite UID
+    const userRef = doc(db, 'users', user_uid);
+    const userSnap = await getDoc(userRef);
 
-    if (!matchedUser) {
+    if (!userSnap.exists()) {
       return new Response(JSON.stringify({ error: 'Utente non trovato' }), { status: 404 });
     }
 
-    const wabaId = matchedUser.waba_id;
-    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN; // o metti hardcoded temporaneamente per test
+    const user = userSnap.data();
+    const wabaId = user.waba_id;
+    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN; // oppure metti hardcoded per test
 
     const res = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
       method: 'POST',

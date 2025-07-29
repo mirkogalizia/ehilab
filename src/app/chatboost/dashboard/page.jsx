@@ -32,42 +32,45 @@ export default function ChatPage() {
   const [canSendMessage, setCanSendMessage] = useState(true);
   const messagesEndRef = useRef(null);
 
-  // Recupera dati utente (phone_number_id)
+  // Recupera dati utente (phone_number_id) con lookup mail (solo per dati accessori)
   useEffect(() => {
     if (!user) return;
     (async () => {
       const usersRef = collection(db, 'users');
       const snap = await getDocs(usersRef);
+      // NON filtrare con uid ma con mail, per ottenere dati accessori
       const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
       if (me) setUserData(me);
     })();
   }, [user]);
 
-  // Ascolta messaggi realtime SOLO dell'utente corrente
+  // Ascolta messaggi realtime SOLO dell'utente corrente tramite user.uid
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
       collection(db, 'messages'),
-      where('user_uid', '==', user.uid),
+      where('user_uid', '==', user.uid), // filtro per UID auth!
       orderBy('timestamp', 'asc')
     );
     const unsub = onSnapshot(q, async snap => {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setAllMessages(msgs);
 
-      // lista numeri
-      const phones = Array.from(new Set(msgs.map(m => m.from !== 'operator' ? m.from : m.to)));
+      // lista numeri (contatti)
+      const phones = Array.from(new Set(msgs.map(m => (m.from !== 'operator' ? m.from : m.to))));
       setPhoneList(phones);
 
-      // nomi contatti (filtrati per utente!)
+      // nomi contatti (filtrati per createdBy = user.uid)
       const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
       const map = {};
-      cs.forEach(d => map[d.id] = d.data().name);
+      cs.forEach(d => (map[d.id] = d.data().name));
       setContactNames(map);
 
       // Verifica finestra 24h per numero selezionato
       if (selectedPhone) {
-        const lastMsg = msgs.filter(m => (m.from === selectedPhone || m.to === selectedPhone) && m.from !== 'operator').slice(-1)[0];
+        const lastMsg = msgs
+          .filter(m => (m.from === selectedPhone || m.to === selectedPhone) && m.from !== 'operator')
+          .slice(-1)[0];
         if (!lastMsg) {
           setCanSendMessage(true);
           return;
@@ -92,7 +95,7 @@ export default function ChatPage() {
     (async () => {
       const res = await fetch('/api/list-templates', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: user.email }),
       });
       const data = await res.json();
@@ -109,62 +112,72 @@ export default function ChatPage() {
 
   const filtered = allMessages
     .filter(m => m.from === selectedPhone || m.to === selectedPhone)
-    .sort((a,b) => parseTime(a.timestamp||a.createdAt) - parseTime(b.timestamp||b.createdAt));
+    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     if (!canSendMessage) {
-      alert('⚠️ La finestra di 24h per l\'invio dei messaggi è chiusa. Puoi inviare solo template.');
+      alert("⚠️ La finestra di 24h per l'invio dei messaggi è chiusa. Puoi inviare solo template.");
       return;
     }
-    const payload = { messaging_product:'whatsapp', to:selectedPhone, type:'text', text:{ body:messageText }};
+    const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "text", text: { body: messageText } };
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method:'POST',
-      headers:{ Authorization:`Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, 'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (data.messages) {
-      await addDoc(collection(db,'messages'),{
-        text:messageText, to:selectedPhone, from:'operator',
-        timestamp:Date.now(), createdAt:serverTimestamp(),
-        type:'text', user_uid:user.uid, message_id:data.messages[0].id
+      await addDoc(collection(db, "messages"), {
+        text: messageText,
+        to: selectedPhone,
+        from: "operator",
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: "text",
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
       });
-      setMessageText('');
+      setMessageText("");
     } else {
-      alert('Errore invio: '+JSON.stringify(data.error));
+      alert("Errore invio: " + JSON.stringify(data.error));
     }
   };
 
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
-    const payload = { messaging_product:'whatsapp', to:selectedPhone, type:'template', template:{ name, language:{ code:'it' }}};
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,{
-      method:'POST',
-      headers:{ Authorization:`Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, 'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
+    const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "template", template: { name, language: { code: "it" } } };
+    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (data.messages) {
-      await addDoc(collection(db,'messages'),{
-        text:`Template inviato: ${name}`, to:selectedPhone, from:'operator',
-        timestamp:Date.now(), createdAt:serverTimestamp(),
-        type:'template', user_uid:user.uid, message_id:data.messages[0].id
+      await addDoc(collection(db, "messages"), {
+        text: `Template inviato: ${name}`,
+        to: selectedPhone,
+        from: "operator",
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: "template",
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
       });
       setShowTemplates(false);
     } else {
-      alert('Err template: '+JSON.stringify(data.error));
+      alert("Err template: " + JSON.stringify(data.error));
     }
   };
 
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* LISTA */}
-      <div className={`${selectedPhone?'hidden':'block'} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}>
+      <div className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Conversazioni</h2>
           <button onClick={() => setShowNewChat(true)} className="flex items-center gap-1 px-3 py-1 bg-black text-white rounded-full">
-            <Plus size={16}/> Nuova
+            <Plus size={16} /> Nuova
           </button>
         </div>
         <ul className="space-y-2">
@@ -172,7 +185,7 @@ export default function ChatPage() {
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              className={`p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? 'bg-gray-200 font-semibold' : 'hover:bg-gray-100'}`}
+              className={`p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
             >
               {contactNames[phone] || phone}
             </li>
@@ -194,7 +207,7 @@ export default function ChatPage() {
                   if (newPhone) {
                     setPhoneList([newPhone, ...phoneList]);
                     setSelectedPhone(newPhone);
-                    setNewPhone('');
+                    setNewPhone("");
                     setShowNewChat(false);
                   }
                 }}
@@ -223,7 +236,7 @@ export default function ChatPage() {
 
           {/* Header */}
           <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-8 z-20">
-            <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
+            <button onClick={() => setSelectedPhone("")} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
@@ -235,19 +248,19 @@ export default function ChatPage() {
               {filtered.map((msg, idx) => (
                 <div
                   key={idx}
-                  className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
+                  className={`flex flex-col ${msg.from === "operator" ? "items-end" : "items-start"}`}
                 >
                   <div
                     className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
-                      msg.from === 'operator' ? 'bg-black text-white rounded-br-none' : 'bg-white text-gray-900 rounded-bl-none'
+                      msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
                     }`}
                   >
                     {msg.text}
                   </div>
                   <div className="text-[10px] text-gray-400 mt-1">
-                    {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
-                      hour: '2-digit',
-                      minute: '2-digit'
+                    {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
+                      hour: "2-digit",
+                      minute: "2-digit",
                     })}
                   </div>
                 </div>
@@ -276,7 +289,7 @@ export default function ChatPage() {
                         className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
                       >
                         <div className="font-medium">{tpl.name}</div>
-                        <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text || '—'}</div>
+                        <div className="text-xs text-gray-500 truncate">{tpl.components?.[0]?.text || "—"}</div>
                       </div>
                     ))
                   ) : (
@@ -293,7 +306,7 @@ export default function ChatPage() {
                 type="file"
                 accept="image/*"
                 className="hidden"
-                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], 'image')}
+                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "image")}
               />
             </label>
             <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
@@ -302,7 +315,7 @@ export default function ChatPage() {
                 type="file"
                 accept=".pdf,.doc,.xls"
                 className="hidden"
-                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], 'document')}
+                onChange={e => e.target.files[0] && sendMedia(e.target.files[0], "document")}
               />
             </label>
 
@@ -311,7 +324,7 @@ export default function ChatPage() {
               placeholder="Scrivi un messaggio..."
               value={messageText}
               onChange={e => setMessageText(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && sendMessage()}
+              onKeyDown={e => e.key === "Enter" && sendMessage()}
               className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
               disabled={!canSendMessage}
             />

@@ -1,24 +1,24 @@
 import { db } from '@/lib/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 
 export async function POST(req) {
-  const { email, template_name } = await req.json();
+  const { user_uid, template_name } = await req.json();
 
-  if (!email || !template_name) {
+  if (!user_uid || !template_name) {
     return new Response(JSON.stringify({ error: 'Campi mancanti' }), { status: 400 });
   }
 
   try {
-    // Trova l'utente tramite email
-    const snapshot = await getDocs(collection(db, 'users'));
-    const allUsers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const matchedUser = allUsers.find(u => u.email === email);
+    // Prendi l'utente tramite UID
+    const userRef = doc(db, 'users', user_uid);
+    const userSnap = await getDoc(userRef);
 
-    if (!matchedUser) {
+    if (!userSnap.exists()) {
       return new Response(JSON.stringify({ error: 'Utente non trovato' }), { status: 404 });
     }
 
-    const wabaId = matchedUser.waba_id;
+    const user = userSnap.data();
+    const wabaId = user.waba_id;
     const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
 
     // DELETE via nome template
@@ -43,4 +43,5 @@ export async function POST(req) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
+
 

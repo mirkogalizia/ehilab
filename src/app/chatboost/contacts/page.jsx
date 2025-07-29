@@ -34,51 +34,40 @@ import { useAuth } from '@/lib/useAuth';
 export default function ContactsPage() {
   const { user } = useAuth();
 
-  // Stati base
   const [categories, setCategories] = useState([]);
   const [currentCat, setCurrentCat] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [showUnassigned, setShowUnassigned] = useState(false);
 
-  // Nuova categoria
   const [newCat, setNewCat] = useState('');
-
-  // Nuovo contatto manuale
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
 
-  // Template disponibili per invio massivo
   const [templates, setTemplates] = useState([]);
-
-  // Modal gestione invio massivo
   const [modalOpen, setModalOpen] = useState(false);
   const [templateToSend, setTemplateToSend] = useState(null);
 
-  // Stato invio massivo
   const [sending, setSending] = useState(false);
   const [sendLog, setSendLog] = useState('');
   const [report, setReport] = useState([]);
 
-  // Modal sposta
   const [moveModalOpen, setMoveModalOpen] = useState(false);
   const [targetCategories, setTargetCategories] = useState([]);
 
-  // Dati utente per API WhatsApp (phone_number_id)
   const [userData, setUserData] = useState(null);
 
-  // Carica userData (phone_number_id)
+  // Carica dati utente by UID
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) return;
     (async () => {
-      const usersRef = collection(db, 'users');
-      const snap = await getDocs(usersRef);
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      const snap = await getDocs(collection(db, 'users'));
+      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.id === user.uid);
       if (me) setUserData(me);
     })();
   }, [user]);
 
-  // Carica categorie realtime SOLO per utente corrente
+  // Carica categorie realtime per user.uid
   useEffect(() => {
     if (!user?.uid) return;
     const qCat = query(collection(db, 'categories'), where('createdBy', '==', user.uid));
@@ -88,7 +77,7 @@ export default function ContactsPage() {
     return () => unsub();
   }, [user]);
 
-  // Carica contatti realtime SOLO per utente corrente
+  // Carica contatti realtime per user.uid
   useEffect(() => {
     if (!user?.uid) return;
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
@@ -106,23 +95,23 @@ export default function ContactsPage() {
     return () => unsub();
   }, [user, currentCat, showUnassigned]);
 
-  // Carica templates
+  // Carica templates solo per user_uid
   useEffect(() => {
     async function loadTemplates() {
+      if (!user?.uid) return;
       const res = await fetch('/api/list-templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user?.email }),
+        body: JSON.stringify({ user_uid: user.uid }),
       });
       const data = await res.json();
       if (Array.isArray(data)) {
         setTemplates(data.filter(tpl => tpl.status === 'APPROVED'));
       }
     }
-    if (user?.email) loadTemplates();
+    if (user?.uid) loadTemplates();
   }, [user]);
 
-  // Crea categoria con createdBy
   const createCategory = async () => {
     const name = newCat.trim();
     if (!name) return;
@@ -130,7 +119,6 @@ export default function ContactsPage() {
     setNewCat('');
   };
 
-  // Import Excel/CSV con createdBy
   const importFile = async f => {
     const data = await f.arrayBuffer();
     const wb = XLSX.read(data, { type: 'array' });
@@ -148,7 +136,6 @@ export default function ContactsPage() {
     await batch.commit();
   };
 
-  // Nuovo contatto manuale con createdBy
   const addNewContact = async () => {
     const phone = newContactPhone.trim();
     const name = newContactName.trim();
@@ -159,14 +146,12 @@ export default function ContactsPage() {
     setNewContactPhone('');
   };
 
-  // Toggle selezione contatto
   const toggleSelect = id => {
     const s = new Set(selected);
     s.has(id) ? s.delete(id) : s.add(id);
     setSelected(s);
   };
 
-  // Sposta i contatti selezionati nelle categorie scelte
   const moveContacts = async () => {
     if (targetCategories.length === 0 || selected.size === 0) return;
     const batch = writeBatch(db);
@@ -185,7 +170,6 @@ export default function ContactsPage() {
     setTargetCategories([]);
   };
 
-  // Elimina i contatti selezionati (da DB)
   const deleteSelectedContacts = async () => {
     if (!window.confirm('Sei sicuro di voler eliminare i contatti selezionati?')) return;
     const batch = writeBatch(db);
@@ -196,7 +180,6 @@ export default function ContactsPage() {
     setSelected(new Set());
   };
 
-  // Rimuovi i contatti selezionati SOLO dalla categoria attuale (non li elimina dal DB)
   const removeSelectedFromCategory = async () => {
     if (!currentCat) return;
     const batch = writeBatch(db);
@@ -210,7 +193,6 @@ export default function ContactsPage() {
     setSelected(new Set());
   };
 
-  // Invio template a un singolo contatto (salva anche su Firestore!)
   const sendTemplateToContact = async (phone, templateName) => {
     if (!user || !phone || !templateName || !userData) return false;
     const payload = {
@@ -248,7 +230,6 @@ export default function ContactsPage() {
     }
   };
 
-  // Invio massivo template a tutti i contatti della categoria
   const sendTemplateMassive = async () => {
     if (!templateToSend || (!currentCat && !showUnassigned)) return alert('Seleziona un template.');
     setSending(true);
@@ -279,7 +260,7 @@ export default function ContactsPage() {
     setTimeout(() => setModalOpen(false), 1200);
   };
 
-  // Layout responsive
+  // ----- RENDER -----
   return (
     <div className="h-screen flex flex-col md:flex-row">
       {/* Sidebar categorie */}
@@ -588,3 +569,4 @@ export default function ContactsPage() {
     </div>
   );
 }
+
