@@ -11,6 +11,7 @@ import {
   addDoc,
   serverTimestamp,
   deleteDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Input } from '@/components/ui/input';
@@ -34,6 +35,7 @@ export default function ContactsPage() {
   const [currentCat, setCurrentCat] = useState(null);
   const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
+  const [uncatContacts, setUncatContacts] = useState([]);
 
   // Nuova categoria
   const [newCat, setNewCat] = useState('');
@@ -76,7 +78,7 @@ export default function ContactsPage() {
     return () => unsub();
   }, []);
 
-  // Carica contatti realtime filtrati per categoria o senza categoria
+  // Carica contatti realtime filtrati per categoria
   useEffect(() => {
     if (!currentCat) {
       setContacts([]);
@@ -84,17 +86,25 @@ export default function ContactsPage() {
       return;
     }
     const unsub = onSnapshot(collection(db, 'contacts'), snap => {
-      let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (currentCat === '__no_cat__') {
-        arr = arr.filter(c => !c.categories || c.categories.length === 0);
-      } else {
-        arr = arr.filter(c => c.categories?.includes(currentCat));
-      }
+      const arr = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(c => c.categories?.includes(currentCat));
       setContacts(arr);
       setSelected(new Set());
     });
     return () => unsub();
   }, [currentCat]);
+
+  // Carica contatti SENZA categoria
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'contacts'), snap => {
+      const arr = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(c => !c.categories || c.categories.length === 0);
+      setUncatContacts(arr);
+    });
+    return () => unsub();
+  }, []);
 
   // Carica templates
   useEffect(() => {
@@ -120,22 +130,24 @@ export default function ContactsPage() {
     setNewCat('');
   };
 
-  // Elimina categoria (+ rimozione dai contatti)
-  const deleteCategory = async (catId) => {
-    if (!window.confirm('Vuoi eliminare la categoria? I contatti NON saranno eliminati, ma solo rimossi dalla categoria.')) return;
-    // 1. Elimina la categoria
+  // Elimina categoria (e opzionalmente i contatti)
+  const deleteCategory = async (catId, deleteContacts = false) => {
+    if (!window.confirm('Sicuro di eliminare questa categoria?')) return;
     await deleteDoc(doc(db, 'categories', catId));
-    // 2. Rimuovi categoria da tutti i contatti
+    // Togli la categoria dai contatti o elimina contatti (in base a deleteContacts)
     const snap = await getDocs(collection(db, 'contacts'));
-    snap.forEach(async docu => {
-      const c = docu.data();
+    for (let d of snap.docs) {
+      const c = d.data();
       if (c.categories?.includes(catId)) {
-        const ref = doc(db, 'contacts', docu.id);
-        await setDoc(ref, { categories: c.categories.filter(cat => cat !== catId) }, { merge: true });
+        if (deleteContacts) {
+          await deleteDoc(doc(db, 'contacts', d.id));
+        } else {
+          const newCats = (c.categories || []).filter(cid => cid !== catId);
+          await updateDoc(doc(db, 'contacts', d.id), { categories: newCats });
+        }
       }
-    });
-    // Se stavi guardando la categoria eliminata, passa a "senza categoria"
-    if (currentCat === catId) setCurrentCat('__no_cat__');
+    }
+    if (currentCat === catId) setCurrentCat(null);
   };
 
   // Import Excel/CSV
@@ -172,6 +184,25 @@ export default function ContactsPage() {
     const s = new Set(selected);
     s.has(id) ? s.delete(id) : s.add(id);
     setSelected(s);
+  };
+
+  // Multi-elimina contatti
+  const deleteSelectedContacts = async () => {
+    if (!window.confirm('Eliminare i contatti selezionati?')) return;
+    for (let id of selected) {
+      await deleteDoc(doc(db, 'contacts', id));
+    }
+    setSelected(new Set());
+  };
+
+  // Elimina contatto da categoria (senza eliminare la scheda contatto)
+  const removeContactFromCat = async id => {
+    const ref = doc(db, 'contacts', id);
+    const snap = await getDocs(collection(db, 'contacts'));
+    const c = snap.docs.find(d => d.id === id)?.data();
+    if (!c) return;
+    const newCats = (c.categories || []).filter(cid => cid !== currentCat);
+    await updateDoc(ref, { categories: newCats });
   };
 
   // Invio template a un singolo contatto (salva anche su Firestore!)
@@ -217,7 +248,7 @@ export default function ContactsPage() {
   const sendTemplateMassive = async () => {
     if (!templateToSend || !currentCat) return alert('Seleziona un template.');
     setSending(true);
-    setSendLog(`Invio template "${templateToSend.name}" a tutti i contatti di ${currentCat === '__no_cat__' ? 'Senza categoria' : categories.find(c => c.id === currentCat)?.name}...\n`);
+    setSendLog(`Invio template "${templateToSend.name}" a tutti i contatti di ${categories.find(c => c.id === currentCat)?.name}...\n`);
     setReport([]);
     try {
       const contactsToSend = contacts;
@@ -244,85 +275,65 @@ export default function ContactsPage() {
     setTimeout(() => setModalOpen(false), 1200); // chiudi modale dopo invio
   };
 
-  // Elimina contatti selezionati (dalla categoria o definitivi da "senza categoria")
-  const deleteSelectedContacts = async () => {
-    if (!window.confirm('Vuoi davvero eliminare i contatti selezionati?')) return;
-    for (let id of selected) {
-      const ref = doc(db, 'contacts', id);
-      if (currentCat === '__no_cat__') {
-        // Elimina del tutto
-        await deleteDoc(ref);
-      } else {
-        // Rimuovi la categoria dai contatti selezionati
-        const c = contacts.find(c => c.id === id);
-        if (c && c.categories?.includes(currentCat)) {
-          await setDoc(ref, { categories: c.categories.filter(cat => cat !== currentCat) }, { merge: true });
-        }
-      }
-    }
-    setSelected(new Set());
-  };
-
-  // Elimina singolo contatto (UI)
-  const handleDeleteContact = async (c) => {
-    if (!window.confirm(`Eliminare ${c.name}?`)) return;
-    const ref = doc(db, 'contacts', c.id);
-    if (currentCat === '__no_cat__') {
-      await deleteDoc(ref);
-    } else {
-      await setDoc(ref, { categories: c.categories.filter(cat => cat !== currentCat) }, { merge: true });
-    }
-  };
-
+  // *** RENDER ***
   return (
     <div className="h-screen flex flex-col md:flex-row">
-      {/* Sidebar categorie - bottoni orizzontali scrollabili */}
+      {/* Sidebar categorie */}
       <aside className="w-full md:w-1/4 bg-white border-r p-4 overflow-y-auto">
-        <h2 className="text-xl font-semibold mb-2 flex items-center gap-1">
+        <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
           <Users />
           Categorie
         </h2>
-        <div className="flex gap-2 overflow-x-auto pb-2">
-          <button
-            className={`px-4 py-2 rounded-xl font-medium border text-sm cursor-pointer whitespace-nowrap ${
-              currentCat === '__no_cat__'
-                ? 'bg-gray-800 text-white'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-            onClick={() => setCurrentCat('__no_cat__')}
-          >
-            Senza categoria
-          </button>
+        <div className="flex flex-col gap-2">
+          {/* Bottoni verticali categorie */}
           {categories.map(cat => (
-            <div key={cat.id} className="flex items-center relative">
+            <div key={cat.id} className="relative">
               <button
-                className={`px-4 py-2 rounded-xl font-medium border text-sm cursor-pointer whitespace-nowrap ${
-                  currentCat === cat.id
-                    ? 'bg-blue-700 text-white'
-                    : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
-                }`}
                 onClick={() => setCurrentCat(cat.id)}
+                className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-base font-medium transition border ${currentCat === cat.id
+                  ? 'bg-blue-100 border-blue-400 text-blue-900 shadow'
+                  : 'bg-gray-100 border-gray-200 hover:bg-blue-50'
+                  }`}
               >
-                {cat.name}
-              </button>
-              <button
-                title="Elimina categoria"
-                onClick={() => deleteCategory(cat.id)}
-                className="absolute -right-2 -top-2 bg-white text-red-600 rounded-full shadow p-1 hover:bg-red-50 z-10"
-              >
-                <Trash2 size={16} />
-              </button>
-              <button
-                title={`Invia template a tutta la categoria ${cat.name}`}
-                onClick={() => { setCurrentCat(cat.id); setModalOpen(true); }}
-                className="ml-1 text-blue-600 hover:text-blue-800"
-              >
-                <Send size={18} />
+                <span>{cat.name}</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    title={`Invia template a tutta la categoria ${cat.name}`}
+                    onClick={e => {
+                      e.stopPropagation();
+                      setCurrentCat(cat.id);
+                      setModalOpen(true);
+                    }}
+                    className="p-1 text-blue-600 hover:text-blue-900"
+                  >
+                    <Send size={18} />
+                  </button>
+                  <button
+                    title="Elimina categoria"
+                    onClick={e => {
+                      e.stopPropagation();
+                      deleteCategory(cat.id, false); // solo categoria, NON elimina contatti
+                    }}
+                    className="p-1 text-gray-500 hover:text-red-500"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
               </button>
             </div>
           ))}
+          {/* Bottone per i contatti senza categoria */}
+          {uncatContacts.length > 0 && (
+            <button
+              onClick={() => setCurrentCat('_uncat_')}
+              className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-base font-medium transition border bg-yellow-50 border-yellow-300 text-yellow-900`}
+            >
+              <span>🔄 Senza categoria</span>
+              <span className="text-xs">{uncatContacts.length}</span>
+            </button>
+          )}
         </div>
-        <div className="flex gap-2 mt-2">
+        <div className="flex gap-2 mt-4">
           <Input
             placeholder="Nuova categoria"
             value={newCat}
@@ -342,8 +353,8 @@ export default function ContactsPage() {
         ) : (
           <>
             {/* Import e nuovo contatto */}
-            <div className="mb-4 flex flex-wrap gap-4 items-center">
-              {currentCat !== '__no_cat__' && (
+            {currentCat !== '_uncat_' && (
+              <div className="mb-4 flex flex-wrap gap-4 items-center">
                 <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
                   Importa Excel/CSV
                   <input
@@ -353,9 +364,6 @@ export default function ContactsPage() {
                     onChange={e => e.target.files[0] && importFile(e.target.files[0])}
                   />
                 </label>
-              )}
-
-              {currentCat !== '__no_cat__' && (
                 <div className="flex gap-2 items-center">
                   <Input
                     placeholder="Nome nuovo contatto"
@@ -376,18 +384,6 @@ export default function ContactsPage() {
                     Aggiungi
                   </Button>
                 </div>
-              )}
-            </div>
-
-            {/* Azione massiva: Elimina selezionati */}
-            {selected.size > 0 && (
-              <div className="mb-2 flex items-center gap-3">
-                <Button
-                  className="bg-red-600 hover:bg-red-700 text-white"
-                  onClick={deleteSelectedContacts}
-                >
-                  Elimina selezionati
-                </Button>
               </div>
             )}
 
@@ -401,19 +397,20 @@ export default function ContactsPage() {
                         type="checkbox"
                         onChange={e =>
                           e.target.checked
-                            ? setSelected(new Set(contacts.map(c => c.id)))
+                            ? setSelected(new Set(
+                              (currentCat === '_uncat_' ? uncatContacts : contacts).map(c => c.id)))
                             : setSelected(new Set())
                         }
-                        checked={selected.size === contacts.length && contacts.length > 0}
+                        checked={selected.size === (currentCat === '_uncat_' ? uncatContacts.length : contacts.length) && (currentCat === '_uncat_' ? uncatContacts.length : contacts.length) > 0}
                       />
                     </th>
                     <th className="p-2 text-left">Nome</th>
                     <th className="p-2 text-left">Telefono</th>
-                    <th className="p-2"></th>
+                    <th className="p-2 text-left">Azioni</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {contacts.map(c => (
+                  {(currentCat === '_uncat_' ? uncatContacts : contacts).map(c => (
                     <tr key={c.id} className="hover:bg-gray-50">
                       <td className="p-2">
                         <input
@@ -424,19 +421,44 @@ export default function ContactsPage() {
                       </td>
                       <td className="p-2">{c.name}</td>
                       <td className="p-2">{c.id}</td>
-                      <td className="p-2">
+                      <td className="p-2 flex gap-2">
+                        {/* Rimuovi dalla categoria se NON uncat */}
+                        {currentCat !== '_uncat_' &&
+                          <button
+                            onClick={() => removeContactFromCat(c.id)}
+                            className="p-1 text-gray-500 hover:text-red-500"
+                            title="Rimuovi dalla categoria"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        }
+                        {/* Elimina completamente */}
                         <button
-                          onClick={() => handleDeleteContact(c)}
-                          className="text-red-600 hover:text-red-800 font-bold"
-                          title="Elimina"
+                          onClick={() => {
+                            if (window.confirm('Eliminare questo contatto?'))
+                              deleteDoc(doc(db, 'contacts', c.id));
+                          }}
+                          className="p-1 text-gray-700 hover:text-red-700"
+                          title="Elimina contatto"
                         >
-                          <Trash2 size={18} />
+                          <Trash2 size={16} />
                         </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {/* Multi-elimina se almeno un contatto selezionato */}
+              {selected.size > 0 && (
+                <div className="flex gap-3 mt-3">
+                  <Button
+                    onClick={deleteSelectedContacts}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    Elimina selezionati
+                  </Button>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -456,9 +478,7 @@ export default function ContactsPage() {
 
             <h3 className="text-lg font-semibold mb-4">
               Invia template a tutta la categoria{' '}
-              {currentCat === '__no_cat__'
-                ? 'Senza categoria'
-                : categories.find(c => c.id === currentCat)?.name}
+              {categories.find(c => c.id === currentCat)?.name}
             </h3>
 
             <div className="mb-4">
