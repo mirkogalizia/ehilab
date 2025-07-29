@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { Loader2 } from 'lucide-react';
+import Link from 'next/link';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -34,11 +35,11 @@ export default function LoginPage() {
         {/* Logo + Intro */}
         <div className="text-center space-y-4">
           <img
-  src="/logo.png"
-  alt="Logo EHI Lab"
-  className="mx-auto w-[150px] h-[150px] drop-shadow-md"
-  onError={(e) => (e.currentTarget.style.display = 'none')}
-/>
+            src="/logo.png"
+            alt="Logo EHI Lab"
+            className="mx-auto w-[150px] h-[150px] drop-shadow-md"
+            onError={(e) => (e.currentTarget.style.display = 'none')}
+          />
           <h1 className="text-3xl font-bold text-gray-900">EHI! Chat Boost</h1>
           <p className="text-gray-500 text-sm">
             Accedi alla tua dashboard e digitalizza il tuo business.
@@ -92,8 +93,19 @@ export default function LoginPage() {
             <p className="text-xs mt-1 text-gray-600">Clienti fedeli</p>
           </div>
         </div>
+
+        {/* Link registrati */}
+        <div className="mt-6 flex items-center justify-center">
+          <span className="text-gray-500 text-sm">
+            Non hai un account?{' '}
+            <Link href="/chatboost/register" className="text-green-700 hover:underline font-semibold">
+              Registrati
+            </Link>
+          </span>
+        </div>
       </div>
     </div>
   );
 }
+
 
