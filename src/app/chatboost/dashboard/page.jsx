@@ -6,11 +6,11 @@ import {
   collection,
   query,
   orderBy,
-  where,
   onSnapshot,
   addDoc,
   serverTimestamp,
   getDocs,
+  where
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -31,43 +31,52 @@ export default function ChatPage() {
   const [userData, setUserData] = useState(null);
   const messagesEndRef = useRef(null);
 
-  // Recupera dati utente (phone_number_id)
+  // Recupera dati utente (userData = documento utente Firestore)
   useEffect(() => {
-    if (!user) return;
+    if (!user?.email) return;
     (async () => {
       const usersRef = collection(db, 'users');
-      const snap = await getDocs(usersRef);
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      const snap = await getDocs(query(usersRef, where('email', '==', user.email)));
+      const me = snap.docs.length ? { id: snap.docs[0].id, ...snap.docs[0].data() } : null;
       if (me) setUserData(me);
     })();
   }, [user]);
 
-  // Ascolta solo i messaggi del proprio utente loggato
+  // Ascolta SOLO i messaggi dell'utente corrente (usando userData.id = vero user_uid)
   useEffect(() => {
-    if (!user) return;
-    const q = query(
-      collection(db, 'messages'),
-      where('user_uid', '==', user.uid),
-      orderBy('timestamp', 'asc')
-    );
-    const unsub = onSnapshot(q, async snap => {
-      const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!user?.email) return;
+    let unsub;
+    (async () => {
+      const usersRef = collection(db, 'users');
+      const snap = await getDocs(query(usersRef, where('email', '==', user.email)));
+      const me = snap.docs.length ? { id: snap.docs[0].id, ...snap.docs[0].data() } : null;
+      if (!me) return;
 
-      setAllMessages(msgs);
+      // Salva userData anche qui, serve se aggiorni userData cambiando account
+      setUserData(me);
 
-      // Popola la lista numeri: prendi sia from che to (eccetto "operator")
-      const phones = Array.from(new Set(
-        msgs.map(m => m.from !== 'operator' ? m.from : m.to)
-      ));
-      setPhoneList(phones);
+      // Query solo messaggi con user_uid giusto
+      const q = query(
+        collection(db, 'messages'),
+        where('user_uid', '==', me.id),
+        orderBy('timestamp', 'asc')
+      );
+      unsub = onSnapshot(q, async snap => {
+        const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setAllMessages(msgs);
 
-      // nomi contatti
-      const cs = await getDocs(collection(db, 'contacts'));
-      const map = {};
-      cs.forEach(d => map[d.id] = d.data().name);
-      setContactNames(map);
-    });
-    return () => unsub();
+        // Lista numeri
+        const phones = Array.from(new Set(msgs.map(m => m.from !== 'operator' ? m.from : m.to)));
+        setPhoneList(phones);
+
+        // nomi contatti (filtrati per utente)
+        const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', me.id)));
+        const map = {};
+        cs.forEach(d => map[d.id] = d.data().name);
+        setContactNames(map);
+      });
+    })();
+    return () => unsub && unsub();
   }, [user]);
 
   // Scroll automatico
@@ -96,7 +105,6 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
-  // FILTRO: mostra SOLO i messaggi relativi al numero selezionato
   const filtered = allMessages
     .filter(m => m.from === selectedPhone || m.to === selectedPhone)
     .sort((a,b) => parseTime(a.timestamp||a.createdAt) - parseTime(b.timestamp||b.createdAt));
@@ -114,7 +122,7 @@ export default function ChatPage() {
       await addDoc(collection(db,'messages'),{
         text:messageText, to:selectedPhone, from:'operator',
         timestamp:Date.now(), createdAt:serverTimestamp(),
-        type:'text', user_uid:user.uid, message_id:data.messages[0].id
+        type:'text', user_uid:userData.id, message_id:data.messages[0].id
       });
       setMessageText('');
     } else {
@@ -135,7 +143,7 @@ export default function ChatPage() {
       await addDoc(collection(db,'messages'),{
         text:`Template inviato: ${name}`, to:selectedPhone, from:'operator',
         timestamp:Date.now(), createdAt:serverTimestamp(),
-        type:'template', user_uid:user.uid, message_id:data.messages[0].id
+        type:'template', user_uid:userData.id, message_id:data.messages[0].id
       });
       setShowTemplates(false);
     } else {
@@ -165,7 +173,7 @@ export default function ChatPage() {
       if (d.messages) {
         await addDoc(collection(db,'messages'),{
           text:file.name, mediaUrl: '', to:selectedPhone, from:'operator',
-          timestamp:Date.now(), createdAt:serverTimestamp(), type, user_uid:user.uid, message_id:d.messages[0].id
+          timestamp:Date.now(), createdAt:serverTimestamp(), type, user_uid:userData.id, message_id:d.messages[0].id
         });
       }
     } catch(e){console.error(e); alert('Media error')}
