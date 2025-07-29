@@ -5,6 +5,7 @@ import { db } from '@/lib/firebase';
 import {
   collection,
   query,
+  where,
   orderBy,
   onSnapshot,
   addDoc,
@@ -41,9 +42,14 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Ascolta messaggi realtime
+  // Ascolta SOLO messaggi utente loggato
   useEffect(() => {
-    const q = query(collection(db, 'messages'), orderBy('timestamp', 'asc'));
+    if (!user) return;
+    const q = query(
+      collection(db, 'messages'),
+      where('user_uid', '==', user.uid),
+      orderBy('timestamp', 'asc')
+    );
     const unsub = onSnapshot(q, async snap => {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setAllMessages(msgs);
@@ -59,7 +65,7 @@ export default function ChatPage() {
       setContactNames(map);
     });
     return () => unsub();
-  }, []);
+  }, [user]);
 
   // Scroll automatico
   useEffect(() => {
@@ -296,4 +302,5 @@ export default function ChatPage() {
     </div>
   );
 }
+
 
