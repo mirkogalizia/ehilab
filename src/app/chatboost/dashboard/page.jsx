@@ -10,7 +10,7 @@ import {
   addDoc,
   serverTimestamp,
   getDocs,
-  where
+  where,
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -29,53 +29,48 @@ export default function ChatPage() {
   const [showNewChat, setShowNewChat] = useState(false);
   const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
-  const [waWindows, setWaWindows] = useState({}); // mappa numero -> finestra aperta: true/false
+  const [isWindowOpen, setIsWindowOpen] = useState(true);
   const messagesEndRef = useRef(null);
 
-  // Recupera dati utente (phone_number_id)
+  // Recupera dati utente (phone_number_id e user_uid) tramite email per associare user_uid giusto
   useEffect(() => {
-    if (!user) return;
+    if (!user?.email) return;
     (async () => {
       const usersRef = collection(db, 'users');
-      const snap = await getDocs(usersRef);
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      const snap = await getDocs(query(usersRef, where('email', '==', user.email)));
+      const me = snap.docs.map(d => ({ id: d.id, ...d.data() }))[0];
       if (me) setUserData(me);
     })();
   }, [user]);
 
-  // Ascolta messaggi realtime SOLO dell'utente corrente
+  // Ascolta messaggi realtime SOLO per user_uid corretto (associato a user email)
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!userData?.id) return;
     const q = query(
       collection(db, 'messages'),
-      where('user_uid', '==', user.uid),
+      where('user_uid', '==', userData.id),
       orderBy('timestamp', 'asc')
     );
     const unsub = onSnapshot(q, async snap => {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setAllMessages(msgs);
 
-      // lista numeri
-      const phones = Array.from(new Set(msgs.map(m => m.from !== 'operator' ? m.from : m.to)));
+      // lista numeri (contatti conversazioni)
+      const phones = Array.from(new Set(msgs.map(m => (m.from !== 'operator' ? m.from : m.to))));
       setPhoneList(phones);
 
-      // nomi contatti e finestra 24h
-      const csSnap = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
-      const nameMap = {};
-      const windowMap = {};
-      csSnap.forEach(d => {
-        const data = d.data();
-        nameMap[d.id] = data.name || d.id;
-        // finestra aperta o chiusa (default true se non definito)
-        windowMap[d.id] = data.wa_window_open !== false;
+      // nomi contatti filtrati per utente
+      const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', userData.id)));
+      const map = {};
+      cs.forEach(d => {
+        map[d.id] = d.data().name;
       });
-      setContactNames(nameMap);
-      setWaWindows(windowMap);
+      setContactNames(map);
     });
     return () => unsub();
-  }, [user]);
+  }, [userData]);
 
-  // Scroll automatico
+  // Scroll automatico alla fine messaggi
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
@@ -86,7 +81,7 @@ export default function ChatPage() {
     (async () => {
       const res = await fetch('/api/list-templates', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: user.email }),
       });
       const data = await res.json();
@@ -94,6 +89,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // Funzione per parsare timestamp Firestore o stringhe
   const parseTime = val => {
     if (!val) return 0;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -101,18 +97,38 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
+  // Calcola se finestra 24h aperta per il contatto selezionato
+  useEffect(() => {
+    if (!selectedPhone) {
+      setIsWindowOpen(true);
+      return;
+    }
+    // Prendi ultimo messaggio ricevuto da quel contatto (from = selectedPhone)
+    const lastReceived = [...allMessages]
+      .filter(m => m.from === selectedPhone)
+      .sort((a, b) => (parseTime(b.timestamp || b.createdAt) - parseTime(a.timestamp || a.createdAt)))[0];
+
+    if (!lastReceived) {
+      setIsWindowOpen(false);
+      return;
+    }
+
+    const lastTime = parseTime(lastReceived.timestamp || lastReceived.createdAt);
+    const now = Date.now();
+    setIsWindowOpen(now - lastTime <= 24 * 3600 * 1000);
+  }, [selectedPhone, allMessages]);
+
+  // Filtra i messaggi per conversazione con selectedPhone
   const filtered = allMessages
     .filter(m => m.from === selectedPhone || m.to === selectedPhone)
-    .sort((a,b) => parseTime(a.timestamp||a.createdAt) - parseTime(b.timestamp||b.createdAt));
+    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
 
-  // Controllo finestra 24h sul numero selezionato
-  const waWindowOpen = selectedPhone ? waWindows[selectedPhone] : true;
-
+  // Invio messaggio testo (solo se finestra aperta)
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
 
-    if (!waWindowOpen) {
-      alert("La finestra delle 24 ore per questo contatto è chiusa.\nPuoi inviare solo messaggi template.");
+    if (!isWindowOpen) {
+      alert("⚠️ La finestra delle 24 ore è chiusa. Puoi inviare solo template.");
       return;
     }
 
@@ -120,20 +136,17 @@ export default function ChatPage() {
       messaging_product: 'whatsapp',
       to: selectedPhone,
       type: 'text',
-      text: { body: messageText }
+      text: { body: messageText },
     };
-
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
-
     const data = await res.json();
-
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
         text: messageText,
@@ -142,8 +155,8 @@ export default function ChatPage() {
         timestamp: Date.now(),
         createdAt: serverTimestamp(),
         type: 'text',
-        user_uid: user.uid,
-        message_id: data.messages[0].id
+        user_uid: userData.id,
+        message_id: data.messages[0].id,
       });
       setMessageText('');
     } else {
@@ -151,29 +164,24 @@ export default function ChatPage() {
     }
   };
 
+  // Invio template sempre abilitato (anche fuori finestra)
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
-
-    // I template possono essere inviati sempre, anche se finestra chiusa
-
     const payload = {
       messaging_product: 'whatsapp',
       to: selectedPhone,
       type: 'template',
-      template: { name, language: { code: 'it' } }
+      template: { name, language: { code: 'it' } },
     };
-
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
-
     const data = await res.json();
-
     if (data.messages) {
       await addDoc(collection(db, 'messages'), {
         text: `Template inviato: ${name}`,
@@ -182,57 +190,45 @@ export default function ChatPage() {
         timestamp: Date.now(),
         createdAt: serverTimestamp(),
         type: 'template',
-        user_uid: user.uid,
-        message_id: data.messages[0].id
+        user_uid: userData.id,
+        message_id: data.messages[0].id,
       });
       setShowTemplates(false);
     } else {
-      alert('Errore invio template: ' + JSON.stringify(data.error));
+      alert('Errore template: ' + JSON.stringify(data.error));
     }
   };
 
+  // Invio media (foto, documenti)
   const sendMedia = async (file, type) => {
     if (!selectedPhone || !userData) return;
-
-    if (!waWindowOpen) {
-      alert("La finestra delle 24 ore per questo contatto è chiusa.\nPuoi inviare solo messaggi template.");
-      return;
-    }
-
     try {
       const form = new FormData();
       form.append('file', file);
       form.append('type', type);
       form.append('messaging_product', 'whatsapp');
-
       const up = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
-        body: form
+        body: form,
       });
-
       const upData = await up.json();
-
       if (!upData.id) throw upData;
-
       const payload = {
         messaging_product: 'whatsapp',
         to: selectedPhone,
         type,
-        [type]: { id: upData.id, caption: file.name }
+        [type]: { id: upData.id, caption: file.name },
       };
-
       const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
-
       const d = await res.json();
-
       if (d.messages) {
         await addDoc(collection(db, 'messages'), {
           text: file.name,
@@ -242,8 +238,8 @@ export default function ChatPage() {
           timestamp: Date.now(),
           createdAt: serverTimestamp(),
           type,
-          user_uid: user.uid,
-          message_id: d.messages[0].id
+          user_uid: userData.id,
+          message_id: d.messages[0].id,
         });
       }
     } catch (e) {
@@ -320,16 +316,9 @@ export default function ChatPage() {
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
-
           {/* Messaggi */}
           <div className="flex-1 overflow-y-auto p-4">
             <div className="space-y-3">
-              {!waWindowOpen && (
-                <div className="mb-4 rounded border border-red-400 bg-red-100 p-3 text-red-800 font-semibold">
-                  La finestra delle 24 ore è chiusa per questo contatto.<br />
-                  Puoi inviare solo messaggi template.
-                </div>
-              )}
               {filtered.map((msg, idx) => (
                 <div
                   key={idx}
@@ -347,7 +336,7 @@ export default function ChatPage() {
                   <div className="text-[10px] text-gray-400 mt-1">
                     {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
                       hour: '2-digit',
-                      minute: '2-digit'
+                      minute: '2-digit',
                     })}
                   </div>
                 </div>
@@ -355,7 +344,6 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
           </div>
-
           {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
             {/* Template */}
@@ -385,7 +373,6 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-
             {/* Media */}
             <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
               📷
@@ -405,7 +392,6 @@ export default function ChatPage() {
                 onChange={e => e.target.files[0] && sendMedia(e.target.files[0], 'document')}
               />
             </label>
-
             {/* Text */}
             <Input
               placeholder="Scrivi un messaggio..."
@@ -413,16 +399,21 @@ export default function ChatPage() {
               onChange={e => setMessageText(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && sendMessage()}
               className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
+              disabled={!isWindowOpen}
             />
             <Button
               onClick={sendMessage}
-              disabled={!messageText || !waWindowOpen}
-              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 disabled:opacity-50"
-              title={waWindowOpen ? "Invia messaggio" : "Finestra 24h chiusa, invia solo template"}
+              disabled={!messageText || !isWindowOpen}
+              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
             >
               <Send size={18} />
             </Button>
           </div>
+          {!isWindowOpen && (
+            <div className="text-center text-xs text-red-600 font-semibold mt-2 px-4">
+              ⚠️ La finestra di 24h è chiusa per questo contatto. Puoi inviare solo template.
+            </div>
+          )}
         </div>
       )}
     </div>
