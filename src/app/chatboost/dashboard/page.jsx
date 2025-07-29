@@ -29,8 +29,8 @@ export default function ChatPage() {
   const [showNewChat, setShowNewChat] = useState(false);
   const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
+  const [waWindows, setWaWindows] = useState({}); // mappa numero -> finestra aperta: true/false
   const messagesEndRef = useRef(null);
-  const [last24hWindowClosed, setLast24hWindowClosed] = useState(false);
 
   // Recupera dati utente (phone_number_id)
   useEffect(() => {
@@ -59,11 +59,18 @@ export default function ChatPage() {
       const phones = Array.from(new Set(msgs.map(m => m.from !== 'operator' ? m.from : m.to)));
       setPhoneList(phones);
 
-      // nomi contatti (filtrati per utente!)
-      const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
-      const map = {};
-      cs.forEach(d => map[d.id] = d.data().name);
-      setContactNames(map);
+      // nomi contatti e finestra 24h
+      const csSnap = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
+      const nameMap = {};
+      const windowMap = {};
+      csSnap.forEach(d => {
+        const data = d.data();
+        nameMap[d.id] = data.name || d.id;
+        // finestra aperta o chiusa (default true se non definito)
+        windowMap[d.id] = data.wa_window_open !== false;
+      });
+      setContactNames(nameMap);
+      setWaWindows(windowMap);
     });
     return () => unsub();
   }, [user]);
@@ -98,97 +105,150 @@ export default function ChatPage() {
     .filter(m => m.from === selectedPhone || m.to === selectedPhone)
     .sort((a,b) => parseTime(a.timestamp||a.createdAt) - parseTime(b.timestamp||b.createdAt));
 
-  // Controlla se finestra 24h è chiusa (nel messaggio più recente)
-  useEffect(() => {
-    if (!filtered.length) {
-      setLast24hWindowClosed(false);
-      return;
-    }
-    const lastMsg = filtered[filtered.length -1];
-    // Assume last_24h_window boolean in message, true = finestra aperta, false chiusa
-    // Se mancante, consideriamo chiusa per sicurezza
-    setLast24hWindowClosed(lastMsg.last_24h_window === false);
-  }, [filtered]);
+  // Controllo finestra 24h sul numero selezionato
+  const waWindowOpen = selectedPhone ? waWindows[selectedPhone] : true;
 
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
-    if (last24hWindowClosed) {
-      alert('⚠️ La finestra 24h è chiusa. Puoi inviare solo template.');
+
+    if (!waWindowOpen) {
+      alert("La finestra delle 24 ore per questo contatto è chiusa.\nPuoi inviare solo messaggi template.");
       return;
     }
-    const payload = { messaging_product:'whatsapp', to:selectedPhone, type:'text', text:{ body:messageText }};
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'text',
+      text: { body: messageText }
+    };
+
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method:'POST',
-      headers:{ Authorization:`Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, 'Content-Type':'application/json'},
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify(payload)
     });
+
     const data = await res.json();
+
     if (data.messages) {
-      await addDoc(collection(db,'messages'),{
-        text:messageText, to:selectedPhone, from:'operator',
-        timestamp:Date.now(), createdAt:serverTimestamp(),
-        type:'text', user_uid:user.uid, message_id:data.messages[0].id
+      await addDoc(collection(db, 'messages'), {
+        text: messageText,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'text',
+        user_uid: user.uid,
+        message_id: data.messages[0].id
       });
       setMessageText('');
     } else {
-      alert('Errore invio: '+JSON.stringify(data.error));
+      alert('Errore invio: ' + JSON.stringify(data.error));
     }
   };
 
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
-    // Template si possono inviare anche se finestra 24h chiusa
-    const payload = { messaging_product:'whatsapp', to:selectedPhone, type:'template', template:{ name, language:{ code:'it' }}};
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,{
-      method:'POST',
-      headers:{ Authorization:`Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, 'Content-Type':'application/json'},
+
+    // I template possono essere inviati sempre, anche se finestra chiusa
+
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'template',
+      template: { name, language: { code: 'it' } }
+    };
+
+    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify(payload)
     });
+
     const data = await res.json();
+
     if (data.messages) {
-      await addDoc(collection(db,'messages'),{
-        text:`Template inviato: ${name}`, to:selectedPhone, from:'operator',
-        timestamp:Date.now(), createdAt:serverTimestamp(),
-        type:'template', user_uid:user.uid, message_id:data.messages[0].id
+      await addDoc(collection(db, 'messages'), {
+        text: `Template inviato: ${name}`,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'template',
+        user_uid: user.uid,
+        message_id: data.messages[0].id
       });
       setShowTemplates(false);
     } else {
-      alert('Err template: '+JSON.stringify(data.error));
+      alert('Errore invio template: ' + JSON.stringify(data.error));
     }
   };
 
   const sendMedia = async (file, type) => {
     if (!selectedPhone || !userData) return;
-    if (last24hWindowClosed) {
-      alert('⚠️ La finestra 24h è chiusa. Puoi inviare solo template.');
+
+    if (!waWindowOpen) {
+      alert("La finestra delle 24 ore per questo contatto è chiusa.\nPuoi inviare solo messaggi template.");
       return;
     }
+
     try {
       const form = new FormData();
-      form.append('file', file); form.append('type', type); form.append('messaging_product','whatsapp');
-      const up = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,{
-        method:'POST',
-        headers:{ Authorization:`Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
+      form.append('file', file);
+      form.append('type', type);
+      form.append('messaging_product', 'whatsapp');
+
+      const up = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
         body: form
       });
+
       const upData = await up.json();
+
       if (!upData.id) throw upData;
-      const payload = { messaging_product:'whatsapp', to:selectedPhone, type, [type]:{ id:upData.id, caption:file.name }};
-      const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,{
-        method:'POST',
-        headers:{ Authorization:`Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, 'Content-Type':'application/json'},
-        body:JSON.stringify(payload)
+
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: selectedPhone,
+        type,
+        [type]: { id: upData.id, caption: file.name }
+      };
+
+      const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
       });
+
       const d = await res.json();
+
       if (d.messages) {
-        await addDoc(collection(db,'messages'),{
-          text:file.name, mediaUrl: '', to:selectedPhone, from:'operator',
-          timestamp:Date.now(), createdAt:serverTimestamp(), type, user_uid:user.uid, message_id:d.messages[0].id
+        await addDoc(collection(db, 'messages'), {
+          text: file.name,
+          mediaUrl: '',
+          to: selectedPhone,
+          from: 'operator',
+          timestamp: Date.now(),
+          createdAt: serverTimestamp(),
+          type,
+          user_uid: user.uid,
+          message_id: d.messages[0].id
         });
       }
-    } catch(e){
+    } catch (e) {
       console.error(e);
-      alert('Media error');
+      alert('Errore invio media');
     }
   };
 
@@ -198,7 +258,10 @@ export default function ChatPage() {
       <div className={`${selectedPhone ? 'hidden' : 'block'} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Conversazioni</h2>
-          <button onClick={() => setShowNewChat(true)} className="flex items-center gap-1 px-3 py-1 bg-black text-white rounded-full">
+          <button
+            onClick={() => setShowNewChat(true)}
+            className="flex items-center gap-1 px-3 py-1 bg-black text-white rounded-full"
+          >
             <Plus size={16} /> Nuova
           </button>
         </div>
@@ -207,9 +270,11 @@ export default function ChatPage() {
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              className={`p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? 'bg-gray-200 font-semibold' : 'hover:bg-gray-100'}`}
+              className={`p-3 rounded-lg cursor-pointer transition ${
+                selectedPhone === phone ? 'bg-gray-200 font-semibold' : 'hover:bg-gray-100'
+              }`}
             >
-              {contactNames[phone] || allMessages.find(m => m.from === phone || m.to === phone)?.profile_name || phone}
+              {contactNames[phone] || phone}
             </li>
           ))}
         </ul>
@@ -217,7 +282,12 @@ export default function ChatPage() {
         {showNewChat && (
           <div className="mt-4 p-4 bg-gray-100 rounded-lg shadow">
             <h3 className="mb-2 font-medium">📞 Inserisci numero</h3>
-            <Input placeholder="3931234567" value={newPhone} onChange={e => setNewPhone(e.target.value)} className="mb-2" />
+            <Input
+              placeholder="3931234567"
+              value={newPhone}
+              onChange={e => setNewPhone(e.target.value)}
+              className="mb-2"
+            />
             <div className="flex gap-2">
               <Button
                 onClick={() => {
@@ -248,35 +318,52 @@ export default function ChatPage() {
             <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
-            <span className="text-lg font-semibold truncate">
-              {contactNames[selectedPhone] || allMessages.find(m => m.from === selectedPhone || m.to === selectedPhone)?.profile_name || selectedPhone}
-            </span>
+            <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
+
           {/* Messaggi */}
           <div className="flex-1 overflow-y-auto p-4">
             <div className="space-y-3">
+              {!waWindowOpen && (
+                <div className="mb-4 rounded border border-red-400 bg-red-100 p-3 text-red-800 font-semibold">
+                  La finestra delle 24 ore è chiusa per questo contatto.<br />
+                  Puoi inviare solo messaggi template.
+                </div>
+              )}
               {filtered.map((msg, idx) => (
-                <div key={idx} className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}>
+                <div
+                  key={idx}
+                  className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
+                >
                   <div
                     className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
-                      msg.from === 'operator' ? 'bg-black text-white rounded-br-none' : 'bg-white text-gray-900 rounded-bl-none'
+                      msg.from === 'operator'
+                        ? 'bg-black text-white rounded-br-none'
+                        : 'bg-white text-gray-900 rounded-bl-none'
                     }`}
                   >
                     {msg.text}
                   </div>
                   <div className="text-[10px] text-gray-400 mt-1">
-                    {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
                   </div>
                 </div>
               ))}
               <div ref={messagesEndRef} />
             </div>
           </div>
+
           {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
             {/* Template */}
             <div className="relative">
-              <button onClick={() => setShowTemplates(!showTemplates)} className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
+              <button
+                onClick={() => setShowTemplates(!showTemplates)}
+                className="px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
+              >
                 📑
               </button>
               {showTemplates && (
@@ -298,6 +385,7 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
+
             {/* Media */}
             <label className="cursor-pointer px-3 py-2 rounded-full bg-gray-100 hover:bg-gray-200">
               📷
@@ -317,6 +405,7 @@ export default function ChatPage() {
                 onChange={e => e.target.files[0] && sendMedia(e.target.files[0], 'document')}
               />
             </label>
+
             {/* Text */}
             <Input
               placeholder="Scrivi un messaggio..."
@@ -327,8 +416,9 @@ export default function ChatPage() {
             />
             <Button
               onClick={sendMessage}
-              disabled={!messageText}
-              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
+              disabled={!messageText || !waWindowOpen}
+              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 disabled:opacity-50"
+              title={waWindowOpen ? "Invia messaggio" : "Finestra 24h chiusa, invia solo template"}
             >
               <Send size={18} />
             </Button>
@@ -338,5 +428,4 @@ export default function ChatPage() {
     </div>
   );
 }
-
 
