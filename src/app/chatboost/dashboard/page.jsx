@@ -11,7 +11,7 @@ import {
   serverTimestamp,
   getDocs,
   where,
-  writeBatch,
+  writeBatch
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,6 @@ import { useAuth } from '@/lib/useAuth';
 export default function ChatPage() {
   const { user } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
-  const [phoneList, setPhoneList] = useState([]);
   const [contactNames, setContactNames] = useState({});
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
@@ -31,10 +30,9 @@ export default function ChatPage() {
   const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(true);
-  const [unreadCounts, setUnreadCounts] = useState({});
   const messagesEndRef = useRef(null);
 
-  // Recupera dati utente
+  // Recupera dati utente accessori (phone_number_id ecc.)
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -45,7 +43,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Ascolta messaggi realtime SOLO dell'utente corrente tramite user.uid
+  // Ascolta messaggi realtime SOLO dell'utente corrente
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -57,88 +55,86 @@ export default function ChatPage() {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setAllMessages(msgs);
 
-      // Costruisci lista numeri e stats
-      const phoneMeta = {};
-      msgs.forEach(m => {
-        const phone = m.from !== 'operator' ? m.from : m.to;
-        if (!phoneMeta[phone]) {
-          phoneMeta[phone] = {
-            lastTimestamp: 0,
-            unread: 0,
-          };
-        }
-        // Ultimo messaggio
-        const ts = typeof m.timestamp === 'number'
-          ? (m.timestamp > 1e12 ? m.timestamp : m.timestamp * 1000)
-          : m.createdAt?.seconds ? m.createdAt.seconds * 1000 : 0;
-        if (ts > phoneMeta[phone].lastTimestamp) phoneMeta[phone].lastTimestamp = ts;
-        // Conteggio non letti (solo ricevuti)
-        if (m.from !== 'operator' && m.read === false) phoneMeta[phone].unread += 1;
-      });
-      // Ordina i numeri per ultimo messaggio (desc)
-      const phones = Object.entries(phoneMeta)
-        .sort((a, b) => b[1].lastTimestamp - a[1].lastTimestamp)
-        .map(([phone]) => phone);
-      setPhoneList(phones);
-
-      // Stat unread
-      const unreadMap = {};
-      Object.entries(phoneMeta).forEach(([phone, meta]) => unreadMap[phone] = meta.unread);
-      setUnreadCounts(unreadMap);
-
-      // nomi contatti (filtrati per createdBy)
+      // nomi contatti
       const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
       const map = {};
-      cs.forEach(d => (map[d.id] = d.data().name));
+      cs.forEach(d => map[d.id] = d.data().name);
       setContactNames(map);
-
-      // Verifica finestra 24h per numero selezionato
-      if (selectedPhone) {
-        const lastMsg = msgs
-          .filter(m => (m.from === selectedPhone || m.to === selectedPhone) && m.from !== 'operator')
-          .slice(-1)[0];
-        if (!lastMsg) {
-          setCanSendMessage(true);
-          return;
-        }
-        const lastTimestamp = typeof lastMsg.timestamp === 'number'
-          ? (lastMsg.timestamp > 1e12 ? lastMsg.timestamp : lastMsg.timestamp * 1000)
-          : lastMsg.createdAt?.seconds ? lastMsg.createdAt.seconds * 1000 : 0;
-        const now = Date.now();
-        setCanSendMessage(now - lastTimestamp < 86400000);
-      }
     });
     return () => unsub();
+  }, [user]);
+
+  // Raggruppa conversazioni e ordina
+  const phonesData = (() => {
+    const chatMap = {};
+    allMessages.forEach(m => {
+      const phone = m.from !== 'operator' ? m.from : m.to;
+      if (!chatMap[phone]) chatMap[phone] = [];
+      chatMap[phone].push(m);
+    });
+    return Object.entries(chatMap)
+      .map(([phone, msgs]) => {
+        msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+        const lastMsg = msgs[msgs.length - 1];
+        const unread = msgs.filter(m => m.from === phone && !m.read).length;
+        return {
+          phone,
+          name: contactNames[phone] || phone,
+          lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
+          lastMsgText: lastMsg.text,
+          unread,
+        };
+      })
+      .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
+  })();
+
+  // Reset messaggi non letti quando apro la chat
+  useEffect(() => {
+    async function markMessagesAsRead(userUid, phone) {
+      if (!userUid || !phone) return;
+      const q = query(
+        collection(db, 'messages'),
+        where('user_uid', '==', userUid),
+        where('from', '==', phone),
+        where('read', '==', false)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.forEach(docu => {
+          batch.update(docu.ref, { read: true });
+        });
+        await batch.commit();
+      }
+    }
+    if (user?.uid && selectedPhone) {
+      markMessagesAsRead(user.uid, selectedPhone);
+    }
   }, [user, selectedPhone]);
 
-  // Quando selezioni una chat, marca come letti tutti i messaggi ricevuti non letti!
+  // Verifica finestra 24h
   useEffect(() => {
-    if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
-    // Trova i messaggi non letti da questo numero
-    const unreadMsgIds = allMessages
-      .filter(m => m.from === selectedPhone && m.read === false)
-      .map(m => m.id);
-    if (unreadMsgIds.length > 0) {
-      // Aggiorna in batch
-      const batch = writeBatch(db);
-      unreadMsgIds.forEach(id => {
-        const ref = doc(collection(db, 'messages'), id);
-        batch.update(ref, { read: true });
-      });
-      batch.commit();
+    if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
+    const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
+    const lastMsg = msgs.filter(m => m.from !== 'operator').slice(-1)[0];
+    if (!lastMsg) {
+      setCanSendMessage(true);
+      return;
     }
-  }, [selectedPhone, allMessages, user]);
+    const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
+    const now = Date.now();
+    setCanSendMessage(now - lastTimestamp < 86400000);
+  }, [user, allMessages, selectedPhone]);
 
   // Scroll automatico
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // Carica templates APPROVED
+  // Carica templates APPROVED (nuovo endpoint: usa user_uid)
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
-      // Ora API accetta user_uid, più sicuro!
       const res = await fetch('/api/list-templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -182,8 +178,8 @@ export default function ChatPage() {
         createdAt: serverTimestamp(),
         type: "text",
         user_uid: user.uid,
-        read: true,
         message_id: data.messages[0].id,
+        read: true, // sempre letto se inviato dall'operatore
       });
       setMessageText("");
     } else {
@@ -209,8 +205,8 @@ export default function ChatPage() {
         createdAt: serverTimestamp(),
         type: "template",
         user_uid: user.uid,
-        read: true,
         message_id: data.messages[0].id,
+        read: true,
       });
       setShowTemplates(false);
     } else {
@@ -218,7 +214,6 @@ export default function ChatPage() {
     }
   };
 
-  // ---- UI ----
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* LISTA */}
@@ -230,18 +225,18 @@ export default function ChatPage() {
           </button>
         </div>
         <ul className="space-y-2">
-          {phoneList.map(phone => (
+          {phonesData.map(({ phone, name, lastMsgText, unread }) => (
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              className={`p-3 rounded-lg cursor-pointer flex justify-between items-center transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
+              className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
             >
-              <span>
-                {contactNames[phone] || phone}
-              </span>
-              {/* Badge non letti */}
-              {unreadCounts[phone] > 0 && (
-                <span className="ml-2 px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-bold">{unreadCounts[phone]}</span>
+              <div>
+                <span>{name}</span>
+                <span className="block text-xs text-gray-400">{lastMsgText}</span>
+              </div>
+              {unread > 0 && (
+                <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
               )}
             </li>
           ))}
@@ -260,7 +255,6 @@ export default function ChatPage() {
               <Button
                 onClick={() => {
                   if (newPhone) {
-                    setPhoneList([newPhone, ...phoneList]);
                     setSelectedPhone(newPhone);
                     setNewPhone("");
                     setShowNewChat(false);
@@ -353,10 +347,6 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-
-            {/* Media */}
-            {/* ...eventuale gestione media qui (come già implementato)... */}
-
             {/* Text */}
             <Input
               placeholder="Scrivi un messaggio..."
@@ -379,4 +369,5 @@ export default function ChatPage() {
     </div>
   );
 }
+
 
