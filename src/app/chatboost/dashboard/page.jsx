@@ -392,10 +392,11 @@ export default function ChatPage() {
                   key={idx}
                   className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
                 >
+                  {/* IMMAGINE */}
                   {msg.type === 'image' && msg.media_id ? (
                     <img
                       src={`https://graph.facebook.com/v17.0/${msg.media_id}`}
-                      alt="immagine inviata"
+                      alt="Immagine"
                       className="max-w-xs rounded-lg shadow-md"
                       loading="lazy"
                     />
