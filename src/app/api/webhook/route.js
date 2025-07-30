@@ -1,124 +1,61 @@
-import { db, storage } from '@/lib/firebase';
-import {
-  collection, addDoc, doc, setDoc, serverTimestamp, query, where, getDocs,
-} from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { NextResponse } from "next/server";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { initializeApp, getApps, getApp } from "firebase/app";
+
+// 🔥 Prende le ENV giuste (assicurati che siano queste, come hai in Vercel!)
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID,
+};
+
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const storage = getStorage(app);
 
 export async function POST(req) {
   try {
-    const body = await req.json();
+    const { mediaId, fileName, mimeType } = await req.json();
+    console.log("🔥 REQUEST BODY", { mediaId, fileName, mimeType });
 
-    const entry = body?.entry?.[0];
-    const change = entry?.changes?.[0];
-    const value = change?.value;
-    const phone_number_id = value?.metadata?.phone_number_id;
-    const messages = value?.messages || [];
-    const contacts = value?.contacts || [];
-
-    if (!phone_number_id || messages.length === 0) {
-      return new Response("No messages to process", { status: 200 });
-    }
-
-    // Recupera user_uid
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('phone_number_id', '==', phone_number_id));
-    const querySnapshot = await getDocs(q);
-    if (querySnapshot.empty) {
-      console.warn('No user found:', phone_number_id);
-      return new Response('Utente non trovato', { status: 200 });
-    }
-    const user_uid = querySnapshot.docs[0].id;
-
-    for (let i = 0; i < messages.length; i++) {
-      const message = messages[i];
-      const contact = contacts?.[i];
-      const wa_id = contact?.wa_id || message.from;
-      const profile_name = contact?.profile?.name || "";
-
-      let text = message.text?.body || '';
-      let mediaUrl = '';
-
-      // MEDIA: se ricevi un'immagine o un file, recupera la URL pubblica tramite Graph API + salva su Firebase Storage
-      if ((message.type === 'image' || message.type === 'document') && message[message.type]?.id) {
-        const mediaId = message[message.type].id;
-
-        // 1. Recupera la url privata dal Graph
-        const waRes = await fetch(
-          `https://graph.facebook.com/v17.0/${mediaId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            },
-          }
-        );
-        const waData = await waRes.json();
-        const url = waData.url;
-        if (!url) {
-          console.error('No media url found from graph', waData);
-        } else {
-          // 2. Scarica il file come blob
-          const mediaRes = await fetch(url, {
-            headers: {
-              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            },
-          });
-          const arrayBuffer = await mediaRes.arrayBuffer();
-          const mimeType =
-            message.type === 'image'
-              ? 'image/jpeg'
-              : message.document?.mime_type || 'application/octet-stream';
-          const ext =
-            message.type === 'image'
-              ? 'jpg'
-              : (message.document?.filename?.split('.').pop() || 'bin');
-          const fileName = `${mediaId}-${Date.now()}.${ext}`;
-
-          // 3. Upload su Firebase Storage
-          const storagePath =
-            message.type === 'image'
-              ? `media/${fileName}`
-              : `files/${fileName}`;
-          const storageRef = ref(storage, storagePath);
-          await uploadBytes(storageRef, new Uint8Array(arrayBuffer), { contentType: mimeType });
-          mediaUrl = await getDownloadURL(storageRef);
-
-          // Metti la descrizione/nome giusto
-          text =
-            message.type === 'image'
-              ? message.image?.caption || 'immagine'
-              : message.document?.filename || 'documento';
-        }
+    // 1. Recupera la URL privata dal Graph
+    const waRes = await fetch(
+      `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        },
       }
+    );
+    const waData = await waRes.json();
+    console.log("🔥 waData:", waData);
 
-      await addDoc(collection(db, 'messages'), {
-        user_uid,
-        from: wa_id,
-        message_id: message.id,
-        timestamp: Number(message.timestamp) * 1000,
-        type: message.type,
-        text,
-        mediaUrl,
-        profile_name,
-        read: false,
-        createdAt: serverTimestamp(),
-      });
+    const url = waData.url;
+    if (!url) throw new Error("Media url not found!");
 
-      // Aggiorna rubrica se serve
-      if (profile_name) {
-        await setDoc(
-          doc(db, 'contacts', wa_id),
-          {
-            name: profile_name,
-            createdBy: user_uid,
-          },
-          { merge: true }
-        );
-      }
-    }
+    // 2. Scarica il file binario da WhatsApp
+    const mediaRes = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+      },
+    });
+    const buffer = await mediaRes.arrayBuffer();
+    console.log("🔥 buffer length:", buffer.byteLength);
 
-    return new Response('Messaggi salvati', { status: 200 });
+    // 3. Upload su Firebase Storage
+    const ext = fileName.split('.').pop() || (mimeType.includes('image') ? 'jpg' : 'bin');
+    const storageRef = ref(storage, `media/${mediaId}-${Date.now()}.${ext}`);
+    await uploadBytes(storageRef, new Uint8Array(buffer), { contentType: mimeType });
+
+    // 4. Ottieni URL pubblico
+    const publicUrl = await getDownloadURL(storageRef);
+    console.log("🔥 publicUrl:", publicUrl);
+
+    return NextResponse.json({ publicUrl }, { status: 200 });
   } catch (error) {
-    console.error('❌ Errore nel webhook:', error);
-    return new Response('Errore interno', { status: 500 });
+    console.error("❌ Errore save-media-firebase:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -16,7 +16,6 @@ import { Button } from '@/components/ui/button';
 import { Send, Plus } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
-// Util per confronto 24h WhatsApp
 const isWithin24Hours = (timestamp) => {
   if (!timestamp) return false;
   const now = Date.now();
@@ -85,16 +84,18 @@ export default function ChatPage() {
     }
   }, [allMessages, selectedPhone]);
 
-  // Carica template APPROVED (aggiornato per nuovi dati API Meta)
+  // Carica template APPROVED con fix user_uid
   useEffect(() => {
-    if (!user?.email) return;
+    if (!user?.uid) return;
     const fetchTemplates = async () => {
       const res = await fetch('/api/list-templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email }),
+        body: JSON.stringify({ user_uid: user.uid }),
       });
       const data = await res.json();
+      // 🔥 Debug temporaneo
+      console.log('🔥 Templates ricevuti:', data);
       if (Array.isArray(data)) {
         setTemplates(data.filter((tpl) => tpl.status === 'APPROVED'));
       }
@@ -187,7 +188,7 @@ export default function ChatPage() {
       const form = new FormData();
       form.append('file', file);
       form.append('type', mediaType);
-      form.append('messaging_product', 'whatsapp'); // obbligatorio
+      form.append('messaging_product', 'whatsapp');
 
       const uploadRes = await fetch(
         `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
@@ -254,7 +255,6 @@ export default function ChatPage() {
     }
   };
 
-  // Helper per timestamp
   const parseTime = (val) => {
     if (!val) return 0;
     if (typeof val === 'string') return parseInt(val) * 1000;
@@ -263,7 +263,6 @@ export default function ChatPage() {
     return 0;
   };
 
-  // Finestra 24h: puoi inviare solo se c'è almeno un messaggio negli ultimi 24h
   const lastMsg = allMessages
     .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
     .slice(-1)[0];

@@ -2,14 +2,12 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
 export async function POST(req) {
-  const { user_uid } = await req.json();
-
-  if (!user_uid) {
-    return new Response(JSON.stringify({ error: 'user_uid mancante' }), { status: 400 });
-  }
-
   try {
-    // Prendi utente tramite UID
+    const { user_uid } = await req.json();
+    if (!user_uid) {
+      return new Response(JSON.stringify({ error: 'user_uid mancante' }), { status: 400 });
+    }
+
     const userRef = doc(db, 'users', user_uid);
     const userSnap = await getDoc(userRef);
 
@@ -19,7 +17,14 @@ export async function POST(req) {
 
     const user = userSnap.data();
     const wabaId = user.waba_id;
-    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN; // oppure hardcoded per test
+    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
+
+    if (!wabaId) {
+      return new Response(JSON.stringify({ error: 'waba_id mancante' }), { status: 400 });
+    }
+
+    // 🔥 Debug log temporaneo
+    console.log('🔥 Template API', { wabaId, user_uid, token: !!token });
 
     const res = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
       method: 'GET',
@@ -31,11 +36,16 @@ export async function POST(req) {
     const data = await res.json();
 
     if (!res.ok) {
+      console.error('❌ Errore API Meta:', data);
       return new Response(JSON.stringify({ error: data }), { status: res.status });
     }
 
+    // 🔥 Log quanti template hai trovato
+    console.log('🔥 Templates trovati:', data.data?.length);
+
     return new Response(JSON.stringify(data.data || []), { status: 200 });
   } catch (err) {
+    console.error('❌ Errore /api/list-templates:', err);
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
