@@ -17,7 +17,7 @@ import {
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus, ArrowLeft, Paperclip } from 'lucide-react';
+import { Send, Plus, ArrowLeft, Paperclip, Camera } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
@@ -26,7 +26,6 @@ export default function ChatPage() {
   const [contactNames, setContactNames] = useState({});
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
-  const [fileUpload, setFileUpload] = useState(null);
   const [templates, setTemplates] = useState([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
@@ -35,7 +34,7 @@ export default function ChatPage() {
   const [canSendMessage, setCanSendMessage] = useState(true);
   const messagesEndRef = useRef(null);
 
-  // Funzione utility per parsing timestamp
+  // ---- Funzioni Utility ----
   const parseTime = val => {
     if (!val) return 0;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -43,7 +42,7 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
-  // Recupera dati utente
+  // ---- Recupera dati utente ----
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -54,7 +53,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Recupera nomi contatti
+  // ---- Recupera nomi contatti ----
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -65,7 +64,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Ascolta messaggi realtime SOLO dell'utente corrente tramite user.uid
+  // ---- Ascolta messaggi ----
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -80,7 +79,7 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // phonesData = raggruppa tutte le conversazioni per telefono (con useMemo!)
+  // ---- phonesData: raggruppa tutte le conversazioni per telefono (useMemo) ----
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -98,20 +97,14 @@ export default function ChatPage() {
           phone,
           name: contactNames[phone] || phone,
           lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
-          lastMsgText: lastMsg.mediaUrl
-            ? (msgs[msgs.length - 1].type === "image"
-                ? "📷 Immagine"
-                : msgs[msgs.length - 1].type === "document"
-                ? "📎 File"
-                : "📎 Media")
-            : (lastMsg.text || ''),
+          lastMsgText: lastMsg.text || (lastMsg.mediaUrl ? '[Allegato]' : ''),
           unread,
         };
       })
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames, parseTime]);
 
-  // Verifica finestra 24h (quando cambia la chat selezionata o i messaggi)
+  // ---- Verifica finestra 24h ----
   useEffect(() => {
     if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
     const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
@@ -125,28 +118,30 @@ export default function ChatPage() {
     setCanSendMessage(now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone, parseTime]);
 
-  // Quando selezioni una chat, marca come letti tutti i messaggi ricevuti non letti!
+  // ---- Quando selezioni una chat, marca come letti tutti i messaggi non letti! ----
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
+    // Trova i messaggi non letti da questo numero
     const unreadMsgIds = allMessages
       .filter(m => m.from === selectedPhone && m.read === false)
       .map(m => m.id);
     if (unreadMsgIds.length > 0) {
+      // Aggiorna in batch
       const batch = writeBatch(db);
       unreadMsgIds.forEach(id => {
-        const ref = doc(collection(db, 'messages'), id);
-        batch.update(ref, { read: true });
+        const refMsg = doc(collection(db, 'messages'), id);
+        batch.update(refMsg, { read: true });
       });
       batch.commit();
     }
   }, [selectedPhone, allMessages, user]);
 
-  // Scroll automatico
+  // ---- Scroll automatico ----
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // Carica templates APPROVED
+  // ---- Carica templates APPROVED ----
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -160,13 +155,14 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // ---- Messaggi filtrati della chat selezionata ----
   const filtered = useMemo(() => (
     allMessages
       .filter(m => m.from === selectedPhone || m.to === selectedPhone)
       .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
   ), [allMessages, selectedPhone, parseTime]);
 
-  // Invio messaggio di testo
+  // ---- INVIO MESSAGGIO TESTO ----
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
     if (!canSendMessage) {
@@ -198,7 +194,7 @@ export default function ChatPage() {
     }
   };
 
-  // Invio template
+  // ---- INVIO TEMPLATE ----
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "template", template: { name, language: { code: "it" } } };
@@ -226,55 +222,47 @@ export default function ChatPage() {
     }
   };
 
-  // Invio media/file
-  const handleUploadMedia = async e => {
-    const file = e.target.files[0];
-    if (!file || !user || !userData) return;
-    // Prepara il percorso su Storage
-    const storageRef = ref(
-      storage,
-      `media/${user.uid}/${selectedPhone}/${Date.now()}_${file.name}`
-    );
-    // Upload file
+  // ---- INVIO FOTO / FILE ----
+  const handleSendMedia = async (file, type) => {
+    if (!file || !userData || !selectedPhone) return;
+    // 1. Upload su Firebase Storage
+    const ext = file.name.split('.').pop();
+    const now = Date.now();
+    const mediaPath = `media/${user.uid}/${selectedPhone}/${now}_${file.name}`;
+    const storageRef = ref(storage, mediaPath);
     await uploadBytes(storageRef, file);
-    // Ottieni URL pubblico
     const downloadUrl = await getDownloadURL(storageRef);
 
-    // --- Invia su WhatsApp (document, image, video: scegli in base a file.type) ---
-    let mediaType = "document";
-    if (file.type.startsWith("image/")) mediaType = "image";
-    if (file.type.startsWith("video/")) mediaType = "video";
-
-    // Costruisci payload
-    const payload = {
+    // 2. Prepara payload API WhatsApp
+    let payload = {
       messaging_product: "whatsapp",
       to: selectedPhone,
-      type: mediaType,
-      [mediaType]: {
-        link: downloadUrl,
-        filename: file.name
-      }
+      type,
     };
+    if (type === "image") {
+      payload.image = { link: downloadUrl };
+    } else if (type === "document") {
+      payload.document = { link: downloadUrl, filename: file.name };
+    }
 
+    // 3. Invio tramite API WhatsApp
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-
     if (data.messages) {
       await addDoc(collection(db, "messages"), {
-        text: "",
+        mediaUrl: downloadUrl,
         to: selectedPhone,
         from: "operator",
         timestamp: Date.now(),
         createdAt: serverTimestamp(),
-        type: mediaType,
+        type,
+        fileName: file.name,
         user_uid: user.uid,
         read: true,
-        mediaUrl: downloadUrl,
-        fileName: file.name,
         message_id: data.messages[0].id,
       });
     } else {
@@ -282,7 +270,15 @@ export default function ChatPage() {
     }
   };
 
-  // ---- UI ----
+  // ---- HANDLER INPUT FILE ----
+  const handleMediaInput = type => async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleSendMedia(file, type);
+    e.target.value = ''; // reset input
+  };
+
+  // ---- UI RENDER ----
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* LISTA */}
@@ -373,12 +369,12 @@ export default function ChatPage() {
                       msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
                     }`}
                   >
-                    {/* Mostra anteprima media */}
+                    {/* ANTEPRIMA MEDIA */}
                     {msg.mediaUrl && msg.type === "image" && (
                       <img
                         src={msg.mediaUrl}
                         alt="Immagine inviata"
-                        className="rounded max-w-xs max-h-60 mb-2"
+                        className="rounded-xl max-w-xs max-h-60 mb-2 border"
                         style={{ objectFit: 'cover' }}
                       />
                     )}
@@ -387,12 +383,13 @@ export default function ChatPage() {
                         href={msg.mediaUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-blue-600 underline"
+                        className="text-blue-600 underline flex items-center gap-2"
                       >
-                        📎 {msg.fileName || 'File allegato'}
+                        <Paperclip size={16} /> {msg.fileName || 'File allegato'}
                       </a>
                     )}
-                    {(!msg.mediaUrl || msg.type === "text" || msg.type === "template") && msg.text}
+                    {/* TESTO NORMALE */}
+                    {(msg.text && !msg.mediaUrl) && msg.text}
                   </div>
                   <div className="text-[10px] text-gray-400 mt-1">
                     {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
@@ -435,13 +432,25 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-            {/* File upload */}
+            {/* FOTO (Camera Icon Apple style) */}
+            <label className="flex items-center cursor-pointer">
+              <Camera size={22} className="mr-2 text-gray-500 hover:text-black" />
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleMediaInput("image")}
+                disabled={!canSendMessage}
+              />
+            </label>
+            {/* ALLEGATO (Paperclip) */}
             <label className="flex items-center cursor-pointer">
               <Paperclip size={22} className="mr-2 text-gray-500 hover:text-black" />
               <input
                 type="file"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
                 className="hidden"
-                onChange={handleUploadMedia}
+                onChange={handleMediaInput("document")}
                 disabled={!canSendMessage}
               />
             </label>
