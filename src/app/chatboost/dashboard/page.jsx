@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { db } from '@/lib/firebase';
+import { useEffect, useState, useRef, useMemo } from 'react';
+import { db, storage } from '@/lib/firebase';
 import {
   collection,
   query,
@@ -14,10 +14,19 @@ import {
   writeBatch,
   doc,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus, ArrowLeft } from 'lucide-react';
+import { Send, Plus, ArrowLeft, Image as ImageIcon, Paperclip, FileText } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
+
+const ALLOWED_DOC_TYPES = [
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/zip",
+  "application/x-rar-compressed"
+];
 
 export default function ChatPage() {
   const { user } = useAuth();
@@ -31,7 +40,16 @@ export default function ChatPage() {
   const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(true);
+  const [sendingMedia, setSendingMedia] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // --- Utility ---
+  const parseTime = val => {
+    if (!val) return 0;
+    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
+    if (typeof val === 'string') return parseInt(val) * 1000;
+    return val.seconds * 1000;
+  };
 
   // Recupera dati utente
   useEffect(() => {
@@ -44,7 +62,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Recupera nomi contatti (sempre all'avvio)
+  // Recupera nomi contatti
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -70,8 +88,8 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // phonesData = raggruppa tutte le conversazioni per telefono
-  const phonesData = (() => {
+  // phonesData = raggruppa tutte le conversazioni per telefono (con useMemo!)
+  const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
       const phone = m.from !== 'operator' ? m.from : m.to;
@@ -79,24 +97,26 @@ export default function ChatPage() {
       if (!chatMap[phone]) chatMap[phone] = [];
       chatMap[phone].push(m);
     });
-    // Restituisci lista ordinata per ultimo messaggio
     return Object.entries(chatMap)
       .map(([phone, msgs]) => {
         msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
         const lastMsg = msgs[msgs.length - 1] || {};
-        const unread = msgs.filter(m => m.from === phone && !m.read).length;
+        let lastText = lastMsg.text || "";
+        if (lastMsg.type === 'image') lastText = '📷 Immagine';
+        if (lastMsg.type === 'document') lastText = '📎 Allegato';
+        const unread = msgs.filter(m => m.from === phone && m.read === false).length;
         return {
           phone,
           name: contactNames[phone] || phone,
           lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
-          lastMsgText: lastMsg.text || '',
+          lastMsgText: lastText,
           unread,
         };
       })
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
-  })();
+  }, [allMessages, contactNames, parseTime]);
 
-  // Verifica finestra 24h (quando cambia la chat selezionata o i messaggi)
+  // Verifica finestra 24h
   useEffect(() => {
     if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
     const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
@@ -108,17 +128,15 @@ export default function ChatPage() {
     const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
     const now = Date.now();
     setCanSendMessage(now - lastTimestamp < 86400000);
-  }, [user, allMessages, selectedPhone]);
+  }, [user, allMessages, selectedPhone, parseTime]);
 
-  // Quando selezioni una chat, marca come letti tutti i messaggi ricevuti non letti!
+  // Marcare come letti tutti i messaggi ricevuti non letti!
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
-    // Trova i messaggi non letti da questo numero
     const unreadMsgIds = allMessages
       .filter(m => m.from === selectedPhone && m.read === false)
       .map(m => m.id);
     if (unreadMsgIds.length > 0) {
-      // Aggiorna in batch
       const batch = writeBatch(db);
       unreadMsgIds.forEach(id => {
         const ref = doc(collection(db, 'messages'), id);
@@ -147,16 +165,11 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  const parseTime = val => {
-    if (!val) return 0;
-    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
-    if (typeof val === 'string') return parseInt(val) * 1000;
-    return val.seconds * 1000;
-  };
-
-  const filtered = allMessages
-    .filter(m => m.from === selectedPhone || m.to === selectedPhone)
-    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+  const filtered = useMemo(() => (
+    allMessages
+      .filter(m => m.from === selectedPhone || m.to === selectedPhone)
+      .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
+  ), [allMessages, selectedPhone, parseTime]);
 
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
@@ -187,6 +200,72 @@ export default function ChatPage() {
     } else {
       alert("Errore invio: " + JSON.stringify(data.error));
     }
+  };
+
+  // FUNZIONE INVIO IMMAGINE O FILE PDF/DOC/ZIP
+  const sendMediaMessage = async (file) => {
+    if (!selectedPhone || !userData || !file) return;
+    setSendingMedia(true);
+    try {
+      // Upload su Firebase Storage
+      const storageRef = ref(
+        storage,
+        `media/${user.uid}/${selectedPhone}/${Date.now()}_${file.name}`
+      );
+      await uploadBytes(storageRef, file);
+      const fileUrl = await getDownloadURL(storageRef);
+
+      // Invio a WhatsApp Cloud API
+      let payload, tipo, msgExtra = {};
+      if (file.type.startsWith("image/")) {
+        tipo = "image";
+        payload = {
+          messaging_product: "whatsapp",
+          to: selectedPhone,
+          type: "image",
+          image: { link: fileUrl },
+        };
+        msgExtra = { imageUrl: fileUrl };
+      } else if (ALLOWED_DOC_TYPES.includes(file.type) || file.type.startsWith("application/")) {
+        tipo = "document";
+        payload = {
+          messaging_product: "whatsapp",
+          to: selectedPhone,
+          type: "document",
+          document: { link: fileUrl, filename: file.name },
+        };
+        msgExtra = { fileUrl, fileName: file.name };
+      } else {
+        alert("Tipo file non supportato!");
+        setSendingMedia(false);
+        return;
+      }
+
+      const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.messages) {
+        await addDoc(collection(db, "messages"), {
+          to: selectedPhone,
+          from: "operator",
+          timestamp: Date.now(),
+          createdAt: serverTimestamp(),
+          type: tipo,
+          user_uid: user.uid,
+          read: true,
+          message_id: data.messages[0].id,
+          ...msgExtra,
+        });
+      } else {
+        alert("Errore invio file: " + JSON.stringify(data.error));
+      }
+    } catch (err) {
+      alert("Errore invio media!");
+    }
+    setSendingMedia(false);
   };
 
   const sendTemplate = async name => {
@@ -280,7 +359,7 @@ export default function ChatPage() {
         <div className="flex flex-col flex-1 bg-gray-100 relative">
           {/* Avviso finestra 24h */}
           {!canSendMessage && (
-            <div className="absolute top-0 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-10">
+            <div className="sticky top-0 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-30">
               ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
               È possibile inviare solo template WhatsApp.
             </div>
@@ -295,26 +374,65 @@ export default function ChatPage() {
           </div>
 
           {/* Messaggi */}
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 0 }}>
             <div className="space-y-3">
               {filtered.map((msg, idx) => (
                 <div
                   key={idx}
                   className={`flex flex-col ${msg.from === "operator" ? "items-end" : "items-start"}`}
                 >
-                  <div
-                    className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
-                      msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
-                    }`}
-                  >
-                    {msg.text}
-                  </div>
-                  <div className="text-[10px] text-gray-400 mt-1">
-                    {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </div>
+                  {/* IMMAGINE */}
+                  {msg.type === "image" && msg.imageUrl ? (
+                    <div className="flex flex-col items-end">
+                      <img
+                        src={msg.imageUrl}
+                        alt="Immagine"
+                        className="rounded-xl max-w-[250px] max-h-[250px] mb-1 shadow"
+                        style={{ border: "1px solid #e5e7eb" }}
+                      />
+                      <div className="text-[10px] text-gray-400 mt-1 text-right">
+                        {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </div>
+                    </div>
+                  ) : msg.type === "document" && msg.fileUrl ? (
+                    <div className="flex flex-col items-end">
+                      <a
+                        href={msg.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 transition"
+                        style={{ maxWidth: "300px", wordBreak: "break-all" }}
+                      >
+                        <FileText size={18} />
+                        <span className="truncate">{msg.fileName || "Allegato"}</span>
+                      </a>
+                      <div className="text-[10px] text-gray-400 mt-1 text-right">
+                        {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div
+                        className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
+                          msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
+                        }`}
+                      >
+                        {msg.text}
+                      </div>
+                      <div className="text-[10px] text-gray-400 mt-1">
+                        {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
               <div ref={messagesEndRef} />
@@ -350,6 +468,43 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
+            {/* Image upload */}
+            <label
+              className="flex items-center cursor-pointer px-2 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
+              title="Invia immagine"
+            >
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={!canSendMessage || sendingMedia}
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) sendMediaMessage(file);
+                  e.target.value = "";
+                }}
+              />
+              <ImageIcon size={20} />
+            </label>
+            {/* File upload */}
+            <label
+              className="flex items-center cursor-pointer px-2 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
+              title="Allega file"
+            >
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.zip,.rar,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/zip,application/x-rar-compressed"
+                className="hidden"
+                disabled={!canSendMessage || sendingMedia}
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) sendMediaMessage(file);
+                  e.target.value = "";
+                }}
+              />
+              <Paperclip size={20} />
+            </label>
+            {/* Text */}
             <Input
               placeholder="Scrivi un messaggio..."
               value={messageText}
