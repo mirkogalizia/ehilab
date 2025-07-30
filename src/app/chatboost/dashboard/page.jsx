@@ -94,18 +94,28 @@ export default function ChatPage() {
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames]);
 
-  // Verifica finestra 24h
+  // FIX finestra 24h WhatsApp
   useEffect(() => {
-    if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
-    const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
-    const lastMsg = msgs.filter(m => m.from !== 'operator').slice(-1)[0];
-    if (!lastMsg) {
+    if (!user?.uid || !selectedPhone) {
       setCanSendMessage(true);
       return;
     }
-    const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
+    const msgs = allMessages.filter(
+      m => (m.from === selectedPhone || m.to === selectedPhone)
+    );
+    const lastReceived = [...msgs]
+      .filter(m => m.from === selectedPhone)
+      .sort((a, b) => parseTime(b.timestamp || b.createdAt) - parseTime(a.timestamp || a.createdAt))[0];
+
+    if (!lastReceived) {
+      setCanSendMessage(true); // mai ricevuto niente, consenti invio
+      return;
+    }
     const now = Date.now();
+    const lastTimestamp = parseTime(lastReceived.timestamp || lastReceived.createdAt);
     setCanSendMessage(now - lastTimestamp < 86400000);
+    // Debug:
+    // console.log("Ultimo ricevuto:", lastReceived, "canSendMessage:", now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone]);
 
   // Marca messaggi come letti
@@ -368,16 +378,8 @@ export default function ChatPage() {
       {/* Chat */}
       {selectedPhone && (
         <div className="flex flex-col flex-1 bg-gray-100 relative">
-          {/* Avviso 24h */}
-          {!canSendMessage && (
-            <div className="absolute top-0 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-10">
-              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
-              È possibile inviare solo template WhatsApp.
-            </div>
-          )}
-
           {/* Header */}
-          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-8 z-20">
+          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20" style={{minHeight: 70}}>
             <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
@@ -460,6 +462,15 @@ export default function ChatPage() {
           )}
           {/* ----------- / ANTEPRIMA MEDIA ----------- */}
 
+          {/* ----------- AVVISO 24H sopra la barra input ----------- */}
+          {!canSendMessage && (
+            <div className="w-full flex justify-center px-4 py-2 bg-yellow-100 border border-yellow-400 text-yellow-900 font-semibold rounded-t-lg shadow mb-0" style={{marginBottom: '-1px'}}>
+              ⚠️ Non puoi inviare messaggi normali: sono passate più di 24h dall’ultimo messaggio ricevuto.<br />
+              Puoi solo inviare Template WhatsApp.
+            </div>
+          )}
+          {/* ----------- / AVVISO 24H ----------- */}
+
           {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
             {/* Foto */}
@@ -532,5 +543,6 @@ export default function ChatPage() {
       )}
     </div>
   );
+}
 }
 
