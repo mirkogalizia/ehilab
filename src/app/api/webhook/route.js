@@ -1,5 +1,16 @@
+// src/app/api/webhook/route.js (o /api/webhook.js secondo la tua struttura)
+
 import { db } from '@/lib/firebase';
-import { collection, query, where, getDocs, addDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  doc,
+  setDoc,
+  serverTimestamp,
+  query,
+  where,
+  getDocs,
+} from 'firebase/firestore';
 
 export async function POST(req) {
   try {
@@ -16,70 +27,61 @@ export async function POST(req) {
       return new Response("No messages to process", { status: 200 });
     }
 
-    // Trova utente associato al phone_number_id
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, where("phone_number_id", "==", phone_number_id));
+    // Trova l'utente associato al phone_number_id
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, where('phone_number_id', '==', phone_number_id));
     const querySnapshot = await getDocs(q);
 
     if (querySnapshot.empty) {
-      console.warn("Nessun utente trovato per questo phone_number_id:", phone_number_id);
-      return new Response("Utente non trovato", { status: 200 });
+      console.warn('Nessun utente trovato per questo phone_number_id:', phone_number_id);
+      return new Response('Utente non trovato', { status: 200 });
     }
 
     const userDoc = querySnapshot.docs[0];
     const user_uid = userDoc.id;
 
-    // Cicla su tutti i messaggi ricevuti
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
       const contact = contacts?.[i];
       const wa_id = contact?.wa_id || message.from;
       const profile_name = contact?.profile?.name || "";
 
-      const isIncoming = message.from !== "operator";
+      let text = message.text?.body || '';
+      let mediaUrl = '';
 
-      let msgData = {
+      // Se è media, estrai il link
+      if (message.type === 'image' && message.image?.link) {
+        mediaUrl = message.image.link;
+      } else if (message.type === 'document' && message.document?.link) {
+        mediaUrl = message.document.link;
+        text = message.document.filename || 'Documento allegato';
+      }
+
+      await addDoc(collection(db, 'messages'), {
         user_uid,
         from: wa_id,
         message_id: message.id,
         timestamp: message.timestamp,
         type: message.type,
-        text: message.text?.body || "",
+        text,
+        mediaUrl,
         profile_name,
-        read: isIncoming ? false : true,
+        read: false,
         createdAt: serverTimestamp(),
-      };
+      });
 
-      // --- IMAGE ---
-      if (message.type === "image" && message.image) {
-        msgData.imageUrl = message.image.url || message.image.link;
-        msgData.caption = message.image.caption || "";
-        msgData.text = message.image.caption || "";
-      }
-
-      // --- DOCUMENT ---
-      if (message.type === "document" && message.document) {
-        msgData.fileUrl = message.document.url || message.document.link;
-        msgData.fileName = message.document.filename || "Allegato";
-        msgData.text = message.document.filename || "Allegato";
-      }
-
-      await addDoc(collection(db, "messages"), msgData);
-
-      // Salva anche nome contatto (se nuovo)
+      // Salva nome contatto per filtro frontend
       if (profile_name) {
-        await setDoc(doc(db, "contacts", wa_id), {
+        await setDoc(doc(db, 'contacts', wa_id), {
           name: profile_name,
           createdBy: user_uid,
         }, { merge: true });
       }
     }
 
-    return new Response("Messaggi salvati", { status: 200 });
+    return new Response('Messaggi salvati', { status: 200 });
   } catch (error) {
-    console.error("❌ Errore nel webhook:", error);
-    return new Response("Errore interno", { status: 500 });
+    console.error('❌ Errore nel webhook:', error);
+    return new Response('Errore interno', { status: 500 });
   }
 }
-
-
