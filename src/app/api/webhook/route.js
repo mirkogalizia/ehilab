@@ -1,15 +1,6 @@
-// src/app/api/webhook/route.js (o /api/webhook.js secondo la tua struttura)
-
 import { db } from '@/lib/firebase';
 import {
-  collection,
-  addDoc,
-  doc,
-  setDoc,
-  serverTimestamp,
-  query,
-  where,
-  getDocs,
+  collection, addDoc, doc, setDoc, serverTimestamp, query, where, getDocs,
 } from 'firebase/firestore';
 
 export async function POST(req) {
@@ -27,18 +18,16 @@ export async function POST(req) {
       return new Response("No messages to process", { status: 200 });
     }
 
-    // Trova l'utente associato al phone_number_id
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('phone_number_id', '==', phone_number_id));
     const querySnapshot = await getDocs(q);
 
     if (querySnapshot.empty) {
-      console.warn('Nessun utente trovato per questo phone_number_id:', phone_number_id);
+      console.warn('No user found:', phone_number_id);
       return new Response('Utente non trovato', { status: 200 });
     }
 
-    const userDoc = querySnapshot.docs[0];
-    const user_uid = userDoc.id;
+    const user_uid = querySnapshot.docs[0].id;
 
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
@@ -49,12 +38,12 @@ export async function POST(req) {
       let text = message.text?.body || '';
       let mediaUrl = '';
 
-      // Se è media, estrai il link
       if (message.type === 'image' && message.image?.link) {
         mediaUrl = message.image.link;
+        text = message.image.caption || '';
       } else if (message.type === 'document' && message.document?.link) {
         mediaUrl = message.document.link;
-        text = message.document.filename || 'Documento allegato';
+        text = message.document.filename || '';
       }
 
       await addDoc(collection(db, 'messages'), {
@@ -70,7 +59,6 @@ export async function POST(req) {
         createdAt: serverTimestamp(),
       });
 
-      // Salva nome contatto per filtro frontend
       if (profile_name) {
         await setDoc(doc(db, 'contacts', wa_id), {
           name: profile_name,
