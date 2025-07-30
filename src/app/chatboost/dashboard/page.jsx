@@ -51,13 +51,13 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
-  // Recupera dati utente
+  // Recupera dati utente dal documento Firestore dell'utente loggato
   useEffect(() => {
     if (!user) return;
     (async () => {
       const usersRef = collection(db, 'users');
-      const snap = await getDocs(usersRef);
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      const snap = await getDocs(query(usersRef, where('uid', '==', user.uid)));
+      const me = snap.docs.map(d => ({ id: d.id, ...d.data() }))[0];
       if (me) setUserData(me);
     })();
   }, [user]);
@@ -202,7 +202,7 @@ export default function ChatPage() {
     }
   };
 
-  // FUNZIONE INVIO IMMAGINE O FILE PDF/DOC/ZIP
+  // INVIO IMMAGINI/FILE
   const sendMediaMessage = async (file) => {
     if (!selectedPhone || !userData || !file) return;
     setSendingMedia(true);
@@ -215,7 +215,6 @@ export default function ChatPage() {
       await uploadBytes(storageRef, file);
       const fileUrl = await getDownloadURL(storageRef);
 
-      // Invio a WhatsApp Cloud API
       let payload, tipo, msgExtra = {};
       if (file.type.startsWith("image/")) {
         tipo = "image";
@@ -417,21 +416,19 @@ export default function ChatPage() {
                       </div>
                     </div>
                   ) : (
-                    <>
-                      <div
-                        className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
-                          msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
-                        }`}
-                      >
-                        {msg.text}
-                      </div>
+                    <div
+                      className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
+                        msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
+                      }`}
+                    >
+                      {msg.text}
                       <div className="text-[10px] text-gray-400 mt-1">
                         {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
                           hour: "2-digit",
                           minute: "2-digit",
                         })}
                       </div>
-                    </>
+                    </div>
                   )}
                 </div>
               ))}
@@ -504,7 +501,6 @@ export default function ChatPage() {
               />
               <Paperclip size={20} />
             </label>
-            {/* Text */}
             <Input
               placeholder="Scrivi un messaggio..."
               value={messageText}
