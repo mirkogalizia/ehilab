@@ -14,7 +14,7 @@ import {
   writeBatch,
   doc,
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Send, Plus, ArrowLeft, Image as ImageIcon, Paperclip, FileText } from 'lucide-react';
@@ -202,18 +202,18 @@ export default function ChatPage() {
     }
   };
 
-  // FUNZIONE INVIO IMMAGINE O FILE PDF/DOC/ZIP
+  // INVIO MEDIA/ALLEGATI
   const sendMediaMessage = async (file) => {
     if (!selectedPhone || !userData || !file) return;
     setSendingMedia(true);
     try {
       // Upload su Firebase Storage
-      const storageRef = ref(
+      const sRef = storageRef(
         storage,
         `media/${user.uid}/${selectedPhone}/${Date.now()}_${file.name}`
       );
-      await uploadBytes(storageRef, file);
-      const fileUrl = await getDownloadURL(storageRef);
+      await uploadBytes(sRef, file);
+      const fileUrl = await getDownloadURL(sRef);
 
       // Invio a WhatsApp Cloud API
       let payload, tipo, msgExtra = {};
@@ -526,5 +526,6 @@ export default function ChatPage() {
     </div>
   );
 }
+
 
 

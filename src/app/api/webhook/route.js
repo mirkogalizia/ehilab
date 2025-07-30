@@ -1,8 +1,10 @@
+import { db } from '@/lib/firebase';
+import { collection, query, where, getDocs, addDoc, doc, setDoc, serverTimestamp } from "firebase/firestore";
+
 export async function POST(req) {
   try {
     const body = await req.json();
 
-    // ---- 4. RICEZIONE MESSAGGI WHATSAPP
     const entry = body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
@@ -14,7 +16,7 @@ export async function POST(req) {
       return new Response("No messages to process", { status: 200 });
     }
 
-    // Trova l'utente associato al phone_number_id
+    // Trova utente associato al phone_number_id
     const usersRef = collection(db, "users");
     const q = query(usersRef, where("phone_number_id", "==", phone_number_id));
     const querySnapshot = await getDocs(q);
@@ -27,17 +29,16 @@ export async function POST(req) {
     const userDoc = querySnapshot.docs[0];
     const user_uid = userDoc.id;
 
-    // Loop su tutti i messaggi ricevuti
+    // Cicla su tutti i messaggi ricevuti
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
       const contact = contacts?.[i];
       const wa_id = contact?.wa_id || message.from;
       const profile_name = contact?.profile?.name || "";
 
-      // **Se il messaggio viene dal cliente (cioè non dall'operatore), metti read: false**
       const isIncoming = message.from !== "operator";
 
-      await addDoc(collection(db, "messages"), {
+      let msgData = {
         user_uid,
         from: wa_id,
         message_id: message.id,
@@ -45,15 +46,31 @@ export async function POST(req) {
         type: message.type,
         text: message.text?.body || "",
         profile_name,
-        read: isIncoming ? false : true,   // <--- Campo read qui!
+        read: isIncoming ? false : true,
         createdAt: serverTimestamp(),
-      });
+      };
 
-      // 2. Salva nome contatto se presente, con createdBy per filtro frontend
+      // --- IMAGE ---
+      if (message.type === "image" && message.image) {
+        msgData.imageUrl = message.image.url || message.image.link;
+        msgData.caption = message.image.caption || "";
+        msgData.text = message.image.caption || "";
+      }
+
+      // --- DOCUMENT ---
+      if (message.type === "document" && message.document) {
+        msgData.fileUrl = message.document.url || message.document.link;
+        msgData.fileName = message.document.filename || "Allegato";
+        msgData.text = message.document.filename || "Allegato";
+      }
+
+      await addDoc(collection(db, "messages"), msgData);
+
+      // Salva anche nome contatto (se nuovo)
       if (profile_name) {
         await setDoc(doc(db, "contacts", wa_id), {
           name: profile_name,
-          createdBy: user_uid
+          createdBy: user_uid,
         }, { merge: true });
       }
     }
@@ -64,7 +81,5 @@ export async function POST(req) {
     return new Response("Errore interno", { status: 500 });
   }
 }
-
-
 
 
