@@ -169,105 +169,65 @@ export default function ChatPage() {
 
     // Invio MEDIA (WhatsApp API CORRETTO)
     if (selectedMedia) {
-      // 1. Upload media file a Meta
-      const formData = new FormData();
-      formData.append('file', selectedMedia.file);
-      formData.append('messaging_product', 'whatsapp');
+  // 1. Upload file/media via tua API route
+  const uploadData = new FormData();
+  uploadData.append('file', selectedMedia.file);
+  uploadData.append('phone_number_id', userData.phone_number_id);
 
-      const uploadRes = await fetch(
-        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
-          body: formData,
-        }
-      );
-      const uploadJson = await uploadRes.json();
-      const media_id = uploadJson.id;
-      if (!media_id) {
-        alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
-        return;
-      }
+  const uploadRes = await fetch('/api/send-media', {
+    method: 'POST',
+    body: uploadData,
+  });
+  const uploadJson = await uploadRes.json();
+  const media_id = uploadJson.id;
+  if (!media_id) {
+    alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
+    return;
+  }
 
-      // 2. Invia messaggio con media_id
-      const payload = {
-        messaging_product: "whatsapp",
-        to: selectedPhone,
-        type: selectedMedia.type,
-        [selectedMedia.type]: {
-          id: media_id,
-          caption: messageText || '',
-        },
-      };
-
-      const res = await fetch(
-        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payload),
-        }
-      );
-      const data = await res.json();
-      if (data.messages) {
-        await addDoc(collection(db, "messages"), {
-          text: messageText,
-          to: selectedPhone,
-          from: "operator",
-          timestamp: Date.now(),
-          createdAt: serverTimestamp(),
-          type: selectedMedia.type,
-          media_id,
-          user_uid: user.uid,
-          read: true,
-          message_id: data.messages[0].id,
-        });
-        setMessageText('');
-        setSelectedMedia(null);
-      } else {
-        alert("Errore invio media: " + JSON.stringify(data.error));
-      }
-    } else {
-      // Invio testo normale
-      const payload = {
-        messaging_product: "whatsapp",
-        to: selectedPhone,
-        type: "text",
-        text: { body: messageText }
-      };
-      const res = await fetch(
-        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payload),
-        }
-      );
-      const data = await res.json();
-      if (data.messages) {
-        await addDoc(collection(db, "messages"), {
-          text: messageText,
-          to: selectedPhone,
-          from: "operator",
-          timestamp: Date.now(),
-          createdAt: serverTimestamp(),
-          type: "text",
-          user_uid: user.uid,
-          read: true,
-          message_id: data.messages[0].id,
-        });
-        setMessageText('');
-      } else {
-        alert("Errore invio: " + JSON.stringify(data.error));
-      }
-    }
+  // 2. Invia messaggio con media_id
+  const payload = {
+    messaging_product: "whatsapp",
+    to: selectedPhone,
+    type: selectedMedia.type,
+    [selectedMedia.type]: {
+      id: media_id,
+      caption: messageText || '',
+    },
   };
+
+  const res = await fetch(
+    `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+  const data = await res.json();
+  if (data.messages) {
+    await addDoc(collection(db, "messages"), {
+      text: messageText,
+      to: selectedPhone,
+      from: "operator",
+      timestamp: Date.now(),
+      createdAt: serverTimestamp(),
+      type: selectedMedia.type,
+      media_id,
+      user_uid: user.uid,
+      read: true,
+      message_id: data.messages[0].id,
+    });
+    setMessageText('');
+    setSelectedMedia(null);
+  } else {
+    alert("Errore invio media: " + JSON.stringify(data.error));
+  }
+}
+
 
   // Invio template WhatsApp
   const sendTemplate = async name => {
