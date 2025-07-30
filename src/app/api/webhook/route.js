@@ -11,6 +11,17 @@ import {
   where
 } from "firebase/firestore";
 
+// FUNZIONE: recupera mediaUrl dai media WhatsApp
+async function getWhatsappMediaUrl(mediaId, accessToken) {
+  // 1. Recupera URL temporaneo
+  const res = await fetch(`https://graph.facebook.com/v17.0/${mediaId}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!data.url) return null;
+  return data.url;
+}
+
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
 
@@ -80,14 +91,25 @@ export async function POST(req) {
     const userDoc = querySnapshot.docs[0];
     const user_uid = userDoc.id;
 
-    // Loop su tutti i messaggi ricevuti
+    // Recupera access token dal process.env
+    const accessToken = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
+
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
       const contact = contacts?.[i];
       const wa_id = contact?.wa_id || message.from;
       const profile_name = contact?.profile?.name || "";
 
-      // 🔥 Campo read: false (tutti i messaggi in arrivo sono "non letti" all'inizio)
+      let mediaUrl = null;
+
+      // GESTIONE MEDIA: image, video, document, audio
+      if (
+        ["image", "video", "audio", "document"].includes(message.type) &&
+        message[message.type]?.id
+      ) {
+        mediaUrl = await getWhatsappMediaUrl(message[message.type].id, accessToken);
+      }
+
       await addDoc(collection(db, "messages"), {
         user_uid,
         from: wa_id,
@@ -97,10 +119,11 @@ export async function POST(req) {
         text: message.text?.body || "",
         profile_name,
         read: false,
+        mediaUrl, // <--- link del media, se presente
         createdAt: serverTimestamp(),
       });
 
-      // 2. Salva nome contatto se presente, con createdBy per filtro frontend
+      // Salva nome contatto se presente, con createdBy per filtro frontend
       if (profile_name) {
         await setDoc(doc(db, "contacts", wa_id), {
           name: profile_name,
