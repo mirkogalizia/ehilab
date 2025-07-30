@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { db } from '@/lib/firebase';
 import {
   collection,
@@ -32,6 +32,14 @@ export default function ChatPage() {
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(true);
   const messagesEndRef = useRef(null);
+
+  // Funzione utility definita PRIMA di ogni utilizzo!
+  const parseTime = val => {
+    if (!val) return 0;
+    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
+    if (typeof val === 'string') return parseInt(val) * 1000;
+    return val.seconds * 1000;
+  };
 
   // Recupera dati utente
   useEffect(() => {
@@ -70,8 +78,8 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // phonesData = raggruppa tutte le conversazioni per telefono
-  const phonesData = (() => {
+  // phonesData = raggruppa tutte le conversazioni per telefono (con useMemo!)
+  const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
       const phone = m.from !== 'operator' ? m.from : m.to;
@@ -79,7 +87,6 @@ export default function ChatPage() {
       if (!chatMap[phone]) chatMap[phone] = [];
       chatMap[phone].push(m);
     });
-    // Restituisci lista ordinata per ultimo messaggio
     return Object.entries(chatMap)
       .map(([phone, msgs]) => {
         msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
@@ -94,7 +101,7 @@ export default function ChatPage() {
         };
       })
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
-  })();
+  }, [allMessages, contactNames, parseTime]);
 
   // Verifica finestra 24h (quando cambia la chat selezionata o i messaggi)
   useEffect(() => {
@@ -108,7 +115,7 @@ export default function ChatPage() {
     const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
     const now = Date.now();
     setCanSendMessage(now - lastTimestamp < 86400000);
-  }, [user, allMessages, selectedPhone]);
+  }, [user, allMessages, selectedPhone, parseTime]);
 
   // Quando selezioni una chat, marca come letti tutti i messaggi ricevuti non letti!
   useEffect(() => {
@@ -147,16 +154,11 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  const parseTime = val => {
-    if (!val) return 0;
-    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
-    if (typeof val === 'string') return parseInt(val) * 1000;
-    return val.seconds * 1000;
-  };
-
-  const filtered = allMessages
-    .filter(m => m.from === selectedPhone || m.to === selectedPhone)
-    .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+  const filtered = useMemo(() => (
+    allMessages
+      .filter(m => m.from === selectedPhone || m.to === selectedPhone)
+      .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
+  ), [allMessages, selectedPhone, parseTime]);
 
   const sendMessage = async () => {
     if (!selectedPhone || !messageText || !userData) return;
