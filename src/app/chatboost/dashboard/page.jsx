@@ -392,17 +392,17 @@ export default function ChatPage() {
                   key={idx}
                   className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
                 >
-                  {/* IMMAGINE */}
+                  {/* IMMAGINE/FILE */}
                   {msg.type === 'image' && msg.media_id ? (
                     <img
-                      src={`https://graph.facebook.com/v17.0/${msg.media_id}`}
+                      src={`/api/media-proxy?media_id=${msg.media_id}`}
                       alt="Immagine"
                       className="max-w-xs rounded-lg shadow-md"
                       loading="lazy"
                     />
                   ) : msg.type === 'document' && msg.media_id ? (
                     <a
-                      href={`https://graph.facebook.com/v17.0/${msg.media_id}`}
+                      href={`/api/media-proxy?media_id=${msg.media_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 underline"
@@ -432,7 +432,7 @@ export default function ChatPage() {
             </div>
           </div>
 
-          {/* ----------- ANTEPRIMA MEDIA ----------- */}
+          {/* ----------- ANTEPRIMA MEDIA SELEZIONATO ----------- */}
           {selectedMedia && (
             <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
               {selectedMedia.type === 'image' ? (
