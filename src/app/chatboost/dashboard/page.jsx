@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useMemo } from 'react';
-import { db, storage } from '@/lib/firebase';
+import { db, storage } from '@/firebase'; // <-- Assicurati di importare storage
 import {
   collection,
   query,
@@ -200,7 +200,6 @@ export default function ChatPage() {
     if (!selectedPhone || !userData || !file) return;
     setSendingMedia(true);
     try {
-      // 1. Upload su Firebase Storage
       const storageRef = ref(
         storage,
         `media/${user.uid}/${selectedPhone}/${Date.now()}_${file.name}`
@@ -233,16 +232,12 @@ export default function ChatPage() {
         return;
       }
 
-      // DEBUG: logga tutto!
-      console.log("SEND MEDIA PAYLOAD:", payload);
-
       const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      console.log("WHATSAPP API RESPONSE:", data);
 
       if (data.messages) {
         await addDoc(collection(db, "messages"), {
@@ -295,6 +290,7 @@ export default function ChatPage() {
 
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
+      {/* LISTA */}
       <div className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Conversazioni</h2>
@@ -348,20 +344,24 @@ export default function ChatPage() {
           </div>
         )}
       </div>
+      {/* CHAT */}
       {selectedPhone && (
-        <div className="flex flex-col flex-1 bg-gray-100 relative">
-          {!canSendMessage && (
-            <div className="sticky top-0 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-30">
-              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
-              È possibile inviare solo template WhatsApp.
-            </div>
-          )}
-          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-8 z-20">
+        <div className="flex flex-col flex-1 bg-gray-100 relative h-full">
+          {/* Header sempre sticky in alto */}
+          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
             <button onClick={() => setSelectedPhone("")} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
+          {/* Avviso 24h, NON sticky, mai overlay */}
+          {!canSendMessage && (
+            <div className="bg-yellow-200 border-b border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-10">
+              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
+              È possibile inviare solo template WhatsApp.
+            </div>
+          )}
+          {/* Messaggi */}
           <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 0 }}>
             <div className="space-y-3">
               {filtered.map((msg, idx) => (
@@ -423,6 +423,7 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
           </div>
+          {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
             <div className="relative">
               <button
