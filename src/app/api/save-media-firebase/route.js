@@ -1,65 +1,56 @@
-// app/api/save-media-firebase/route.js
 import { NextResponse } from "next/server";
-import { initializeApp, cert, getApps, getApp } from "firebase-admin/app";
-import { getStorage } from "firebase-admin/storage";
-import fetch from "node-fetch";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { initializeApp, getApps, getApp } from "firebase/app";
 
-let app;
-if (!getApps().length) {
-  app = initializeApp({
-    credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY)),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  });
-} else {
-  app = getApp();
-}
-const bucket = getStorage(app).bucket();
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID,
+};
+
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const storage = getStorage(app);
 
 export async function POST(req) {
   try {
     const { mediaId, fileName, mimeType } = await req.json();
-    if (!mediaId || !fileName) {
-      return NextResponse.json({ error: "Missing mediaId or fileName" }, { status: 400 });
-    }
 
-    const metaToken = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
+    // 1. Recupera la URL temporanea privata del media via API WhatsApp
+    const waRes = await fetch(
+      `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+        },
+      }
+    );
+    const waData = await waRes.json();
+    const url = waData.url;
+    if (!url) throw new Error("Media url not found!");
 
-    // 1. Ottieni l'URL del file da Meta
-    const urlMeta = `https://graph.facebook.com/v17.0/${mediaId}?fields=url&messaging_product=whatsapp`;
-    const urlRes = await fetch(urlMeta, {
-      headers: { Authorization: `Bearer ${metaToken}` }
-    });
-    const urlData = await urlRes.json();
-    if (!urlData.url) {
-      return NextResponse.json({ error: "No url from Meta", details: urlData }, { status: 400 });
-    }
-
-    // 2. Scarica il file binario da Meta
-    const fileRes = await fetch(urlData.url, {
-      headers: { Authorization: `Bearer ${metaToken}` }
-    });
-    if (!fileRes.ok) {
-      return NextResponse.json({ error: "Unable to download media", details: await fileRes.text() }, { status: 400 });
-    }
-    const arrayBuffer = await fileRes.arrayBuffer();
-
-    // 3. Carica su Firebase Storage nella cartella 'media-and-file'
-    const destination = `media-and-file/${Date.now()}_${fileName}`;
-    const file = bucket.file(destination);
-
-    await file.save(Buffer.from(arrayBuffer), {
-      contentType: mimeType || fileRes.headers.get("content-type") || undefined,
-      public: true,
-      metadata: {
-        cacheControl: "public,max-age=31536000",
+    // 2. Scarica il file binario da WhatsApp
+    const mediaRes = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
       },
     });
+    const buffer = await mediaRes.arrayBuffer();
 
-    // 4. Ottieni l'URL pubblico
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/${destination}`;
+    // 3. Carica il file su Firebase Storage
+    const ext = fileName.split('.').pop() || (mimeType.includes('image') ? 'jpg' : 'bin');
+    const storageRef = ref(storage, `media/${mediaId}-${Date.now()}.${ext}`);
+    await uploadBytes(storageRef, new Uint8Array(buffer), { contentType: mimeType });
+
+    // 4. Ottieni URL pubblico
+    const publicUrl = await getDownloadURL(storageRef);
 
     return NextResponse.json({ publicUrl }, { status: 200 });
-  } catch (err) {
-    return NextResponse.json({ error: err.message, details: err.stack }, { status: 500 });
+  } catch (error) {
+    console.error("❌ Errore save-media-firebase:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
