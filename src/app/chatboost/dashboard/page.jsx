@@ -43,7 +43,6 @@ export default function ChatPage() {
   const [sendingMedia, setSendingMedia] = useState(false);
   const messagesEndRef = useRef(null);
 
-  // --- Utility ---
   const parseTime = val => {
     if (!val) return 0;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -51,7 +50,7 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
-  // Recupera dati utente dal documento Firestore dell'utente loggato
+  // Recupera dati utente
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -88,7 +87,6 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // phonesData = raggruppa tutte le conversazioni per telefono (con useMemo!)
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -116,7 +114,6 @@ export default function ChatPage() {
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames, parseTime]);
 
-  // Verifica finestra 24h
   useEffect(() => {
     if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
     const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
@@ -130,7 +127,6 @@ export default function ChatPage() {
     setCanSendMessage(now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone, parseTime]);
 
-  // Marcare come letti tutti i messaggi ricevuti non letti!
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
     const unreadMsgIds = allMessages
@@ -146,12 +142,10 @@ export default function ChatPage() {
     }
   }, [selectedPhone, allMessages, user]);
 
-  // Scroll automatico
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // Carica templates APPROVED
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -202,12 +196,11 @@ export default function ChatPage() {
     }
   };
 
-  // INVIO IMMAGINI/FILE
   const sendMediaMessage = async (file) => {
     if (!selectedPhone || !userData || !file) return;
     setSendingMedia(true);
     try {
-      // Upload su Firebase Storage
+      // 1. Upload su Firebase Storage
       const storageRef = ref(
         storage,
         `media/${user.uid}/${selectedPhone}/${Date.now()}_${file.name}`
@@ -240,12 +233,17 @@ export default function ChatPage() {
         return;
       }
 
+      // DEBUG: logga tutto!
+      console.log("SEND MEDIA PAYLOAD:", payload);
+
       const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
+      console.log("WHATSAPP API RESPONSE:", data);
+
       if (data.messages) {
         await addDoc(collection(db, "messages"), {
           to: selectedPhone,
@@ -263,6 +261,7 @@ export default function ChatPage() {
       }
     } catch (err) {
       alert("Errore invio media!");
+      console.error("Errore invio media:", err);
     }
     setSendingMedia(false);
   };
@@ -294,10 +293,8 @@ export default function ChatPage() {
     }
   };
 
-  // ---- UI ----
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
-      {/* LISTA */}
       <div className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Conversazioni</h2>
@@ -322,7 +319,6 @@ export default function ChatPage() {
             </li>
           ))}
         </ul>
-        {/* Modal Nuova Chat */}
         {showNewChat && (
           <div className="mt-4 p-4 bg-gray-100 rounded-lg shadow">
             <h3 className="mb-2 font-medium">📞 Inserisci numero</h3>
@@ -352,27 +348,20 @@ export default function ChatPage() {
           </div>
         )}
       </div>
-
-      {/* CHAT */}
       {selectedPhone && (
         <div className="flex flex-col flex-1 bg-gray-100 relative">
-          {/* Avviso finestra 24h */}
           {!canSendMessage && (
             <div className="sticky top-0 left-0 right-0 bg-yellow-200 border border-yellow-400 text-yellow-900 text-center py-2 font-semibold z-30">
               ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
               È possibile inviare solo template WhatsApp.
             </div>
           )}
-
-          {/* Header */}
           <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-8 z-20">
             <button onClick={() => setSelectedPhone("")} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
-
-          {/* Messaggi */}
           <div className="flex-1 overflow-y-auto p-4" style={{ minHeight: 0 }}>
             <div className="space-y-3">
               {filtered.map((msg, idx) => (
@@ -380,7 +369,6 @@ export default function ChatPage() {
                   key={idx}
                   className={`flex flex-col ${msg.from === "operator" ? "items-end" : "items-start"}`}
                 >
-                  {/* IMMAGINE */}
                   {msg.type === "image" && msg.imageUrl ? (
                     <div className="flex flex-col items-end">
                       <img
@@ -435,10 +423,7 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
           </div>
-
-          {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
-            {/* Template */}
             <div className="relative">
               <button
                 onClick={() => setShowTemplates(!showTemplates)}
@@ -465,7 +450,6 @@ export default function ChatPage() {
                 </div>
               )}
             </div>
-            {/* Image upload */}
             <label
               className="flex items-center cursor-pointer px-2 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
               title="Invia immagine"
@@ -483,7 +467,6 @@ export default function ChatPage() {
               />
               <ImageIcon size={20} />
             </label>
-            {/* File upload */}
             <label
               className="flex items-center cursor-pointer px-2 py-2 rounded-full bg-gray-100 hover:bg-gray-200"
               title="Allega file"
