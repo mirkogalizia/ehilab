@@ -5,19 +5,18 @@ import { db, storage } from '@/lib/firebase';
 import {
   collection,
   query,
+  where,
   orderBy,
   onSnapshot,
   addDoc,
   serverTimestamp,
-  getDocs,
-  where,
   writeBatch,
   doc,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus, ArrowLeft, Paperclip, Camera } from 'lucide-react';
+import { Send, Plus, ArrowLeft, Camera, Paperclip } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
@@ -34,7 +33,7 @@ export default function ChatPage() {
   const [canSendMessage, setCanSendMessage] = useState(true);
   const messagesEndRef = useRef(null);
 
-  // ---- Funzioni Utility ----
+  // Funzione per parse time
   const parseTime = val => {
     if (!val) return 0;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -42,18 +41,18 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
-  // ---- Recupera dati utente ----
+  // Recupera dati utente
   useEffect(() => {
     if (!user) return;
     (async () => {
       const usersRef = collection(db, 'users');
-      const snap = await getDocs(usersRef);
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      const snap = await query(usersRef);
+      const me = (await snap).docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
       if (me) setUserData(me);
     })();
   }, [user]);
 
-  // ---- Recupera nomi contatti ----
+  // Recupera nomi contatti
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -64,7 +63,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // ---- Ascolta messaggi ----
+  // Ascolta messaggi realtime
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -79,7 +78,7 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // ---- phonesData: raggruppa tutte le conversazioni per telefono (useMemo) ----
+  // Raggruppa conversazioni
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -97,14 +96,14 @@ export default function ChatPage() {
           phone,
           name: contactNames[phone] || phone,
           lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
-          lastMsgText: lastMsg.text || (lastMsg.mediaUrl ? '[Allegato]' : ''),
+          lastMsgText: lastMsg.text || '',
           unread,
         };
       })
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
-  }, [allMessages, contactNames, parseTime]);
+  }, [allMessages, contactNames]);
 
-  // ---- Verifica finestra 24h ----
+  // Verifica finestra 24h
   useEffect(() => {
     if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
     const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
@@ -116,32 +115,30 @@ export default function ChatPage() {
     const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
     const now = Date.now();
     setCanSendMessage(now - lastTimestamp < 86400000);
-  }, [user, allMessages, selectedPhone, parseTime]);
+  }, [user, allMessages, selectedPhone]);
 
-  // ---- Quando selezioni una chat, marca come letti tutti i messaggi non letti! ----
+  // Marca messaggi come letti
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
-    // Trova i messaggi non letti da questo numero
     const unreadMsgIds = allMessages
       .filter(m => m.from === selectedPhone && m.read === false)
       .map(m => m.id);
     if (unreadMsgIds.length > 0) {
-      // Aggiorna in batch
       const batch = writeBatch(db);
       unreadMsgIds.forEach(id => {
-        const refMsg = doc(collection(db, 'messages'), id);
-        batch.update(refMsg, { read: true });
+        const ref = doc(collection(db, 'messages'), id);
+        batch.update(ref, { read: true });
       });
       batch.commit();
     }
   }, [selectedPhone, allMessages, user]);
 
-  // ---- Scroll automatico ----
+  // Scroll automatico
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // ---- Carica templates APPROVED ----
+  // Carica templates APPROVED
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -155,130 +152,66 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // ---- Messaggi filtrati della chat selezionata ----
-  const filtered = useMemo(() => (
-    allMessages
-      .filter(m => m.from === selectedPhone || m.to === selectedPhone)
-      .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
-  ), [allMessages, selectedPhone, parseTime]);
-
-  // ---- INVIO MESSAGGIO TESTO ----
-  const sendMessage = async () => {
-    if (!selectedPhone || !messageText || !userData) return;
-    if (!canSendMessage) {
-      alert("⚠️ La finestra di 24h per l'invio dei messaggi è chiusa. Puoi inviare solo template.");
-      return;
-    }
-    const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "text", text: { body: messageText } };
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, "messages"), {
-        text: messageText,
-        to: selectedPhone,
-        from: "operator",
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: "text",
-        user_uid: user.uid,
-        read: true,
-        message_id: data.messages[0].id,
-      });
-      setMessageText("");
-    } else {
-      alert("Errore invio: " + JSON.stringify(data.error));
-    }
-  };
-
-  // ---- INVIO TEMPLATE ----
-  const sendTemplate = async name => {
-    if (!selectedPhone || !name || !userData) return;
-    const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "template", template: { name, language: { code: "it" } } };
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, "messages"), {
-        text: `Template inviato: ${name}`,
-        to: selectedPhone,
-        from: "operator",
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: "template",
-        user_uid: user.uid,
-        read: true,
-        message_id: data.messages[0].id,
-      });
-      setShowTemplates(false);
-    } else {
-      alert("Err template: " + JSON.stringify(data.error));
-    }
-  };
-
-  // ---- INVIO FOTO / FILE ----
-  const handleSendMedia = async (file, type) => {
-    if (!file || !userData || !selectedPhone) return;
-    // 1. Upload su Firebase Storage
-    const ext = file.name.split('.').pop();
-    const now = Date.now();
-    const mediaPath = `media/${user.uid}/${selectedPhone}/${now}_${file.name}`;
-    const storageRef = ref(storage, mediaPath);
-    await uploadBytes(storageRef, file);
-    const downloadUrl = await getDownloadURL(storageRef);
-
-    // 2. Prepara payload API WhatsApp
-    let payload = {
-      messaging_product: "whatsapp",
-      to: selectedPhone,
-      type,
-    };
-    if (type === "image") {
-      payload.image = { link: downloadUrl };
-    } else if (type === "document") {
-      payload.document = { link: downloadUrl, filename: file.name };
-    }
-
-    // 3. Invio tramite API WhatsApp
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, "messages"), {
-        mediaUrl: downloadUrl,
-        to: selectedPhone,
-        from: "operator",
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type,
-        fileName: file.name,
-        user_uid: user.uid,
-        read: true,
-        message_id: data.messages[0].id,
-      });
-    } else {
-      alert("Errore invio media: " + JSON.stringify(data.error));
-    }
-  };
-
-  // ---- HANDLER INPUT FILE ----
+  // Funzione upload file e invio media
   const handleMediaInput = type => async e => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await handleSendMedia(file, type);
-    e.target.value = ''; // reset input
+    const file = e.target.files[0];
+    if (!file || !userData || !selectedPhone) return;
+
+    try {
+      const storageRef = ref(storage, `media/${userData.id}/${selectedPhone}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(storageRef);
+
+      // Prepara payload per WhatsApp API
+      const payload = {
+        messaging_product: "whatsapp",
+        to: selectedPhone,
+        type,
+      };
+      if (type === "image") {
+        payload.image = { link: downloadUrl };
+      } else if (type === "document") {
+        payload.document = { link: downloadUrl, filename: file.name };
+      }
+
+      const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+
+      if (data.messages) {
+        await addDoc(collection(db, "messages"), {
+          text: type === "image" ? "[Immagine]" : "[Allegato]",
+          mediaUrl: downloadUrl,
+          to: selectedPhone,
+          from: "operator",
+          timestamp: Date.now(),
+          createdAt: serverTimestamp(),
+          type,
+          user_uid: user.uid,
+          read: true,
+          message_id: data.messages[0].id,
+        });
+      } else {
+        alert("Errore invio media: " + JSON.stringify(data.error));
+      }
+    } catch (error) {
+      console.error("Errore upload/invio media:", error);
+      alert("Errore upload o invio media, guarda console.");
+    }
   };
 
-  // ---- UI RENDER ----
+  const filtered = useMemo(() => {
+    return allMessages
+      .filter(m => m.from === selectedPhone || m.to === selectedPhone)
+      .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+  }, [allMessages, selectedPhone]);
+
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* LISTA */}
@@ -364,33 +297,26 @@ export default function ChatPage() {
                   key={idx}
                   className={`flex flex-col ${msg.from === "operator" ? "items-end" : "items-start"}`}
                 >
-                  <div
-                    className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
-                      msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
-                    }`}
-                  >
-                    {/* ANTEPRIMA MEDIA */}
-                    {msg.mediaUrl && msg.type === "image" && (
-                      <img
-                        src={msg.mediaUrl}
-                        alt="Immagine inviata"
-                        className="rounded-xl max-w-xs max-h-60 mb-2 border"
-                        style={{ objectFit: 'cover' }}
-                      />
-                    )}
-                    {msg.mediaUrl && msg.type === "document" && (
-                      <a
-                        href={msg.mediaUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 underline flex items-center gap-2"
-                      >
-                        <Paperclip size={16} /> {msg.fileName || 'File allegato'}
-                      </a>
-                    )}
-                    {/* TESTO NORMALE */}
-                    {(msg.text && !msg.mediaUrl) && msg.text}
-                  </div>
+                  {msg.type === "text" && (
+                    <div
+                      className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
+                        msg.from === "operator" ? "bg-black text-white rounded-br-none" : "bg-white text-gray-900 rounded-bl-none"
+                      }`}
+                    >
+                      {msg.text}
+                    </div>
+                  )}
+                  {(msg.type === "image" || msg.type === "document") && msg.mediaUrl && (
+                    <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="max-w-[70%]">
+                      {msg.type === "image" ? (
+                        <img src={msg.mediaUrl} alt="media" className="rounded-xl shadow-md" />
+                      ) : (
+                        <div className="p-3 bg-gray-200 rounded-xl cursor-pointer text-blue-700 underline">
+                          Visualizza allegato
+                        </div>
+                      )}
+                    </a>
+                  )}
                   <div className="text-[10px] text-gray-400 mt-1">
                     {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString("it-IT", {
                       hour: "2-digit",

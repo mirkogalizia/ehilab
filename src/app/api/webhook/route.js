@@ -2,7 +2,6 @@ import { db } from "@/firebase";
 import {
   collection,
   getDocs,
-  updateDoc,
   addDoc,
   doc,
   setDoc,
@@ -11,62 +10,10 @@ import {
   where
 } from "firebase/firestore";
 
-// FUNZIONE: recupera mediaUrl dai media WhatsApp
-async function getWhatsappMediaUrl(mediaId, accessToken) {
-  // 1. Recupera URL temporaneo
-  const res = await fetch(`https://graph.facebook.com/v17.0/${mediaId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const data = await res.json();
-  if (!data.url) return null;
-  return data.url;
-}
-
-export async function GET(req) {
-  const { searchParams } = new URL(req.url);
-
-  // ---- 1. VERIFICA WEBHOOK
-  const mode = searchParams.get("hub.mode");
-  const token = searchParams.get("hub.verify_token");
-  const challenge = searchParams.get("hub.challenge");
-  if (mode === "subscribe" && token === "chatboost_verify_token") {
-    console.log("✅ Webhook verificato");
-    return new Response(challenge, { status: 200 });
-  }
-
-  // ---- 2. ONBOARDING WHATSAPP
-  const email = searchParams.get("state");
-  const waba_id = searchParams.get("waba_id");
-  const phone_number_id = searchParams.get("phone_number_id");
-  const numeroWhatsapp = searchParams.get("numeroWhatsapp");
-
-  if (email && waba_id && phone_number_id && numeroWhatsapp) {
-    // Cerca utente tramite email
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, where("email", "==", email));
-    const querySnapshot = await getDocs(q);
-    if (querySnapshot.empty) {
-      return new Response("❌ Utente non trovato", { status: 404 });
-    }
-    const userDoc = querySnapshot.docs[0];
-    await updateDoc(userDoc.ref, {
-      waba_id,
-      phone_number_id,
-      numeroWhatsapp,
-      wa_status: "connected"
-    });
-    return Response.redirect("https://ehi-lab.it/chatboost/impostazioni/info", 302);
-  }
-
-  // ---- 3. SE NESSUNO DEI DUE: FORBIDDEN
-  return new Response("❌ Forbidden", { status: 403 });
-}
-
 export async function POST(req) {
   try {
     const body = await req.json();
 
-    // ---- 4. RICEZIONE MESSAGGI WHATSAPP
     const entry = body?.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
@@ -78,21 +25,17 @@ export async function POST(req) {
       return new Response("No messages to process", { status: 200 });
     }
 
-    // Trova l'utente associato al phone_number_id
+    // Trova utente associato
     const usersRef = collection(db, "users");
     const q = query(usersRef, where("phone_number_id", "==", phone_number_id));
     const querySnapshot = await getDocs(q);
-
     if (querySnapshot.empty) {
-      console.warn("Nessun utente trovato per questo phone_number_id:", phone_number_id);
+      console.warn("Nessun utente trovato per phone_number_id:", phone_number_id);
       return new Response("Utente non trovato", { status: 200 });
     }
 
     const userDoc = querySnapshot.docs[0];
     const user_uid = userDoc.id;
-
-    // Recupera access token dal process.env
-    const accessToken = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN;
 
     for (let i = 0; i < messages.length; i++) {
       const message = messages[i];
@@ -100,15 +43,17 @@ export async function POST(req) {
       const wa_id = contact?.wa_id || message.from;
       const profile_name = contact?.profile?.name || "";
 
-      let mediaUrl = null;
+      let text = "";
+      let mediaUrl = "";
 
-      // GESTIONE MEDIA: image, video, document, audio
-      if (
-        ["image", "video", "audio", "document"].includes(message.type) &&
-        message[message.type]?.id
-      ) {
-        mediaUrl = await getWhatsappMediaUrl(message[message.type].id, accessToken);
+      if (message.type === "text") {
+        text = message.text?.body || "";
+      } else if (message.type === "image") {
+        mediaUrl = message.image?.link || "";
+      } else if (message.type === "document") {
+        mediaUrl = message.document?.link || "";
       }
+      // Altri tipi se necessari...
 
       await addDoc(collection(db, "messages"), {
         user_uid,
@@ -116,14 +61,13 @@ export async function POST(req) {
         message_id: message.id,
         timestamp: message.timestamp,
         type: message.type,
-        text: message.text?.body || "",
+        text,
+        mediaUrl,
         profile_name,
         read: false,
-        mediaUrl, // <--- link del media, se presente
         createdAt: serverTimestamp(),
       });
 
-      // Salva nome contatto se presente, con createdBy per filtro frontend
       if (profile_name) {
         await setDoc(doc(db, "contacts", wa_id), {
           name: profile_name,
@@ -134,7 +78,7 @@ export async function POST(req) {
 
     return new Response("Messaggi salvati", { status: 200 });
   } catch (error) {
-    console.error("❌ Errore nel webhook:", error);
+    console.error("Errore webhook:", error);
     return new Response("Errore interno", { status: 500 });
   }
 }
