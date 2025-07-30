@@ -4,11 +4,11 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { db } from '@/lib/firebase';
 import {
   collection, query, orderBy, onSnapshot, addDoc, serverTimestamp,
-  getDocs, where, writeBatch, doc, deleteDoc,
+  getDocs, where, writeBatch, doc,
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2 } from 'lucide-react';
+import { Send, Plus, ArrowLeft, Camera, Paperclip } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
@@ -22,12 +22,8 @@ export default function ChatPage() {
   const [showNewChat, setShowNewChat] = useState(false);
   const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
-  const [canSendMessage, setCanSendMessage] = useState(true);
+  const [canSendMessage, setCanSendMessage] = useState(false);
   const messagesEndRef = useRef(null);
-
-  // --- Menu context per messaggio e chat
-  const [contextMenu, setContextMenu] = useState(null); // {x, y, messageId}
-  const [contextConv, setContextConv] = useState(null); // {x, y, phone}
 
   const parseTime = val => {
     if (!val) return 0;
@@ -98,19 +94,28 @@ export default function ChatPage() {
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames]);
 
-  // Check finestra 24h su ultimo messaggio RICEVUTO
+  // --- LOGICA 24H: solo se ultimo messaggio RICEVUTO è entro 24h ---
   useEffect(() => {
-    if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
-    const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
-    // Trova l'ultimo riceuto DA quel numero (non operator)
-    const lastMsg = msgs.filter(m => m.from === selectedPhone).slice(-1)[0];
-    if (!lastMsg) {
-      setCanSendMessage(true);
+    if (!user?.uid || !selectedPhone) {
+      setCanSendMessage(false);
       return;
     }
-    const lastTimestamp = parseTime(lastMsg.timestamp || lastMsg.createdAt);
+    const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
+    // Trova l’ultimo messaggio RICEVUTO
+    const lastInbound = msgs
+      .filter(m => m.from === selectedPhone)
+      .sort((a, b) => parseTime(b.timestamp || b.createdAt) - parseTime(a.timestamp || a.createdAt))[0];
+    if (!lastInbound) {
+      setCanSendMessage(false); // Solo template, mai ricevuto niente
+      return;
+    }
+    const lastTimestamp = parseTime(lastInbound.timestamp || lastInbound.createdAt);
     const now = Date.now();
-    setCanSendMessage(now - lastTimestamp < 86400000); // 24h
+    if (now - lastTimestamp < 86400000) {
+      setCanSendMessage(true); // Finestra aperta
+    } else {
+      setCanSendMessage(false); // Solo template
+    }
   }, [user, allMessages, selectedPhone]);
 
   // Marca messaggi come letti
@@ -148,26 +153,11 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Elimina messaggio singolo
-  const handleDeleteMessage = async id => {
-    setContextMenu(null);
-    if (window.confirm("Eliminare definitivamente il messaggio?")) {
-      await deleteDoc(doc(db, "messages", id));
-    }
-  };
-
-  // Elimina intera conversazione
-  const handleDeleteConversation = async phone => {
-    setContextConv(null);
-    if (window.confirm("Eliminare l'intera conversazione?")) {
-      const batch = writeBatch(db);
-      allMessages
-        .filter(m => m.from === phone || m.to === phone)
-        .forEach(m => batch.delete(doc(db, "messages", m.id)));
-      await batch.commit();
-      setSelectedPhone('');
-    }
-  };
+  const filtered = useMemo(() => (
+    allMessages
+      .filter(m => m.from === selectedPhone || m.to === selectedPhone)
+      .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
+  ), [allMessages, selectedPhone]);
 
   // Gestione file media selezionato
   const [selectedMedia, setSelectedMedia] = useState(null);
@@ -179,24 +169,33 @@ export default function ChatPage() {
     setMessageText('');
   };
 
-  // Invio messaggi testuali/media (come sempre)
+  // Invio messaggi testuali/media
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
       alert("⚠️ La finestra di 24h per l'invio di messaggi è chiusa. Puoi inviare solo template.");
       return;
     }
+
+    // Invio MEDIA (WhatsApp API CORRETTO)
     if (selectedMedia) {
+      // 1. Upload file/media via tua API route
       const uploadData = new FormData();
       uploadData.append('file', selectedMedia.file);
       uploadData.append('phone_number_id', userData.phone_number_id);
-      const uploadRes = await fetch('/api/send-media', { method: 'POST', body: uploadData });
+
+      const uploadRes = await fetch('/api/send-media', {
+        method: 'POST',
+        body: uploadData,
+      });
       const uploadJson = await uploadRes.json();
       const media_id = uploadJson.id;
       if (!media_id) {
         alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
         return;
       }
+
+      // 2. Invia messaggio con media_id
       const payload = {
         messaging_product: "whatsapp",
         to: selectedPhone,
@@ -206,6 +205,7 @@ export default function ChatPage() {
           caption: messageText || '',
         },
       };
+
       const res = await fetch(
         `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
         {
@@ -238,7 +238,8 @@ export default function ChatPage() {
       }
       return;
     }
-    // messaggio testo
+
+    // Invio messaggi testuali normali
     const payload = {
       messaging_product: "whatsapp",
       to: selectedPhone,
@@ -314,17 +315,9 @@ export default function ChatPage() {
     }
   };
 
-  // Mostra solo messaggi per conversazione
-  const filtered = useMemo(() => (
-    allMessages
-      .filter(m => m.from === selectedPhone || m.to === selectedPhone)
-      .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
-  ), [allMessages, selectedPhone]);
-
-  // -------- RENDER UI --------
+  // UI
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
-
       {/* Lista chat */}
       <div className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}>
         <div className="flex justify-between items-center mb-4">
@@ -338,10 +331,6 @@ export default function ChatPage() {
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
-              onContextMenu={e => {
-                e.preventDefault();
-                setContextConv({ x: e.clientX, y: e.clientY, phone });
-              }}
               className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
             >
               <div>
@@ -354,6 +343,7 @@ export default function ChatPage() {
             </li>
           ))}
         </ul>
+
         {/* Modal nuova chat */}
         {showNewChat && (
           <div className="mt-4 p-4 bg-gray-100 rounded-lg shadow">
@@ -388,32 +378,30 @@ export default function ChatPage() {
       {/* Chat */}
       {selectedPhone && (
         <div className="flex flex-col flex-1 bg-gray-100 relative">
-
-          {/* HEADER CON NOME, nessuna barra grigia */}
-          <div className="flex items-center gap-3 p-4 bg-white border-b z-10" style={{ minHeight: 60 }}>
+          {/* Header senza spazio grigio sopra */}
+          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
             <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
 
-          {/* ----------- BANNER 24H ----------- */}
+          {/* ----------- MESSAGGIO 24H ----------- */}
           {!canSendMessage && (
-            <div className="flex items-center justify-center bg-yellow-100 border-b border-yellow-400 text-yellow-900 py-3 px-4 font-semibold text-center sticky bottom-[69px] z-20 rounded-t shadow">
-              <span>⚠️ La finestra di 24h per l'invio di messaggi è chiusa. Puoi inviare solo template WhatsApp.</span>
+            <div className="flex items-center justify-center px-4 py-3 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-sm font-semibold">
+              <span>
+                ⚠️ Finestra 24h chiusa: puoi inviare solo <span className="underline">template WhatsApp approvati</span>.
+              </span>
             </div>
           )}
+          {/* ----------- / MESSAGGIO 24H ----------- */}
 
           {/* Messaggi */}
           <div className="flex-1 overflow-y-auto p-4">
             <div className="space-y-3">
               {filtered.map((msg, idx) => (
                 <div
-                  key={msg.id}
-                  onContextMenu={e => {
-                    e.preventDefault();
-                    setContextMenu({ x: e.clientX, y: e.clientY, messageId: msg.id });
-                  }}
+                  key={idx}
                   className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
                 >
                   {/* IMMAGINE/FILE */}
@@ -482,6 +470,7 @@ export default function ChatPage() {
               </Button>
             </div>
           )}
+          {/* ----------- / ANTEPRIMA MEDIA ----------- */}
 
           {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
@@ -528,7 +517,6 @@ export default function ChatPage() {
               onClick={() => setShowTemplates(!showTemplates)}
               className="rounded-full px-3 py-2 bg-gray-200 text-gray-700 ml-2"
               type="button"
-              disabled={!canSendMessage}
             >
               Tmpl
             </Button>
@@ -549,57 +537,6 @@ export default function ChatPage() {
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
-
-          {/* --- MENU CONTEXTUALE MESSAGGIO --- */}
-          {contextMenu && (
-            <div
-              style={{
-                position: 'fixed',
-                top: contextMenu.y,
-                left: contextMenu.x,
-                zIndex: 1000,
-                background: 'white',
-                border: '1px solid #eee',
-                borderRadius: 8,
-                boxShadow: '0 4px 24px #0001',
-                minWidth: 120,
-                padding: 4,
-              }}
-              onMouseLeave={() => setContextMenu(null)}
-            >
-              <button
-                className="flex items-center gap-2 w-full px-4 py-2 text-red-600 hover:bg-red-50 rounded"
-                onClick={() => handleDeleteMessage(contextMenu.messageId)}
-              >
-                <Trash2 size={16} /> Elimina
-              </button>
-            </div>
-          )}
-          {/* --- MENU CONTEXTUALE CONVERSAZIONE --- */}
-          {contextConv && (
-            <div
-              style={{
-                position: 'fixed',
-                top: contextConv.y,
-                left: contextConv.x,
-                zIndex: 1000,
-                background: 'white',
-                border: '1px solid #eee',
-                borderRadius: 8,
-                boxShadow: '0 4px 24px #0001',
-                minWidth: 160,
-                padding: 4,
-              }}
-              onMouseLeave={() => setContextConv(null)}
-            >
-              <button
-                className="flex items-center gap-2 w-full px-4 py-2 text-red-600 hover:bg-red-50 rounded"
-                onClick={() => handleDeleteConversation(contextConv.phone)}
-              >
-                <Trash2 size={16} /> Elimina conversazione
-              </button>
             </div>
           )}
         </div>
