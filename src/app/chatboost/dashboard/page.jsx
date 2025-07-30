@@ -4,11 +4,11 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { db } from '@/lib/firebase';
 import {
   collection, query, orderBy, onSnapshot, addDoc, serverTimestamp,
-  getDocs, where, writeBatch, doc,
+  getDocs, where, writeBatch, doc, deleteDoc
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus, ArrowLeft, Camera, Paperclip } from 'lucide-react';
+import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
 export default function ChatPage() {
@@ -24,6 +24,13 @@ export default function ChatPage() {
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // Menù contestuale
+  const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
+  const [chatMenu, setChatMenu] = useState({ visible: false, x: 0, y: 0, phone: null });
+
+  // For mobile long press
+  let longPressTimeout = useRef();
 
   const parseTime = val => {
     if (!val) return 0;
@@ -94,7 +101,7 @@ export default function ChatPage() {
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames]);
 
-  // --- LOGICA 24H: solo se ultimo messaggio RICEVUTO è entro 24h ---
+  // LOGICA 24H: solo se ultimo messaggio RICEVUTO è entro 24h
   useEffect(() => {
     if (!user?.uid || !selectedPhone) {
       setCanSendMessage(false);
@@ -169,6 +176,70 @@ export default function ChatPage() {
     setMessageText('');
   };
 
+  // --- CANCELLAZIONE MESSAGGIO SINGOLO
+  const handleMessageContextMenu = (e, id) => {
+    e.preventDefault();
+    setContextMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      messageId: id
+    });
+  };
+  const handleDeleteMessage = async () => {
+    if (contextMenu.messageId) {
+      await deleteDoc(doc(db, 'messages', contextMenu.messageId));
+      setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
+    }
+  };
+
+  // --- CANCELLAZIONE INTERA CHAT
+  const handleChatContextMenu = (e, phone) => {
+    e.preventDefault();
+    setChatMenu({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      phone
+    });
+  };
+  const handleDeleteChat = async () => {
+    if (chatMenu.phone) {
+      const msgs = allMessages.filter(
+        m => m.from === chatMenu.phone || m.to === chatMenu.phone
+      );
+      const batch = writeBatch(db);
+      msgs.forEach(m => batch.delete(doc(db, 'messages', m.id)));
+      await batch.commit();
+      setChatMenu({ visible: false, x: 0, y: 0, phone: null });
+      if (selectedPhone === chatMenu.phone) setSelectedPhone('');
+    }
+  };
+
+  // --- Chiudi menù contestuale su click fuori
+  useEffect(() => {
+    const close = () => {
+      setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
+      setChatMenu({ visible: false, x: 0, y: 0, phone: null });
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
+    };
+  }, []);
+
+  // --- Long press per mobile (messaggio)
+  const handleTouchStart = (id) => {
+    longPressTimeout.current = setTimeout(() => {
+      setContextMenu({ visible: true, x: window.innerWidth / 2, y: window.innerHeight / 2, messageId: id });
+    }, 600);
+  };
+  const handleTouchEnd = () => {
+    clearTimeout(longPressTimeout.current);
+  };
+
   // Invio messaggi testuali/media
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
@@ -179,7 +250,6 @@ export default function ChatPage() {
 
     // Invio MEDIA (WhatsApp API CORRETTO)
     if (selectedMedia) {
-      // 1. Upload file/media via tua API route
       const uploadData = new FormData();
       uploadData.append('file', selectedMedia.file);
       uploadData.append('phone_number_id', userData.phone_number_id);
@@ -195,7 +265,6 @@ export default function ChatPage() {
         return;
       }
 
-      // 2. Invia messaggio con media_id
       const payload = {
         messaging_product: "whatsapp",
         to: selectedPhone,
@@ -331,6 +400,7 @@ export default function ChatPage() {
             <li
               key={phone}
               onClick={() => setSelectedPhone(phone)}
+              onContextMenu={e => handleChatContextMenu(e, phone)}
               className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
             >
               <div>
@@ -378,7 +448,7 @@ export default function ChatPage() {
       {/* Chat */}
       {selectedPhone && (
         <div className="flex flex-col flex-1 bg-gray-100 relative">
-          {/* Header senza spazio grigio sopra */}
+          {/* Header */}
           <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
             <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
@@ -388,13 +458,11 @@ export default function ChatPage() {
 
           {/* ----------- MESSAGGIO 24H ----------- */}
           {!canSendMessage && (
-            <div className="flex items-center justify-center px-4 py-3 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-sm font-semibold">
-              <span>
-                ⚠️ Finestra 24h chiusa: puoi inviare solo <span className="underline">template WhatsApp approvati</span>.
-              </span>
+            <div className="flex items-center justify-center px-4 py-3 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-sm font-medium">
+              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
+              <span className="block">È possibile inviare solo template WhatsApp.</span>
             </div>
           )}
-          {/* ----------- / MESSAGGIO 24H ----------- */}
 
           {/* Messaggi */}
           <div className="flex-1 overflow-y-auto p-4">
@@ -403,6 +471,9 @@ export default function ChatPage() {
                 <div
                   key={idx}
                   className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
+                  onContextMenu={e => handleMessageContextMenu(e, msg.id)}
+                  onTouchStart={() => handleTouchStart(msg.id)}
+                  onTouchEnd={handleTouchEnd}
                 >
                   {/* IMMAGINE/FILE */}
                   {msg.type === 'image' && msg.media_id ? (
@@ -444,7 +515,7 @@ export default function ChatPage() {
             </div>
           </div>
 
-          {/* ----------- ANTEPRIMA MEDIA SELEZIONATO ----------- */}
+          {/* ----------- ANTEPRIMA MEDIA ----------- */}
           {selectedMedia && (
             <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
               {selectedMedia.type === 'image' ? (
@@ -470,7 +541,6 @@ export default function ChatPage() {
               </Button>
             </div>
           )}
-          {/* ----------- / ANTEPRIMA MEDIA ----------- */}
 
           {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
@@ -537,6 +607,57 @@ export default function ChatPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* --- MENÙ CONTESTUALE SINGOLO MESSAGGIO --- */}
+          {contextMenu.visible && (
+            <div
+              style={{
+                position: 'fixed',
+                top: contextMenu.y,
+                left: contextMenu.x,
+                zIndex: 9999,
+                background: 'white',
+                border: '1px solid #eee',
+                borderRadius: 10,
+                boxShadow: '0 4px 20px #0002',
+                padding: 8,
+                minWidth: 120,
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              <button
+                className="flex items-center gap-2 w-full py-2 px-3 text-red-600 hover:bg-gray-100 rounded"
+                onClick={handleDeleteMessage}
+              >
+                <Trash2 size={16} /> Elimina messaggio
+              </button>
+            </div>
+          )}
+          {/* --- MENÙ CONTESTUALE CHAT --- */}
+          {chatMenu.visible && (
+            <div
+              style={{
+                position: 'fixed',
+                top: chatMenu.y,
+                left: chatMenu.x,
+                zIndex: 9999,
+                background: 'white',
+                border: '1px solid #eee',
+                borderRadius: 10,
+                boxShadow: '0 4px 20px #0002',
+                padding: 8,
+                minWidth: 140,
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              <button
+                className="flex items-center gap-2 w-full py-2 px-3 text-red-600 hover:bg-gray-100 rounded"
+                onClick={handleDeleteChat}
+              >
+                <Trash2 size={16} /> Elimina chat
+              </button>
             </div>
           )}
         </div>
