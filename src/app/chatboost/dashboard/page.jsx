@@ -16,6 +16,19 @@ import { Button } from '@/components/ui/button';
 import { Send, Plus } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
+// Util per confronto 24h WhatsApp
+const isWithin24Hours = (timestamp) => {
+  if (!timestamp) return false;
+  const now = Date.now();
+  const msgTime =
+    typeof timestamp === 'number'
+      ? (timestamp > 1e12 ? timestamp : timestamp * 1000)
+      : timestamp?.seconds
+        ? timestamp.seconds * 1000
+        : 0;
+  return now - msgTime <= 24 * 60 * 60 * 1000;
+};
+
 export default function ChatPage() {
   const [allMessages, setAllMessages] = useState([]);
   const [phoneList, setPhoneList] = useState([]);
@@ -72,7 +85,7 @@ export default function ChatPage() {
     }
   }, [allMessages, selectedPhone]);
 
-  // Carica template APPROVED
+  // Carica template APPROVED (aggiornato per nuovi dati API Meta)
   useEffect(() => {
     if (!user?.email) return;
     const fetchTemplates = async () => {
@@ -128,28 +141,55 @@ export default function ChatPage() {
     }
   };
 
-  // Funzione per parse timestamp
-  const parseTime = (val) => {
-    if (!val) return 0;
-    if (typeof val === 'string') return parseInt(val) * 1000;
-    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
-    if (val?.seconds) return val.seconds * 1000;
-    return 0;
+  // Invia un messaggio template
+  const sendTemplate = async (templateName) => {
+    if (!selectedPhone || !userData) return;
+    const payload = {
+      messaging_product: 'whatsapp',
+      to: selectedPhone,
+      type: 'template',
+      template: { name: templateName, language: { code: 'it' } },
+    };
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+    const data = await res.json();
+    if (data.messages) {
+      await addDoc(collection(db, 'messages'), {
+        text: templateName,
+        to: selectedPhone,
+        from: 'operator',
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: 'template',
+        user_uid: user.uid,
+        message_id: data.messages[0].id,
+      });
+      setShowTemplates(false);
+    } else {
+      alert('Errore invio template: ' + JSON.stringify(data.error));
+    }
   };
 
-  // ──────────────────────────────────────────────────────
-  // Funzione per invio MEDIA (retrocompatibile)
+  // Funzione aggiornata per invio media con salvataggio su Firebase Storage via API route
   const sendMediaMessage = async (file, mediaType) => {
     if (!selectedPhone || !userData) return;
-
     try {
-      // 1) Upload del file a WhatsApp Graph API
+      // 1. Upload file a WhatsApp Graph API
       const form = new FormData();
       form.append('file', file);
       form.append('type', mediaType);
+      form.append('messaging_product', 'whatsapp'); // obbligatorio
 
-      // Prima prova senza messaging_product (vecchie API)
-      let uploadRes = await fetch(
+      const uploadRes = await fetch(
         `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
         {
           method: 'POST',
@@ -159,39 +199,11 @@ export default function ChatPage() {
           body: form,
         }
       );
-      let uploadData = await uploadRes.json();
-
-      // Se serve, riprova aggiungendo messaging_product (nuove API)
-      if (uploadData.error && uploadData.error.code === 100 && uploadData.error.message.includes('messaging_product')) {
-        form.append('messaging_product', 'whatsapp');
-        uploadRes = await fetch(
-          `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            },
-            body: form,
-          }
-        );
-        uploadData = await uploadRes.json();
-      }
-
+      const uploadData = await uploadRes.json();
       if (!uploadData.id) throw new Error(JSON.stringify(uploadData));
       const mediaId = uploadData.id;
 
-      // 2) Recupera URL pubblico del media per mostrare in chat (se disponibile)
-      const urlRes = await fetch(
-        `https://graph.facebook.com/v17.0/${mediaId}?fields=url`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          },
-        }
-      );
-      const { url: mediaUrl } = await urlRes.json();
-
-      // 3) Invia il messaggio WhatsApp con riferimento a mediaId
+      // 2. Invia il messaggio WhatsApp con riferimento a mediaId
       const payload = {
         messaging_product: 'whatsapp',
         to: selectedPhone,
@@ -215,10 +227,19 @@ export default function ChatPage() {
       const result = await res.json();
       if (!result.messages) throw new Error(JSON.stringify(result));
 
-      // 4) Registra in Firestore
+      // 3. Ottieni l'URL pubblico permanente tramite la route Next.js
+      const myServerRes = await fetch('/api/save-media-firebase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mediaId, fileName: file.name, mimeType: file.type }),
+      });
+      const { publicUrl } = await myServerRes.json();
+      if (!publicUrl) throw new Error("Upload su Firebase Storage fallito");
+
+      // 4. Salva in Firestore
       await addDoc(collection(db, 'messages'), {
         text: file.name,
-        mediaUrl,
+        mediaUrl: publicUrl,
         to: selectedPhone,
         from: 'operator',
         timestamp: Date.now(),
@@ -232,7 +253,21 @@ export default function ChatPage() {
       alert('Errore invio media: ' + err.message);
     }
   };
-  // ──────────────────────────────────────────────────────
+
+  // Helper per timestamp
+  const parseTime = (val) => {
+    if (!val) return 0;
+    if (typeof val === 'string') return parseInt(val) * 1000;
+    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
+    if (val?.seconds) return val.seconds * 1000;
+    return 0;
+  };
+
+  // Finestra 24h: puoi inviare solo se c'è almeno un messaggio negli ultimi 24h
+  const lastMsg = allMessages
+    .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
+    .slice(-1)[0];
+  const canSendMessage = lastMsg ? isWithin24Hours(parseTime(lastMsg.timestamp || lastMsg.createdAt)) : true;
 
   const filteredMessages = allMessages
     .filter((msg) => msg.from === selectedPhone || msg.to === selectedPhone)
@@ -240,7 +275,7 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-gray-50 font-[Montserrat]">
-      {/* Lista contatti */}
+      {/* Sidebar contatti */}
       <div className="w-full md:w-1/4 bg-white border-r overflow-y-auto p-6 shadow-sm">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-semibold text-gray-800">Conversazioni</h2>
@@ -367,6 +402,7 @@ export default function ChatPage() {
             onChange={(e) => setMessageText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
             className="flex-1 rounded-full px-5 py-3 text-sm border border-gray-300 focus:ring-2 focus:ring-gray-800"
+            disabled={!canSendMessage}
           />
 
           {/* Template picker */}
@@ -374,11 +410,16 @@ export default function ChatPage() {
             <button
               type="button"
               onClick={() => setShowTemplates((p) => !p)}
-              className="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-100 hover:bg-gray-200 transition text-sm text-gray-700"
+              className={`flex items-center gap-2 px-4 py-2 rounded-full transition text-sm ${
+                canSendMessage
+                  ? 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}
+              disabled={!canSendMessage}
             >
               📑
             </button>
-            {showTemplates && (
+            {showTemplates && canSendMessage && (
               <div className="absolute bottom-full mb-2 right-0 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 max-h-64 overflow-y-auto">
                 {templates.length === 0 ? (
                   <p className="p-3 text-sm text-gray-500 text-center">
@@ -414,6 +455,7 @@ export default function ChatPage() {
               onChange={(e) =>
                 e.target.files[0] && sendMediaMessage(e.target.files[0], 'image')
               }
+              disabled={!canSendMessage}
             />
           </label>
 
@@ -427,6 +469,7 @@ export default function ChatPage() {
               onChange={(e) =>
                 e.target.files[0] && sendMediaMessage(e.target.files[0], 'document')
               }
+              disabled={!canSendMessage}
             />
           </label>
 
@@ -434,11 +477,17 @@ export default function ChatPage() {
           <Button
             onClick={sendMessage}
             className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 transition"
-            disabled={!userData || !selectedPhone || !messageText}
+            disabled={!userData || !selectedPhone || !messageText || !canSendMessage}
           >
             <Send size={18} />
           </Button>
         </div>
+        {!canSendMessage && (
+          <div className="text-center p-2 text-xs text-red-500 bg-yellow-50 border-t border-yellow-100">
+            <b>La finestra 24h di WhatsApp è scaduta.</b><br />
+            Puoi inviare solo template (oppure attendere un nuovo messaggio dal cliente).
+          </div>
+        )}
       </div>
     </div>
   );

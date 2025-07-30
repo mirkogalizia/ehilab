@@ -1,7 +1,8 @@
-import { db } from '@/lib/firebase';
+import { db, storage } from '@/lib/firebase';
 import {
   collection, addDoc, doc, setDoc, serverTimestamp, query, where, getDocs,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 export async function POST(req) {
   try {
@@ -18,15 +19,14 @@ export async function POST(req) {
       return new Response("No messages to process", { status: 200 });
     }
 
+    // Recupera user_uid
     const usersRef = collection(db, 'users');
     const q = query(usersRef, where('phone_number_id', '==', phone_number_id));
     const querySnapshot = await getDocs(q);
-
     if (querySnapshot.empty) {
       console.warn('No user found:', phone_number_id);
       return new Response('Utente non trovato', { status: 200 });
     }
-
     const user_uid = querySnapshot.docs[0].id;
 
     for (let i = 0; i < messages.length; i++) {
@@ -38,19 +38,63 @@ export async function POST(req) {
       let text = message.text?.body || '';
       let mediaUrl = '';
 
-      if (message.type === 'image' && message.image?.link) {
-        mediaUrl = message.image.link;
-        text = message.image.caption || '';
-      } else if (message.type === 'document' && message.document?.link) {
-        mediaUrl = message.document.link;
-        text = message.document.filename || '';
+      // MEDIA: se ricevi un'immagine o un file, recupera la URL pubblica tramite Graph API + salva su Firebase Storage
+      if ((message.type === 'image' || message.type === 'document') && message[message.type]?.id) {
+        const mediaId = message[message.type].id;
+
+        // 1. Recupera la url privata dal Graph
+        const waRes = await fetch(
+          `https://graph.facebook.com/v17.0/${mediaId}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            },
+          }
+        );
+        const waData = await waRes.json();
+        const url = waData.url;
+        if (!url) {
+          console.error('No media url found from graph', waData);
+        } else {
+          // 2. Scarica il file come blob
+          const mediaRes = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            },
+          });
+          const arrayBuffer = await mediaRes.arrayBuffer();
+          const mimeType =
+            message.type === 'image'
+              ? 'image/jpeg'
+              : message.document?.mime_type || 'application/octet-stream';
+          const ext =
+            message.type === 'image'
+              ? 'jpg'
+              : (message.document?.filename?.split('.').pop() || 'bin');
+          const fileName = `${mediaId}-${Date.now()}.${ext}`;
+
+          // 3. Upload su Firebase Storage
+          const storagePath =
+            message.type === 'image'
+              ? `media/${fileName}`
+              : `files/${fileName}`;
+          const storageRef = ref(storage, storagePath);
+          await uploadBytes(storageRef, new Uint8Array(arrayBuffer), { contentType: mimeType });
+          mediaUrl = await getDownloadURL(storageRef);
+
+          // Metti la descrizione/nome giusto
+          text =
+            message.type === 'image'
+              ? message.image?.caption || 'immagine'
+              : message.document?.filename || 'documento';
+        }
       }
 
       await addDoc(collection(db, 'messages'), {
         user_uid,
         from: wa_id,
         message_id: message.id,
-        timestamp: message.timestamp,
+        timestamp: Number(message.timestamp) * 1000,
         type: message.type,
         text,
         mediaUrl,
@@ -59,11 +103,16 @@ export async function POST(req) {
         createdAt: serverTimestamp(),
       });
 
+      // Aggiorna rubrica se serve
       if (profile_name) {
-        await setDoc(doc(db, 'contacts', wa_id), {
-          name: profile_name,
-          createdBy: user_uid,
-        }, { merge: true });
+        await setDoc(
+          doc(db, 'contacts', wa_id),
+          {
+            name: profile_name,
+            createdBy: user_uid,
+          },
+          { merge: true }
+        );
       }
     }
 
