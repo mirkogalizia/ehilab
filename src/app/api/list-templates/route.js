@@ -23,9 +23,6 @@ export async function POST(req) {
       return new Response(JSON.stringify({ error: 'waba_id mancante' }), { status: 400 });
     }
 
-    // 🔥 Debug log temporaneo
-    console.log('🔥 Template API', { wabaId, user_uid, token: !!token });
-
     const res = await fetch(`https://graph.facebook.com/v17.0/${wabaId}/message_templates`, {
       method: 'GET',
       headers: {
@@ -36,16 +33,11 @@ export async function POST(req) {
     const data = await res.json();
 
     if (!res.ok) {
-      console.error('❌ Errore API Meta:', data);
       return new Response(JSON.stringify({ error: data }), { status: res.status });
     }
 
-    // 🔥 Log quanti template hai trovato
-    console.log('🔥 Templates trovati:', data.data?.length);
-
     return new Response(JSON.stringify(data.data || []), { status: 200 });
   } catch (err) {
-    console.error('❌ Errore /api/list-templates:', err);
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }

@@ -1,5 +1,3 @@
-// src/app/api/webhook/route.js (o /api/webhook.js secondo la tua struttura)
-
 import { db } from '@/lib/firebase';
 import {
   collection,
@@ -47,13 +45,14 @@ export async function POST(req) {
       const profile_name = contact?.profile?.name || "";
 
       let text = message.text?.body || '';
-      let mediaUrl = '';
+      let media_id = '';
+      let type = message.type;
 
-      // Se è media, estrai il link
-      if (message.type === 'image' && message.image?.link) {
-        mediaUrl = message.image.link;
-      } else if (message.type === 'document' && message.document?.link) {
-        mediaUrl = message.document.link;
+      // Se è media, salva media_id (WhatsApp ti manda l'id lato inbound)
+      if (message.type === 'image' && message.image?.id) {
+        media_id = message.image.id;
+      } else if (message.type === 'document' && message.document?.id) {
+        media_id = message.document.id;
         text = message.document.filename || 'Documento allegato';
       }
 
@@ -62,9 +61,9 @@ export async function POST(req) {
         from: wa_id,
         message_id: message.id,
         timestamp: message.timestamp,
-        type: message.type,
+        type,
         text,
-        mediaUrl,
+        media_id,
         profile_name,
         read: false,
         createdAt: serverTimestamp(),

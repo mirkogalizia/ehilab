@@ -3,19 +3,9 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { db } from '@/lib/firebase';
 import {
-  collection,
-  query,
-  orderBy,
-  onSnapshot,
-  addDoc,
-  serverTimestamp,
-  getDocs,
-  where,
-  writeBatch,
-  doc,
+  collection, query, orderBy, onSnapshot, addDoc, serverTimestamp,
+  getDocs, where, writeBatch, doc,
 } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, storage } from '@/lib/firebase';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Send, Plus, ArrowLeft, Camera, Paperclip } from 'lucide-react';
@@ -97,7 +87,7 @@ export default function ChatPage() {
           phone,
           name: contactNames[phone] || phone,
           lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
-          lastMsgText: lastMsg.text || (lastMsg.type === 'image' ? '[Immagine]' : ''),
+          lastMsgText: lastMsg.text || (lastMsg.type === 'image' ? '[Immagine]' : lastMsg.type === 'document' ? '[Documento]' : ''),
           unread,
         };
       })
@@ -159,7 +149,17 @@ export default function ChatPage() {
       .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
   ), [allMessages, selectedPhone]);
 
-  // Invio messaggi testuali
+  // Gestione file media selezionato
+  const [selectedMedia, setSelectedMedia] = useState(null);
+  const handleMediaInput = type => e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSelectedMedia({ file, type });
+    setShowTemplates(false);
+    setMessageText('');
+  };
+
+  // Invio messaggi testuali/media
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
@@ -167,30 +167,50 @@ export default function ChatPage() {
       return;
     }
 
+    // Invio MEDIA (WhatsApp API CORRETTO)
     if (selectedMedia) {
-      // invio media
-      const file = selectedMedia.file;
-      const fileName = `${userData.uid}/${selectedPhone}/${Date.now()}_${file.name}`;
-      const storageRef = ref(storage, `media/${fileName}`);
-      await uploadBytes(storageRef, file);
-      const downloadURL = await getDownloadURL(storageRef);
+      // 1. Upload media file a Meta
+      const formData = new FormData();
+      formData.append('file', selectedMedia.file);
+      formData.append('messaging_product', 'whatsapp');
 
-      // invio messaggio media a WhatsApp API
+      const uploadRes = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/media`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}` },
+          body: formData,
+        }
+      );
+      const uploadJson = await uploadRes.json();
+      const media_id = uploadJson.id;
+      if (!media_id) {
+        alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
+        return;
+      }
+
+      // 2. Invia messaggio con media_id
       const payload = {
         messaging_product: "whatsapp",
         to: selectedPhone,
         type: selectedMedia.type,
         [selectedMedia.type]: {
-          link: downloadURL,
+          id: media_id,
           caption: messageText || '',
         },
       };
 
-      const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const res = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload),
+        }
+      );
       const data = await res.json();
       if (data.messages) {
         await addDoc(collection(db, "messages"), {
@@ -200,7 +220,7 @@ export default function ChatPage() {
           timestamp: Date.now(),
           createdAt: serverTimestamp(),
           type: selectedMedia.type,
-          mediaUrl: downloadURL,
+          media_id,
           user_uid: user.uid,
           read: true,
           message_id: data.messages[0].id,
@@ -211,13 +231,24 @@ export default function ChatPage() {
         alert("Errore invio media: " + JSON.stringify(data.error));
       }
     } else {
-      // invio testo normale
-      const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "text", text: { body: messageText } };
-      const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // Invio testo normale
+      const payload = {
+        messaging_product: "whatsapp",
+        to: selectedPhone,
+        type: "text",
+        text: { body: messageText }
+      };
+      const res = await fetch(
+        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload),
+        }
+      );
       const data = await res.json();
       if (data.messages) {
         await addDoc(collection(db, "messages"), {
@@ -238,25 +269,26 @@ export default function ChatPage() {
     }
   };
 
-  // Gestione file media selezionato
-  const [selectedMedia, setSelectedMedia] = useState(null);
-  const handleMediaInput = type => e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setSelectedMedia({ file, type });
-    setShowTemplates(false);
-    setMessageText('');
-  };
-
-  // Invio template
+  // Invio template WhatsApp
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
-    const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "template", template: { name, language: { code: "it" } } };
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const payload = {
+      messaging_product: "whatsapp",
+      to: selectedPhone,
+      type: "template",
+      template: { name, language: { code: "it" } }
+    };
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload),
+      }
+    );
     const data = await res.json();
     if (data.messages) {
       await addDoc(collection(db, "messages"), {
@@ -272,10 +304,11 @@ export default function ChatPage() {
       });
       setShowTemplates(false);
     } else {
-      alert("Err template: " + JSON.stringify(data.error));
+      alert("Errore template: " + JSON.stringify(data.error));
     }
   };
 
+  // UI
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* Lista chat */}
@@ -362,16 +395,17 @@ export default function ChatPage() {
                   key={idx}
                   className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
                 >
-                  {msg.type === 'image' && msg.mediaUrl ? (
+                  {msg.type === 'image' && msg.media_id ? (
+                    // Mostra thumbnail solo se hai salvato il media_id
                     <img
-                      src={msg.mediaUrl}
+                      src={`https://graph.facebook.com/v17.0/${msg.media_id}`}
                       alt="immagine inviata"
                       className="max-w-xs rounded-lg shadow-md"
                       loading="lazy"
                     />
-                  ) : msg.type === 'document' && msg.mediaUrl ? (
+                  ) : msg.type === 'document' && msg.media_id ? (
                     <a
-                      href={msg.mediaUrl}
+                      href={`https://graph.facebook.com/v17.0/${msg.media_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-blue-600 underline"
@@ -441,7 +475,34 @@ export default function ChatPage() {
             >
               <Send size={18} />
             </Button>
+            {/* Template btn */}
+            <Button
+              onClick={() => setShowTemplates(!showTemplates)}
+              className="rounded-full px-3 py-2 bg-gray-200 text-gray-700 ml-2"
+              type="button"
+              disabled={!canSendMessage}
+            >
+              Tmpl
+            </Button>
           </div>
+
+          {/* Lista Template */}
+          {showTemplates && (
+            <div className="absolute bottom-16 right-4 z-50 bg-white rounded-lg shadow-lg border w-80 max-w-full p-4">
+              <h3 className="font-semibold mb-2">Template WhatsApp</h3>
+              <ul>
+                {templates.length === 0 && <li className="text-sm text-gray-400">Nessun template approvato</li>}
+                {templates.map((t, idx) => (
+                  <li key={idx} className="flex justify-between items-center mb-1">
+                    <span>{t.name}</span>
+                    <Button size="sm" onClick={() => sendTemplate(t.name)}>
+                      Invia
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>
