@@ -226,7 +226,7 @@ export default function ChatPage() {
       } else {
         alert("Errore invio media: " + JSON.stringify(data.error));
       }
-      return; // <--- IMPORTANTE!
+      return;
     }
 
     // Invio messaggi testuali normali
@@ -393,7 +393,6 @@ export default function ChatPage() {
                   className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
                 >
                   {msg.type === 'image' && msg.media_id ? (
-                    // Mostra thumbnail solo se hai salvato il media_id
                     <img
                       src={`https://graph.facebook.com/v17.0/${msg.media_id}`}
                       alt="immagine inviata"
@@ -431,6 +430,34 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
           </div>
+
+          {/* ----------- ANTEPRIMA MEDIA ----------- */}
+          {selectedMedia && (
+            <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
+              {selectedMedia.type === 'image' ? (
+                <img
+                  src={URL.createObjectURL(selectedMedia.file)}
+                  alt="preview"
+                  className="h-16 w-16 object-cover rounded"
+                />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Paperclip size={20} className="text-gray-600" />
+                  <span className="text-sm">{selectedMedia.file.name}</span>
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedMedia(null)}
+                className="text-red-500 hover:bg-red-50"
+                title="Rimuovi"
+              >
+                ✕
+              </Button>
+            </div>
+          )}
+          {/* ----------- / ANTEPRIMA MEDIA ----------- */}
 
           {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
