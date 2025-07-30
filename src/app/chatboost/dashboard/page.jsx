@@ -207,7 +207,7 @@ export default function ChatPage() {
     if (!selectedPhone || !userData || !file) return;
     setSendingMedia(true);
     try {
-      // 1. Upload su Firebase Storage
+      // Upload su Firebase Storage
       const storageRef = ref(
         storage,
         `media/${user.uid}/${selectedPhone}/${Date.now()}_${file.name}`
@@ -215,7 +215,7 @@ export default function ChatPage() {
       await uploadBytes(storageRef, file);
       const fileUrl = await getDownloadURL(storageRef);
 
-      // 2. Invio a WhatsApp Cloud API
+      // Invio a WhatsApp Cloud API
       let payload, tipo, msgExtra = {};
       if (file.type.startsWith("image/")) {
         tipo = "image";
