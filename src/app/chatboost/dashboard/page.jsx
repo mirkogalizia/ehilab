@@ -33,7 +33,7 @@ export default function ChatPage() {
   const [canSendMessage, setCanSendMessage] = useState(true);
   const messagesEndRef = useRef(null);
 
-  // Funzione utility definita PRIMA di ogni utilizzo!
+  // --- Utility ---
   const parseTime = val => {
     if (!val) return 0;
     if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -52,7 +52,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Recupera nomi contatti (sempre all'avvio)
+  // Recupera nomi contatti
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -91,7 +91,7 @@ export default function ChatPage() {
       .map(([phone, msgs]) => {
         msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
         const lastMsg = msgs[msgs.length - 1] || {};
-        const unread = msgs.filter(m => m.from === phone && !m.read).length;
+        const unread = msgs.filter(m => m.from === phone && m.read === false).length;
         return {
           phone,
           name: contactNames[phone] || phone,
@@ -103,7 +103,7 @@ export default function ChatPage() {
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames, parseTime]);
 
-  // Verifica finestra 24h (quando cambia la chat selezionata o i messaggi)
+  // Verifica finestra 24h
   useEffect(() => {
     if (!user?.uid || !selectedPhone) return setCanSendMessage(true);
     const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
@@ -117,15 +117,13 @@ export default function ChatPage() {
     setCanSendMessage(now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone, parseTime]);
 
-  // Quando selezioni una chat, marca come letti tutti i messaggi ricevuti non letti!
+  // Marcare come letti tutti i messaggi ricevuti non letti!
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
-    // Trova i messaggi non letti da questo numero
     const unreadMsgIds = allMessages
       .filter(m => m.from === selectedPhone && m.read === false)
       .map(m => m.id);
     if (unreadMsgIds.length > 0) {
-      // Aggiorna in batch
       const batch = writeBatch(db);
       unreadMsgIds.forEach(id => {
         const ref = doc(collection(db, 'messages'), id);
