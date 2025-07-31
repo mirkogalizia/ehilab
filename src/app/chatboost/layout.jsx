@@ -3,7 +3,7 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
-import { MessageSquare, FileText, Settings, LogOut, Users } from 'lucide-react';
+import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 
@@ -12,14 +12,12 @@ export default function ChatBoostLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Redirect se non autenticato
   useEffect(() => {
     if (!loading && !user) {
       router.push('/wa/login');
     }
   }, [loading, user, router]);
 
-  // Handler logout
   const handleLogout = async () => {
     try {
       localStorage.clear();
@@ -32,7 +30,6 @@ export default function ChatBoostLayout({ children }) {
     }
   };
 
-  // Loader
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">
@@ -48,10 +45,16 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Chat',      icon: MessageSquare, path: '/chatboost/dashboard' },
     { label: 'Template',  icon: FileText,      path: '/chatboost/templates' },
     { label: 'Contatti',  icon: Users,         path: '/chatboost/contacts' },
-    { label: 'Impostaz.', icon: Settings,      path: '/chatboost/impostazioni/info' },
+    { label: 'Impostaz.', icon: Settings,      path: '/chatboost/impostazioni' },
   ];
 
-  // Nasconde bottom-nav mobile in chat full-screen
+  // Sottomenu impostazioni (solo se su /chatboost/impostazioni)
+  const isSettingsActive = pathname.startsWith('/chatboost/impostazioni');
+  const settingsSubnav = [
+    { label: 'Info', path: '/chatboost/impostazioni/info', icon: Info },
+    { label: 'Integrazioni', path: '/chatboost/impostazioni/integrations', icon: Plug },
+  ];
+
   const hideBottomNav = pathname.startsWith('/chatboost/dashboard/chat/');
 
   return (
@@ -68,16 +71,36 @@ export default function ChatBoostLayout({ children }) {
           {navItems.map(({ label, icon: Icon, path }) => {
             const active = pathname.startsWith(path);
             return (
-              <button
-                key={path}
-                onClick={() => router.push(path)}
-                className={`flex flex-col items-center text-sm font-medium transition-all ${
-                  active ? 'text-black' : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                <Icon size={22} className={active ? 'scale-110' : ''} />
-                <span className="text-[11px] mt-1">{label}</span>
-              </button>
+              <div key={path} className="w-full flex flex-col items-center">
+                <button
+                  onClick={() => router.push(path === '/chatboost/impostazioni' ? '/chatboost/impostazioni/info' : path)}
+                  className={`flex flex-col items-center text-sm font-medium transition-all w-full ${
+                    active ? 'text-black' : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  <Icon size={22} className={active ? 'scale-110' : ''} />
+                  <span className="text-[11px] mt-1">{label}</span>
+                </button>
+                {/* SUBMENU SOLO SE ATTIVO SU IMPOSTAZIONI */}
+                {label === 'Impostaz.' && isSettingsActive && (
+                  <div className="flex flex-col items-start w-full pl-4 mt-3 gap-2">
+                    {settingsSubnav.map(({ label, path, icon: SubIcon }) => (
+                      <button
+                        key={path}
+                        onClick={() => router.push(path)}
+                        className={`flex items-center gap-2 text-xs py-1 px-2 rounded-md transition-all w-full text-left ${
+                          pathname === path
+                            ? 'bg-gray-900 text-white font-semibold'
+                            : 'hover:bg-gray-200 text-gray-500'
+                        }`}
+                      >
+                        <SubIcon size={14} />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>
@@ -103,7 +126,7 @@ export default function ChatBoostLayout({ children }) {
             return (
               <button
                 key={path}
-                onClick={() => router.push(path)}
+                onClick={() => router.push(path === '/chatboost/impostazioni' ? '/chatboost/impostazioni/info' : path)}
                 className={`flex flex-col items-center text-xs transition-all ${
                   active ? 'text-black' : 'text-gray-500 hover:text-gray-800'
                 }`}
@@ -125,5 +148,4 @@ export default function ChatBoostLayout({ children }) {
     </div>
   );
 }
-
 
