@@ -29,8 +29,8 @@ export default function ChatPage() {
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
   const [chatMenu, setChatMenu] = useState({ visible: false, x: 0, y: 0, phone: null });
 
-  // Long press persistente
-  const longPressTimeout = useRef();
+  // For mobile long press
+  let longPressTimeout = useRef();
 
   const parseTime = val => {
     if (!val) return 0;
@@ -179,10 +179,11 @@ export default function ChatPage() {
   // --- CANCELLAZIONE MESSAGGIO SINGOLO
   const handleMessageContextMenu = (e, id) => {
     e.preventDefault();
+    e.stopPropagation();
     setContextMenu({
       visible: true,
-      x: e.clientX,
-      y: e.clientY,
+      x: e.clientX ?? window.innerWidth/2,
+      y: e.clientY ?? window.innerHeight/2,
       messageId: id
     });
   };
@@ -196,10 +197,11 @@ export default function ChatPage() {
   // --- CANCELLAZIONE INTERA CHAT
   const handleChatContextMenu = (e, phone) => {
     e.preventDefault();
+    e.stopPropagation();
     setChatMenu({
       visible: true,
-      x: e.clientX,
-      y: e.clientY,
+      x: e.clientX ?? window.innerWidth/2,
+      y: e.clientY ?? window.innerHeight/2,
       phone
     });
   };
@@ -216,19 +218,28 @@ export default function ChatPage() {
     }
   };
 
-  // --- Chiudi menù contestuale su click fuori
+  // --- Chiudi menù contestuale su click fuori, ESC, scroll
   useEffect(() => {
-    const close = () => {
+    function close(e) {
+      // Permette click all'interno dei menu
+      const menu = document.getElementById("menu-contestuale-msg");
+      if (menu && menu.contains(e?.target)) return;
+      const chatMenuEl = document.getElementById("menu-contestuale-chat");
+      if (chatMenuEl && chatMenuEl.contains(e?.target)) return;
       setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
       setChatMenu({ visible: false, x: 0, y: 0, phone: null });
-    };
-    window.addEventListener('click', close);
-    window.addEventListener('contextmenu', close);
+    }
+    if (contextMenu.visible || chatMenu.visible) {
+      window.addEventListener('mousedown', close);
+      window.addEventListener('scroll', close);
+      window.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(e); });
+    }
     return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('contextmenu', close);
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('scroll', close);
+      window.removeEventListener('keydown', (e) => { if (e.key === 'Escape') close(e); });
     };
-  }, []);
+  }, [contextMenu.visible, chatMenu.visible]);
 
   // --- Long press per mobile (messaggio)
   const handleTouchStart = (id) => {
@@ -613,6 +624,7 @@ export default function ChatPage() {
           {/* --- MENÙ CONTESTUALE SINGOLO MESSAGGIO --- */}
           {contextMenu.visible && (
             <div
+              id="menu-contestuale-msg"
               style={{
                 position: 'fixed',
                 top: contextMenu.y,
@@ -638,6 +650,7 @@ export default function ChatPage() {
           {/* --- MENÙ CONTESTUALE CHAT --- */}
           {chatMenu.visible && (
             <div
+              id="menu-contestuale-chat"
               style={{
                 position: 'fixed',
                 top: chatMenu.y,
@@ -665,5 +678,3 @@ export default function ChatPage() {
     </div>
   );
 }
-
-
