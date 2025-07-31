@@ -13,7 +13,7 @@ export default function ChatBoostLayout({ children }) {
   const pathname = usePathname();
 
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [showDrawer, setShowDrawer] = useState(false); // Hamburger menu mobile
+  const [showDrawer, setShowDrawer] = useState(false);
   const subnavRef = useRef(null);
 
   useEffect(() => {
@@ -22,7 +22,6 @@ export default function ChatBoostLayout({ children }) {
     }
   }, [loading, user, router]);
 
-  // Chiudi il sub-menu se clicchi fuori (desktop impostazioni)
   useEffect(() => {
     function handleClickOutside(e) {
       if (subnavRef.current && !subnavRef.current.contains(e.target)) {
@@ -63,13 +62,10 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Integrazioni', path: '/chatboost/impostazioni/integrations', icon: Plug },
   ];
 
-  const isSettingsActive = pathname.startsWith('/chatboost/impostazioni');
-  const hideBottomNav = pathname.startsWith('/chatboost/dashboard/chat/');
-
-  // Drawer nav per mobile
+  // ----- DRAWER (mobile menu) -----
   function MobileDrawer() {
     return (
-      <div className="fixed inset-0 z-[999] flex">
+      <div className="fixed inset-0 z-[999] flex md:hidden">
         <div
           className="bg-white w-72 max-w-full h-full p-6 flex flex-col shadow-2xl"
           style={{ animation: 'slideDrawer 0.32s cubic-bezier(.6,0,.3,1)' }}
@@ -124,9 +120,7 @@ export default function ChatBoostLayout({ children }) {
       </div>
     );
   }
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return (
     <div className="h-screen w-screen flex flex-col md:flex-row font-[Montserrat] bg-gray-50 overflow-hidden relative">
@@ -158,7 +152,7 @@ export default function ChatBoostLayout({ children }) {
                 >
                   <Icon size={22} className={active ? 'scale-110' : ''} />
                   <span className="text-[11px] mt-1">{label}</span>
-                  {label === 'Impostaz.' && isSettingsActive && (
+                  {label === 'Impostaz.' && pathname.startsWith('/chatboost/impostazioni') && (
                     <span className="absolute right-0 top-1 w-2 h-2 bg-blue-600 rounded-full shadow"></span>
                   )}
                 </button>
@@ -234,34 +228,6 @@ export default function ChatBoostLayout({ children }) {
       <main className="flex-1 overflow-y-auto pt-14 md:pt-0 bg-[#f7f7f7] z-10">
         {children}
       </main>
-
-      {/* Bottom Nav mobile */}
-      {!hideBottomNav && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around items-center py-3 shadow-lg md:hidden z-50">
-          {navItems.map(({ label, icon: Icon, path }) => {
-            const active = pathname.startsWith(path);
-            return (
-              <button
-                key={path}
-                onClick={() => router.push(path === '/chatboost/impostazioni' ? '/chatboost/impostazioni/info' : path)}
-                className={`flex flex-col items-center text-xs transition-all ${
-                  active ? 'text-emerald-700 font-bold' : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                <Icon size={22} className={active ? 'scale-110' : ''} />
-                <span className="text-[10px] mt-1">{label}</span>
-              </button>
-            );
-          })}
-          <button
-            onClick={handleLogout}
-            className="flex flex-col items-center text-xs text-gray-500 hover:text-red-500"
-          >
-            <LogOut size={22} />
-            <span className="text-[10px] mt-1">Logout</span>
-          </button>
-        </nav>
-      )}
     </div>
   );
 }
