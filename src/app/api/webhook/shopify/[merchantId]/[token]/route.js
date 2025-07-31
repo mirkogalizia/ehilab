@@ -1,46 +1,67 @@
-// /app/api/webhook/shopify/[merchantId]/[token]/route.js
-
 import { NextResponse } from 'next/server';
 import { db } from '@/firebase';
 import { collection, addDoc, getDoc, doc as fireDoc } from 'firebase/firestore';
+
+// Funzione per normalizzare il numero per WhatsApp (solo Italia, estendibile)
+function normalizePhone(phone) {
+  if (!phone) return "";
+  // Rimuove spazi, trattini, punti, parentesi
+  let norm = phone.replace(/[\s\-\.\(\)]/g, "");
+  // 0039 -> +39
+  if (norm.startsWith("0039")) norm = "+39" + norm.slice(4);
+  // 39 senza + all'inizio e lunghezza 11 (es: 39123456789) -> +39
+  if (norm.startsWith("39") && norm.length === 11) norm = "+39" + norm.slice(2);
+  // Solo cifre (es: 3471234567) -> +39
+  if (!norm.startsWith("+") && norm.length === 10) norm = "+39" + norm;
+  // (Facoltativo) accetta solo numeri con almeno 10 cifre
+  if (!/^\+39\d{9,10}$/.test(norm)) return ""; // ritorna vuoto se non valido
+  return norm;
+}
 
 export async function POST(req, { params }) {
   try {
     const { merchantId, token } = params;
     const payload = await req.json();
 
-    // (Facoltativo ma consigliato) Valida che il token sia corretto per il merchant
+    // Valida il token su Firestore
     const ref = fireDoc(db, "shopify_merchants", merchantId);
     const snap = await getDoc(ref);
     if (!snap.exists() || snap.data().token !== token) {
       return NextResponse.json({ success: false, error: "Token non valido" }, { status: 403 });
     }
 
-    // Estrai dati del cliente/ordine dal payload Shopify
     const customer = payload.customer || {};
     const shipping = payload.shipping_address || {};
+
+    // Estrazione e normalizzazione
+    const phoneRaw = customer.phone || shipping.phone || "";
+    const phone = normalizePhone(phoneRaw);
 
     const contact = {
       merchantId,
       token,
-      shop: payload.shop || "",
-      orderId: payload.id || "",
+      source: 'shopify',
+      tags: ['shopify'],
       firstName: customer.first_name || shipping.name || "",
       lastName: customer.last_name || "",
-      phone: customer.phone || shipping.phone || "",
+      phone,            // numero pulito per WhatsApp (già con +39)
+      phone_raw: phoneRaw, // come arriva da Shopify
       email: customer.email || payload.email || "",
       createdAt: new Date(),
-      source: 'shopify',
-      raw: payload // salva tutto il payload per eventuali future elaborazioni
+      shop: payload.shop || "",
+      orderId: payload.id || "",
+      raw: payload
     };
 
-    // Salva il contatto in Firestore
-    await addDoc(collection(db, "contacts"), contact);
+    // Salva solo se il numero è valido e non vuoto
+    if (phone) {
+      await addDoc(collection(db, "contacts"), contact);
+    }
 
-    // Rispondi a Shopify per confermare ricezione
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Errore webhook Shopify:", error);
     return NextResponse.json({ success: false, error: error.toString() }, { status: 500 });
   }
 }
+
