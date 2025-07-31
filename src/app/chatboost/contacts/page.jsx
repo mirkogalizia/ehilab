@@ -31,16 +31,17 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
-// Numero PULITO SENZA +
 function cleanPhone(phoneRaw) {
   if (!phoneRaw) return '';
-  let phone = phoneRaw.replace(/[^\d]/g, '');
-  // Se Italia e inizia con 39 (già internazionale) => ok
+  let phone = phoneRaw.trim()
+    .replace(/^[+]+/, '') // togli tutti i "+" all'inizio
+    .replace(/^00/, '')  // togli 00 iniziale
+    .replace(/[\s\-().]/g, ''); // togli spazi e simboli
+  // Se inizia con "39" ed è almeno 11 cifre (cell IT), ok
   if (phone.startsWith('39') && phone.length >= 11) return phone;
-  // Se inizia con 00 => togli 00
-  if (phone.startsWith('00')) phone = phone.slice(2);
-  // Se inizia con 3 (cell ITA) => aggiungi 39
-  if (phone.startsWith('3') && phone.length === 10) phone = '39' + phone;
+  // Se inizia con 3 e sono 10 cifre, aggiungi 39
+  if (phone.startsWith('3') && phone.length === 10) return '39' + phone;
+  // Se arriva già corretto senza + (internazionale), ok
   return phone;
 }
 
@@ -106,7 +107,7 @@ export default function ContactsPage() {
       } else if (currentCat) {
         filtered = arr.filter(c => c.categories?.includes(currentCat));
       }
-      // Filtro per tag
+      // Applica filtro tag
       if (tagFilter) {
         filtered = filtered.filter(c => (c.tags || []).includes(tagFilter));
       }
@@ -140,7 +141,6 @@ export default function ContactsPage() {
     setNewCat('');
   };
 
-  // IMPORT EXCEL/CSV
   const importFile = async f => {
     const data = await f.arrayBuffer();
     const wb = XLSX.read(data, { type: 'array' });
@@ -161,7 +161,6 @@ export default function ContactsPage() {
     await batch.commit();
   };
 
-  // AGGIUNTA MANUALE
   const addNewContact = async () => {
     const phoneClean = cleanPhone(newContactPhone.trim());
     const name = newContactName.trim();
@@ -233,7 +232,7 @@ export default function ContactsPage() {
     if (!user || !phone || !templateName || !userData) return false;
     const payload = {
       messaging_product: "whatsapp",
-      to: phone,
+      to: "+" + phone,
       type: "template",
       template: { name: templateName, language: { code: "it" } }
     };
@@ -276,7 +275,7 @@ export default function ContactsPage() {
       let reportArr = [];
       for (let i = 0; i < contactsToSend.length; i++) {
         const c = contactsToSend[i];
-        setSendLog(prev => prev + `Invio a ${c.name} (${c.id})... `);
+        setSendLog(prev => prev + `Invio a ${c.name} (+${c.id})... `);
         let res = await sendTemplateToContact(c.id, templateToSend.name);
         if (res === true) {
           setSendLog(prev => prev + '✔️\n');
@@ -580,7 +579,7 @@ export default function ContactsPage() {
                 <ul>
                   {report.map(r =>
                     <li key={r.id}>
-                      {r.name} ({r.id}): <span className={r.status === 'OK' ? 'text-green-700' : 'text-red-600'}>
+                      {r.name} (+{r.id}): <span className={r.status === 'OK' ? 'text-green-700' : 'text-red-600'}>
                         {r.status}{r.error && ` (${r.error})`}
                       </span>
                     </li>
@@ -643,4 +642,3 @@ export default function ContactsPage() {
     </div>
   );
 }
-
