@@ -36,6 +36,9 @@ export default function InfoPage() {
     fetchUserData();
   }, [user]);
 
+  // Recupero dinamico del numero WhatsApp (compatibile entrambi i nomi campo)
+  const whatsappNum = userData?.whatsappNumber || userData?.numeroWhatsapp || "";
+
   // Aggiorna stato WhatsApp
   const renderWhatsAppStatus = () => {
     if (loading) {
@@ -45,11 +48,11 @@ export default function InfoPage() {
         </span>
       );
     }
-    if (userData?.waba_id && userData?.phone_number_id && userData?.numeroWhatsapp) {
+    if (userData?.waba_id && userData?.phone_number_id && whatsappNum) {
       return (
         <span className="flex items-center gap-2 text-green-600 text-sm font-medium">
           <CheckCircle className="w-4 h-4" />
-          Connesso - {userData.numeroWhatsapp}
+          Connesso - {whatsappNum}
           <span className="ml-2 inline-block bg-green-100 text-green-700 px-2 py-0.5 rounded-lg text-xs">Attivo</span>
         </span>
       );
@@ -74,7 +77,7 @@ export default function InfoPage() {
           {renderWhatsAppStatus()}
         </div>
         {/* Bottone signup solo se non connesso */}
-        {(!userData?.waba_id || !userData?.phone_number_id || !userData?.numeroWhatsapp) && (
+        {(!userData?.waba_id || !userData?.phone_number_id || !whatsappNum) && (
           <Button
             className="mt-2 w-fit font-bold"
             onClick={() => setShowSignup(true)}
@@ -113,15 +116,15 @@ export default function InfoPage() {
 
       {/* DATI UTENTE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 bg-white p-6 rounded-2xl shadow">
-        <div><strong>Nome:</strong> {userData?.nome}</div>
-        <div><strong>Cognome:</strong> {userData?.cognome}</div>
+        <div><strong>Nome:</strong> {userData?.firstName || userData?.nome}</div>
+        <div><strong>Cognome:</strong> {userData?.lastName || userData?.cognome}</div>
         <div><strong>Email:</strong> {userData?.email}</div>
-        <div><strong>Telefono:</strong> {userData?.telefono}</div>
-        <div><strong>Numero WhatsApp:</strong> {userData?.numeroWhatsapp}</div>
-        <div><strong>CF:</strong> {userData?.cf}</div>
-        <div><strong>Partita IVA:</strong> {userData?.piva}</div>
-        <div><strong>Azienda:</strong> {userData?.azienda}</div>
-        <div><strong>Indirizzo:</strong> {userData?.indirizzo}</div>
+        <div><strong>Telefono:</strong> {userData?.personalPhone || userData?.telefono}</div>
+        <div><strong>Numero WhatsApp:</strong> {whatsappNum}</div>
+        <div><strong>CF:</strong> {userData?.taxCode || userData?.cf}</div>
+        <div><strong>Partita IVA:</strong> {userData?.vat || userData?.piva}</div>
+        <div><strong>Azienda:</strong> {userData?.company || userData?.azienda}</div>
+        <div><strong>Indirizzo:</strong> {userData?.address || userData?.indirizzo}</div>
         <div><strong>CAP:</strong> {userData?.cap}</div>
         <div><strong>Città:</strong> {userData?.citta}</div>
         <div><strong>Provincia:</strong> {userData?.provincia}</div>
@@ -132,4 +135,5 @@ export default function InfoPage() {
     </div>
   );
 }
+
 
