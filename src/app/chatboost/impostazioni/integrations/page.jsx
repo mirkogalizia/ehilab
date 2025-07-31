@@ -5,7 +5,7 @@ import { db } from "@/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useAuth } from "@/lib/useAuth";
 import { Button } from "@/components/ui/button";
-import { Copy, Loader2 } from "lucide-react";
+import { Copy, Loader2, Check } from "lucide-react";
 
 function generateToken() {
   if (typeof window !== "undefined" && window.crypto?.randomUUID) {
@@ -78,82 +78,99 @@ export default function ShopifyIntegrationPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-6 mt-10 bg-white shadow-2xl rounded-2xl font-[Montserrat]">
-      <div className="flex items-center gap-3 mb-6">
-        <img src="/shopify.svg" alt="Shopify" className="w-8 h-8" />
-        <h1 className="text-2xl font-bold text-green-700">Collega Shopify</h1>
-      </div>
-
-      <div className="mb-5 text-gray-800 text-base leading-snug">
-        Collega il tuo store Shopify e automatizza le notifiche WhatsApp per ordini, spedizioni e altro direttamente su Chat Boost.
-      </div>
-
-      <div className="mb-8">
-        <label className="block font-semibold mb-1 text-gray-700">
-          Il tuo link webhook personale:
-        </label>
-        {loading ? (
+    <div className="min-h-screen w-full bg-gradient-to-tr from-green-50 via-white to-blue-50 py-10 px-2 font-[Montserrat]">
+      {/* Hero / Header */}
+      <div className="max-w-2xl mx-auto mb-6 relative">
+        <div className="flex flex-col items-center gap-3">
           <div className="flex items-center gap-2">
-            <Loader2 className="animate-spin text-gray-500" />
-            <span className="text-gray-500">Generazione link...</span>
-          </div>
-        ) : (
-          <div className="flex gap-2 items-center">
-            <input
-              className="w-full border border-gray-200 bg-gray-100 rounded-lg px-3 py-2 text-sm font-mono outline-none select-all"
-              value={webhookUrl}
-              readOnly
-              spellCheck={false}
-            />
-            <Button size="icon" variant="outline" onClick={handleCopy}>
-              <Copy className="w-5 h-5" />
-            </Button>
-            {copied && <span className="text-green-600 text-sm ml-1">Copiato!</span>}
-          </div>
-        )}
-        {error && <div className="text-red-600 mt-2">{error}</div>}
-      </div>
-
-      {/* Istruzioni Shopify */}
-      <div className="bg-gray-50 rounded-xl p-5 mb-4 border border-gray-200 shadow-sm">
-        <h2 className="font-semibold mb-2 text-base text-green-800">Istruzioni Shopify:</h2>
-        <ol className="list-decimal pl-5 text-[15px] space-y-1 text-gray-700">
-          <li>
-            Vai in <span className="font-semibold">Impostazioni &rarr; Notifiche &rarr; Webhook</span> nel pannello Shopify.
-          </li>
-          <li>
-            Clicca su <span className="font-semibold">Crea webhook</span>.
-          </li>
-          <li>
-            Incolla il link qui sopra come <span className="font-semibold">URL di consegna</span>.
-          </li>
-          <li>
-            Seleziona l’<span className="font-semibold">evento</span> che vuoi monitorare (puoi ripetere per ognuno):<br />
-            <span className="ml-2 block mt-1">
-              • <span className="font-mono">Ordine creato</span> (<span className="italic">orders/create</span>)<br />
-              • <span className="font-mono">Ordine aggiornato</span> (<span className="italic">orders/updated</span>)<br />
-              • <span className="font-mono">Ordine annullato</span> (<span className="italic">orders/cancelled</span>)<br />
-              • <span className="font-mono">Pagamento ricevuto</span> (<span className="italic">orders/paid</span>)<br />
-              • <span className="font-mono">Ordine evaso</span> (<span className="italic">fulfillments/create</span>)<br />
-              • <span className="font-mono">Carrello abbandonato</span> (<span className="italic">carts/update</span>)
+            <span className="inline-flex items-center rounded-xl bg-green-100 px-3 py-1 text-green-700 font-semibold tracking-wide shadow">
+              <img src="/shopify.svg" alt="Shopify" className="w-7 h-7 mr-2" />
+              Integrazione Shopify
             </span>
-          </li>
-          <li>
-            Scegli formato: <span className="font-semibold">JSON</span>
-          </li>
-          <li>
-            Versione API consigliata: <span className="font-semibold">2024-07 (ultima disponibile)</span>
-          </li>
-          <li>
-            Clicca <span className="font-semibold">Salva webhook</span>.
-          </li>
-        </ol>
+          </div>
+          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-gray-900 mt-2 mb-2 text-center drop-shadow-lg">
+            Collega il tuo Store in <span className="text-green-600">1 click</span>
+          </h1>
+          <p className="text-gray-600 max-w-xl text-center text-lg mb-3">
+            Automatizza notifiche WhatsApp su ordini, spedizioni e pagamenti in tempo reale su Chat Boost.<br />
+            Ricevi aggiornamenti istantanei e migliora l'esperienza dei tuoi clienti.
+          </p>
+        </div>
       </div>
 
-      <div className="text-xs text-gray-400 mt-2 leading-tight">
-        Puoi riutilizzare questo link per più eventi webhook su Shopify.
-        <br />
-        <span className="text-rose-500 font-bold">Non condividere questo link pubblicamente!</span>
+      {/* Card */}
+      <div className="max-w-2xl mx-auto shadow-2xl rounded-3xl bg-white/80 border border-gray-200 p-7 pb-5 flex flex-col gap-7">
+        {/* Webhook */}
+        <div>
+          <label className="block font-bold text-gray-700 mb-1 text-base">
+            Il tuo <span className="text-green-700">webhook personale</span>:
+          </label>
+          {loading ? (
+            <div className="flex items-center gap-2 text-gray-500">
+              <Loader2 className="animate-spin" /> Generazione link...
+            </div>
+          ) : (
+            <div className="flex gap-2 items-center">
+              <input
+                className="w-full border border-gray-300 bg-gray-100 rounded-lg px-3 py-2 text-sm font-mono tracking-wide outline-none select-all shadow"
+                value={webhookUrl}
+                readOnly
+                spellCheck={false}
+              />
+              <Button size="icon" variant={copied ? "success" : "outline"} onClick={handleCopy}>
+                {copied ? <Check className="w-5 h-5 text-green-700" /> : <Copy className="w-5 h-5" />}
+              </Button>
+              {copied && <span className="text-green-600 text-sm ml-1 font-bold">Copiato!</span>}
+            </div>
+          )}
+          {error && <div className="text-red-600 mt-2">{error}</div>}
+        </div>
+
+        {/* Steps */}
+        <div className="bg-gradient-to-tr from-green-50 via-white to-blue-50 border border-green-200 rounded-xl shadow-inner px-5 py-5">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="bg-green-600/90 text-white font-bold text-xs px-2 py-1 rounded">Onboarding Shopify</span>
+            <span className="text-gray-400 text-xs ml-auto">1 min ⏱️</span>
+          </div>
+          <ol className="list-decimal pl-5 text-[15px] space-y-2 text-gray-800 font-medium">
+            <li>
+              Vai in <span className="font-semibold">Impostazioni &rarr; Notifiche &rarr; Webhook</span> nel pannello Shopify.
+            </li>
+            <li>
+              Clicca su <span className="font-semibold">Crea webhook</span>.
+            </li>
+            <li>
+              Incolla il link qui sopra come <span className="font-semibold text-blue-700">URL di consegna</span>.
+            </li>
+            <li>
+              Scegli l’<span className="font-semibold">evento</span> da collegare (puoi ripetere per tutti):<br />
+              <div className="bg-white/60 border border-gray-100 rounded-xl px-4 py-2 mt-2">
+                <ul className="space-y-1 font-normal">
+                  <li>🟢 <span className="font-mono">Ordine creato</span> <span className="text-gray-400 text-xs">(orders/create)</span></li>
+                  <li>🟢 <span className="font-mono">Ordine aggiornato</span> <span className="text-gray-400 text-xs">(orders/updated)</span></li>
+                  <li>🟢 <span className="font-mono">Ordine annullato</span> <span className="text-gray-400 text-xs">(orders/cancelled)</span></li>
+                  <li>🟢 <span className="font-mono">Pagamento ricevuto</span> <span className="text-gray-400 text-xs">(orders/paid)</span></li>
+                  <li>🟢 <span className="font-mono">Ordine evaso</span> <span className="text-gray-400 text-xs">(fulfillments/create)</span></li>
+                  <li>🟢 <span className="font-mono">Carrello abbandonato</span> <span className="text-gray-400 text-xs">(carts/update)</span></li>
+                </ul>
+              </div>
+            </li>
+            <li>
+              Formato dati: <span className="font-semibold">JSON</span>
+            </li>
+            <li>
+              Versione API: <span className="font-semibold">2024-07 (ultima disponibile)</span>
+            </li>
+            <li>
+              Clicca <span className="font-semibold">Salva webhook</span>.
+            </li>
+          </ol>
+        </div>
+        <div className="text-xs text-gray-500 mt-1 leading-tight px-1">
+          Puoi riutilizzare questo link per più eventi webhook su Shopify.
+          <br />
+          <span className="text-rose-600 font-bold">Non condividere questo link pubblicamente!</span>
+        </div>
       </div>
     </div>
   );
