@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
-import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info } from 'lucide-react';
+import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 
@@ -13,6 +13,7 @@ export default function ChatBoostLayout({ children }) {
   const pathname = usePathname();
 
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const [showDrawer, setShowDrawer] = useState(false); // Hamburger menu mobile
   const subnavRef = useRef(null);
 
   useEffect(() => {
@@ -21,7 +22,7 @@ export default function ChatBoostLayout({ children }) {
     }
   }, [loading, user, router]);
 
-  // Chiudi il sub-menu se clicchi fuori
+  // Chiudi il sub-menu se clicchi fuori (desktop impostazioni)
   useEffect(() => {
     function handleClickOutside(e) {
       if (subnavRef.current && !subnavRef.current.contains(e.target)) {
@@ -35,7 +36,6 @@ export default function ChatBoostLayout({ children }) {
   }, [showSettingsMenu]);
 
   useEffect(() => {
-    // Mostra sub-menu automaticamente se si entra in impostazioni
     setShowSettingsMenu(pathname.startsWith('/chatboost/impostazioni'));
   }, [pathname]);
 
@@ -50,17 +50,6 @@ export default function ChatBoostLayout({ children }) {
       router.push('/wa/login');
     }
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">
-        ⏳ Verifica login...
-      </div>
-    );
-  }
-  if (!user) {
-    return null;
-  }
 
   const navItems = [
     { label: 'Chat',      icon: MessageSquare, path: '/chatboost/dashboard' },
@@ -77,8 +66,70 @@ export default function ChatBoostLayout({ children }) {
   const isSettingsActive = pathname.startsWith('/chatboost/impostazioni');
   const hideBottomNav = pathname.startsWith('/chatboost/dashboard/chat/');
 
+  // Drawer nav per mobile
+  function MobileDrawer() {
+    return (
+      <div className="fixed inset-0 z-[999] flex">
+        <div
+          className="bg-white w-72 max-w-full h-full p-6 flex flex-col shadow-2xl"
+          style={{ animation: 'slideDrawer 0.32s cubic-bezier(.6,0,.3,1)' }}
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="mb-8 flex items-center gap-2">
+            <span className="text-2xl font-black text-gray-900 tracking-tight">EHI!</span>
+            <span className="text-sm font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-lg ml-1">Chat Boost</span>
+          </div>
+          <nav className="flex flex-col gap-3 flex-1">
+            {navItems.map(({ label, icon: Icon, path }) => (
+              <button
+                key={path}
+                onClick={() => {
+                  setShowDrawer(false);
+                  router.push(path === '/chatboost/impostazioni' ? '/chatboost/impostazioni/info' : path);
+                }}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-base font-medium transition-all ${
+                  pathname.startsWith(path)
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'hover:bg-emerald-50 text-gray-800'
+                }`}
+              >
+                <Icon size={21} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          <button
+            onClick={handleLogout}
+            className="mt-8 flex items-center gap-2 text-base text-gray-500 hover:text-red-600 transition"
+          >
+            <LogOut size={20} /> Logout
+          </button>
+        </div>
+        {/* Overlay */}
+        <div className="flex-1 bg-black/30" onClick={() => setShowDrawer(false)} />
+        <style jsx global>{`
+          @keyframes slideDrawer {
+            from { transform: translateX(-100%);}
+            to { transform: translateX(0);}
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen text-gray-600 text-lg font-[Montserrat]">
+        ⏳ Verifica login...
+      </div>
+    );
+  }
+  if (!user) {
+    return null;
+  }
+
   return (
-    <div className="h-screen w-screen flex font-[Montserrat] bg-gray-50 overflow-hidden relative">
+    <div className="h-screen w-screen flex flex-col md:flex-row font-[Montserrat] bg-gray-50 overflow-hidden relative">
       {/* Sidebar desktop */}
       <aside className="hidden md:flex w-24 bg-white border-r flex-col items-center py-8 shadow-md z-20">
         <div
@@ -124,7 +175,7 @@ export default function ChatBoostLayout({ children }) {
         </button>
       </aside>
 
-      {/* Mini-sidebar settings (Apple style) */}
+      {/* Mini-sidebar settings (Apple style) - desktop */}
       {showSettingsMenu && (
         <div
           ref={subnavRef}
@@ -158,7 +209,6 @@ export default function ChatBoostLayout({ children }) {
           </div>
         </div>
       )}
-
       {/* Overlay per chiudere la mini-sidebar cliccando fuori */}
       {showSettingsMenu && (
         <div
@@ -168,8 +218,22 @@ export default function ChatBoostLayout({ children }) {
         />
       )}
 
+      {/* Drawer nav mobile */}
+      {showDrawer && <MobileDrawer />}
+
+      {/* HEADER mobile - fixed */}
+      <header className="md:hidden fixed top-0 left-0 w-full z-30 bg-white shadow-sm flex items-center justify-between px-4 py-3 border-b border-gray-100">
+        <button onClick={() => setShowDrawer(true)}>
+          <Menu size={28} className="text-gray-800" />
+        </button>
+        <span className="text-lg font-extrabold tracking-tight text-emerald-700 select-none">EHI! Chat Boost</span>
+        <span className="w-8" /> {/* Spacer per simmetria */}
+      </header>
+
       {/* Main content */}
-      <main className="flex-1 overflow-hidden bg-[#f7f7f7] z-10">{children}</main>
+      <main className="flex-1 overflow-y-auto pt-14 md:pt-0 bg-[#f7f7f7] z-10">
+        {children}
+      </main>
 
       {/* Bottom Nav mobile */}
       {!hideBottomNav && (
@@ -181,7 +245,7 @@ export default function ChatBoostLayout({ children }) {
                 key={path}
                 onClick={() => router.push(path === '/chatboost/impostazioni' ? '/chatboost/impostazioni/info' : path)}
                 className={`flex flex-col items-center text-xs transition-all ${
-                  active ? 'text-black' : 'text-gray-500 hover:text-gray-800'
+                  active ? 'text-emerald-700 font-bold' : 'text-gray-500 hover:text-gray-800'
                 }`}
               >
                 <Icon size={22} className={active ? 'scale-110' : ''} />
@@ -201,4 +265,3 @@ export default function ChatBoostLayout({ children }) {
     </div>
   );
 }
-
