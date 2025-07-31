@@ -5,13 +5,13 @@ import { db } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useAuth } from "@/lib/useAuth";
 import { Button } from '@/components/ui/button';
-import { Loader2, CheckCircle, XCircle, CreditCard } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, CreditCard, ArrowUpRight } from 'lucide-react';
 
 export default function InfoPage() {
   const { user } = useAuth();
   const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showSignup, setShowSignup] = useState(false);
+  const [showOnboardingHint, setShowOnboardingHint] = useState(false);
 
   // KPI WhatsApp Spend
   const [whatsappSpend, setWhatsappSpend] = useState(null);
@@ -42,7 +42,6 @@ export default function InfoPage() {
 
   // Load WhatsApp spend KPI via Meta API
   useEffect(() => {
-    // Serve sia waba_id che access token
     if (!userData?.waba_id) return;
     const accessToken = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
     if (!accessToken) return;
@@ -62,7 +61,6 @@ export default function InfoPage() {
       .finally(() => setSpendLoading(false));
   }, [userData]);
 
-  // WhatsApp number compatibilità nomi campo
   const whatsappNum = userData?.whatsappNumber || userData?.numeroWhatsapp || "";
 
   // Stato WhatsApp
@@ -78,8 +76,8 @@ export default function InfoPage() {
       return (
         <span className="flex items-center gap-2 text-green-600 text-sm font-medium">
           <CheckCircle className="w-4 h-4" />
-          Connesso - {whatsappNum}
-          <span className="ml-2 inline-block bg-green-100 text-green-700 px-2 py-0.5 rounded-lg text-xs">Attivo</span>
+          Connesso
+          <span className="ml-2 text-gray-700 font-normal">{whatsappNum}</span>
         </span>
       );
     }
@@ -87,53 +85,44 @@ export default function InfoPage() {
       <span className="flex items-center gap-2 text-red-500 text-sm font-medium">
         <XCircle className="w-4 h-4" />
         Non connesso
-        <span className="ml-2 inline-block bg-red-100 text-red-700 px-2 py-0.5 rounded-lg text-xs">Assente</span>
       </span>
     );
   };
 
+  // Onboarding WhatsApp: sempre nuova scheda!
+  const handleOpenOnboarding = () => {
+    window.open(META_SIGNUP_URL, '_blank', 'noopener,noreferrer');
+    setShowOnboardingHint(true);
+    setTimeout(() => setShowOnboardingHint(false), 8000);
+  };
+
   return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl sm:text-3xl font-bold mb-5 text-green-700">📄 Info Utente</h1>
+    <div className="max-w-2xl mx-auto px-2 py-8 sm:py-10">
+      <h1 className="text-2xl sm:text-3xl font-bold mb-5 text-green-700 flex items-center gap-2">
+        <span>📄</span> Info Utente
+      </h1>
 
       {/* Box WhatsApp stato e signup */}
-      <div className="bg-white shadow-lg rounded-2xl p-6 mb-6 flex flex-col gap-4">
-        <div className="flex items-center justify-between">
+      <div className="bg-white shadow-lg rounded-2xl p-6 mb-8 flex flex-col gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-y-2">
           <span className="font-semibold text-lg text-gray-800">WhatsApp</span>
           {renderWhatsAppStatus()}
         </div>
         {(!userData?.waba_id || !userData?.phone_number_id || !whatsappNum) && (
-          <Button
-            className="mt-2 w-fit font-bold"
-            onClick={() => setShowSignup(true)}
-            disabled={!user?.email}
-          >
-            Connetti WhatsApp
-          </Button>
-        )}
-        {showSignup && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-2xl relative">
-              <button
-                className="absolute top-3 right-4 text-gray-400 hover:text-gray-700 text-2xl"
-                onClick={() => setShowSignup(false)}
-                aria-label="Chiudi"
-              >
-                ×
-              </button>
-              <h3 className="text-xl font-bold mb-4">Onboarding WhatsApp</h3>
-              <iframe
-                src={META_SIGNUP_URL}
-                width="100%"
-                height={600}
-                frameBorder={0}
-                className="rounded-xl"
-                title="Embedded WhatsApp Signup"
-              />
-              <div className="mt-2 text-center text-gray-400 text-xs">
-                Completa la registrazione WhatsApp nella finestra qui sopra.
+          <div>
+            <Button
+              className="mt-2 w-fit font-bold flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700"
+              onClick={handleOpenOnboarding}
+              disabled={!user?.email}
+            >
+              <ArrowUpRight size={18} /> Connetti WhatsApp
+            </Button>
+            {showOnboardingHint && (
+              <div className="text-sm mt-3 text-emerald-700 bg-emerald-50 p-2 rounded-lg border border-emerald-200 shadow-sm">
+                <b>Nota:</b> la procedura di collegamento si apre sempre in una nuova scheda per motivi di sicurezza Meta.<br />
+                Una volta completata, torna su questa pagina e aggiorna per vedere lo stato.
               </div>
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -157,31 +146,30 @@ export default function InfoPage() {
         </div>
       </div>
       <div className="mb-8 text-xs text-gray-400 px-2">
-        La spesa è calcolata da Meta/WhatsApp su base mensile e include i costi dei messaggi a pagamento inviati tramite questa piattaforma.  
+        La spesa è calcolata da Meta/WhatsApp su base mensile e include i costi dei messaggi a pagamento inviati tramite questa piattaforma.
         <br />
         <span className="text-emerald-600 font-semibold">Il valore si aggiorna automaticamente dalle API Meta.</span>
       </div>
 
       {/* DATI UTENTE */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 bg-white p-6 rounded-2xl shadow">
-        <div><strong>Nome:</strong> {userData?.firstName || userData?.nome}</div>
-        <div><strong>Cognome:</strong> {userData?.lastName || userData?.cognome}</div>
-        <div><strong>Email:</strong> {userData?.email}</div>
-        <div><strong>Telefono:</strong> {userData?.personalPhone || userData?.telefono}</div>
-        <div><strong>Numero WhatsApp:</strong> {whatsappNum}</div>
-        <div><strong>CF:</strong> {userData?.taxCode || userData?.cf}</div>
-        <div><strong>Partita IVA:</strong> {userData?.vat || userData?.piva}</div>
-        <div><strong>Azienda:</strong> {userData?.company || userData?.azienda}</div>
-        <div><strong>Indirizzo:</strong> {userData?.address || userData?.indirizzo}</div>
-        <div><strong>CAP:</strong> {userData?.cap}</div>
-        <div><strong>Città:</strong> {userData?.citta}</div>
-        <div><strong>Provincia:</strong> {userData?.provincia}</div>
-        <div><strong>Paese:</strong> {userData?.paese}</div>
-        <div><strong>Phone Number ID:</strong> {userData?.phone_number_id}</div>
-        <div><strong>WABA ID:</strong> {userData?.waba_id}</div>
+        <div><strong>Nome:</strong> {userData?.firstName || userData?.nome || "-"}</div>
+        <div><strong>Cognome:</strong> {userData?.lastName || userData?.cognome || "-"}</div>
+        <div><strong>Email:</strong> {userData?.email || "-"}</div>
+        <div><strong>Telefono:</strong> {userData?.personalPhone || userData?.telefono || "-"}</div>
+        <div><strong>Numero WhatsApp:</strong> {whatsappNum || "-"}</div>
+        <div><strong>CF:</strong> {userData?.taxCode || userData?.cf || "-"}</div>
+        <div><strong>Partita IVA:</strong> {userData?.vat || userData?.piva || "-"}</div>
+        <div><strong>Azienda:</strong> {userData?.company || userData?.azienda || "-"}</div>
+        <div><strong>Indirizzo:</strong> {userData?.address || userData?.indirizzo || "-"}</div>
+        <div><strong>CAP:</strong> {userData?.cap || "-"}</div>
+        <div><strong>Città:</strong> {userData?.citta || "-"}</div>
+        <div><strong>Provincia:</strong> {userData?.provincia || "-"}</div>
+        <div><strong>Paese:</strong> {userData?.paese || "-"}</div>
+        <div><strong>Phone Number ID:</strong> {userData?.phone_number_id || "-"}</div>
+        <div><strong>WABA ID:</strong> {userData?.waba_id || "-"}</div>
       </div>
     </div>
   );
 }
-
 
