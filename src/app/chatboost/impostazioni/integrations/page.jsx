@@ -1,72 +1,153 @@
 'use client';
 
-import { useState } from "react";
-import { Button } from '@/components/ui/button';
-import { Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { useEffect, useState } from "react";
+import { db } from "@/firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { useAuth } from "@/lib/useAuth"; // La tua custom hook Firebase Auth
+import { Button } from "@/components/ui/button";
+import { Copy, Loader2 } from "lucide-react";
 
-export default function IntegrationsPage() {
-  const [shop, setShop] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [shopifyStatus, setShopifyStatus] = useState(null);
+function generateToken() {
+  if (typeof window !== "undefined" && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  // Fallback se manca crypto.randomUUID
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
-  const CLIENT_ID = "898b7911f0e76349a4c79352098ef2a2";
-  const REDIRECT_URI = "https://ehi-lab.it/api/shopify/callback";
-  const SCOPES = "read_orders,read_customers";
+export default function ShopifyIntegrationPage() {
+  const { user, loading: authLoading } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  const [token, setToken] = useState("");
 
-  // Verifica se shop è plausibile (opzionale)
-  const isValidShop = shop && /^[a-zA-Z0-9\-]+\.myshopify\.com$/.test(shop);
+  // Sostituisci con il tuo dominio reale!
+  const BASE_URL = "https://ehi-lab.it"; // <-- metti qui il dominio della tua app
 
-  const handleConnect = () => {
-    if (!shop.endsWith('.myshopify.com')) {
-      alert('Devi inserire il dominio completo (es: nome-negozio.myshopify.com)');
-      return;
+  useEffect(() => {
+    if (!user || authLoading) return;
+    async function fetchOrCreateToken() {
+      setLoading(true);
+      try {
+        const ref = doc(db, "shopify_merchants", user.uid);
+        const snap = await getDoc(ref);
+        let newToken = "";
+        if (snap.exists() && snap.data().token) {
+          newToken = snap.data().token;
+        } else {
+          newToken = generateToken();
+          await setDoc(ref, {
+            token: newToken,
+            attivo: true,
+            user_email: user.email || "",
+            createdAt: new Date()
+          });
+        }
+        setToken(newToken);
+        setWebhookUrl(
+          `${BASE_URL}/api/webhook/shopify/${user.uid}/${newToken}`
+        );
+      } catch (err) {
+        setError("Errore durante la generazione del link. Riprova.");
+      } finally {
+        setLoading(false);
+      }
     }
-    const url = `https://${shop}/admin/oauth/authorize?client_id=${CLIENT_ID}&scope=${SCOPES}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
-    window.location.href = url;
+    fetchOrCreateToken();
+  }, [user, authLoading]);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(webhookUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
   };
 
+  if (authLoading) {
+    return (
+      <div className="flex justify-center items-center h-32">
+        <Loader2 className="animate-spin text-gray-500" />
+      </div>
+    );
+  }
+  if (!user) {
+    return (
+      <div className="p-8 max-w-lg mx-auto text-center">
+        <p>Per generare il link devi effettuare il login.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl sm:text-3xl font-bold mb-5 text-blue-700">🛒 Integrazione Shopify</h1>
-      <div className="bg-white shadow-lg rounded-2xl p-6 mb-6 flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <span className="font-semibold text-lg text-gray-800">Shopify</span>
-          {loading ? (
-            <span className="flex items-center gap-2 text-gray-500 text-sm">
-              <Loader2 className="animate-spin" /> Caricamento stato...
-            </span>
-          ) : shopifyStatus ? (
-            <span className="flex items-center gap-2 text-green-600 text-sm font-medium">
-              <CheckCircle className="w-4 h-4" /> Connesso
-            </span>
-          ) : (
-            <span className="flex items-center gap-2 text-red-500 text-sm font-medium">
-              <XCircle className="w-4 h-4" /> Non connesso
-            </span>
-          )}
-        </div>
-        {/* Input shop domain */}
-        {!shopifyStatus && (
-          <div className="mt-4 flex flex-col gap-2">
-            <label className="font-semibold text-sm mb-1">
-              Dominio Shopify <span className="text-gray-400">(es: nome-negozio.myshopify.com)</span>
-            </label>
-            <input
-              type="text"
-              className="border rounded px-3 py-2 text-sm"
-              placeholder="Inserisci dominio negozio..."
-              value={shop}
-              onChange={e => setShop(e.target.value.trim())}
-            />
-            <Button
-              className="mt-2 w-fit font-bold"
-              onClick={handleConnect}
-              disabled={!shop.endsWith('.myshopify.com')}
-            >
-              Connetti Shopify
-            </Button>
-          </div>
+    <div className="max-w-lg mx-auto p-8 rounded-2xl shadow-xl bg-white mt-8">
+      <h1 className="text-2xl font-bold mb-4 flex items-center gap-2">
+        <img src="/shopify.svg" alt="Shopify" className="w-7 h-7" />
+        Integrazione Shopify
+      </h1>
+      <p className="mb-3">
+        Collega il tuo store Shopify per attivare le automazioni WhatsApp su Chat Boost!
+      </p>
+
+      <div className="mb-6">
+        <label className="block font-semibold mb-2">Il tuo link webhook personale:</label>
+        {loading ? (
+          <Loader2 className="animate-spin text-gray-500" />
+        ) : (
+          <>
+            <div className="flex gap-2 items-center">
+              <input
+                className="w-full border rounded-lg px-2 py-2 text-xs"
+                value={webhookUrl}
+                readOnly
+              />
+              <Button size="icon" variant="outline" onClick={handleCopy}>
+                <Copy className="w-5 h-5" />
+              </Button>
+              {copied && <span className="text-green-600 text-sm ml-2">Copiato!</span>}
+            </div>
+          </>
         )}
+        {error && <div className="text-red-600 mt-2">{error}</div>}
+      </div>
+
+      <div className="bg-gray-50 rounded-lg p-4 mb-3 border">
+        <h2 className="font-semibold mb-1 text-base">Istruzioni per Shopify:</h2>
+        <ol className="list-decimal pl-5 text-sm space-y-1">
+          <li>
+            Vai su <strong>Shopify &gt; Impostazioni &gt; Notifiche &gt; Webhook</strong>
+          </li>
+          <li>
+            Clicca su <strong>Crea webhook</strong>
+          </li>
+          <li>
+            Incolla il link qui sopra come <strong>“URL di consegna”</strong>
+          </li>
+          <li>
+            Scegli gli eventi da monitorare:<br />
+            <span className="ml-2">
+              - Ordine creato<br />
+              - Ordine aggiornato<br />
+              - Ordine spedito<br />
+              - Pagamento ordine<br />
+              - Carrello abbandonato<br />
+              - Evasione ordini
+            </span>
+          </li>
+          <li>
+            Formato: <strong>JSON</strong>, Versione API: <strong>2024-07</strong>
+          </li>
+          <li>
+            Salva e ripeti per ogni evento che vuoi monitorare.
+          </li>
+        </ol>
+      </div>
+      <div className="text-xs text-gray-400 mt-2">
+        Puoi riutilizzare questo link per più eventi webhook su Shopify.  
+        <br />
+        <span className="text-rose-500 font-bold">
+          Non condividere questo link pubblicamente!
+        </span>
       </div>
     </div>
   );
