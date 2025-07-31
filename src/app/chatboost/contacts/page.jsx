@@ -31,11 +31,16 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
+// Numero PULITO SENZA +
 function cleanPhone(phoneRaw) {
-  let phone = phoneRaw.replace(/[\s\-().]/g, '');
-  if (phone.startsWith('00')) phone = '+' + phone.slice(2);
-  if (/^3\d{9}$/.test(phone)) phone = '+39' + phone;
-  if (!phone.startsWith('+')) return null;
+  if (!phoneRaw) return '';
+  let phone = phoneRaw.replace(/[^\d]/g, '');
+  // Se Italia e inizia con 39 (già internazionale) => ok
+  if (phone.startsWith('39') && phone.length >= 11) return phone;
+  // Se inizia con 00 => togli 00
+  if (phone.startsWith('00')) phone = phone.slice(2);
+  // Se inizia con 3 (cell ITA) => aggiungi 39
+  if (phone.startsWith('3') && phone.length === 10) phone = '39' + phone;
   return phone;
 }
 
@@ -101,7 +106,7 @@ export default function ContactsPage() {
       } else if (currentCat) {
         filtered = arr.filter(c => c.categories?.includes(currentCat));
       }
-      // Applica filtro tag
+      // Filtro per tag
       if (tagFilter) {
         filtered = filtered.filter(c => (c.tags || []).includes(tagFilter));
       }
@@ -135,6 +140,7 @@ export default function ContactsPage() {
     setNewCat('');
   };
 
+  // IMPORT EXCEL/CSV
   const importFile = async f => {
     const data = await f.arrayBuffer();
     const wb = XLSX.read(data, { type: 'array' });
@@ -155,6 +161,7 @@ export default function ContactsPage() {
     await batch.commit();
   };
 
+  // AGGIUNTA MANUALE
   const addNewContact = async () => {
     const phoneClean = cleanPhone(newContactPhone.trim());
     const name = newContactName.trim();
@@ -498,7 +505,7 @@ export default function ContactsPage() {
                       </td>
                       <td className="p-2">{c.name}</td>
                       <td className="p-2">{c.surname}</td>
-                      <td className="p-2">{c.id}</td>
+                      <td className="p-2">{c.id && `+${c.id}`}</td>
                       <td className="p-2">
                         {(c.tags||[]).map(tag =>
                           <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
