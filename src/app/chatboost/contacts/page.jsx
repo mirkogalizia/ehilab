@@ -31,6 +31,14 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
+function cleanPhone(phoneRaw) {
+  let phone = phoneRaw.replace(/[\s\-().]/g, '');
+  if (phone.startsWith('00')) phone = '+' + phone.slice(2);
+  if (/^3\d{9}$/.test(phone)) phone = '+39' + phone;
+  if (!phone.startsWith('+')) return null;
+  return phone;
+}
+
 export default function ContactsPage() {
   const { user } = useAuth();
 
@@ -42,7 +50,9 @@ export default function ContactsPage() {
 
   const [newCat, setNewCat] = useState('');
   const [newContactName, setNewContactName] = useState('');
+  const [newContactSurname, setNewContactSurname] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
+  const [newContactTags, setNewContactTags] = useState('');
 
   const [templates, setTemplates] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -56,6 +66,8 @@ export default function ContactsPage() {
   const [targetCategories, setTargetCategories] = useState([]);
 
   const [userData, setUserData] = useState(null);
+
+  const [tagFilter, setTagFilter] = useState('');
 
   // Carica dati utente by UID
   useEffect(() => {
@@ -83,17 +95,21 @@ export default function ContactsPage() {
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
     const unsub = onSnapshot(qContacts, snap => {
       const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      let filtered = arr;
       if (showUnassigned) {
-        setContacts(arr.filter(c => !c.categories || c.categories.length === 0));
+        filtered = arr.filter(c => !c.categories || c.categories.length === 0);
       } else if (currentCat) {
-        setContacts(arr.filter(c => c.categories?.includes(currentCat)));
-      } else {
-        setContacts([]);
+        filtered = arr.filter(c => c.categories?.includes(currentCat));
       }
+      // Applica filtro tag
+      if (tagFilter) {
+        filtered = filtered.filter(c => (c.tags || []).includes(tagFilter));
+      }
+      setContacts(filtered);
       setSelected(new Set());
     });
     return () => unsub();
-  }, [user, currentCat, showUnassigned]);
+  }, [user, currentCat, showUnassigned, tagFilter]);
 
   // Carica templates solo per user_uid
   useEffect(() => {
@@ -126,24 +142,37 @@ export default function ContactsPage() {
     const rows = XLSX.utils.sheet_to_json(sheet);
     const batch = writeBatch(db);
     rows.forEach(r => {
-      const phone = r.phone?.toString();
+      const phoneRaw = r.phone?.toString();
       const name = r.name;
+      const surname = r.surname || '';
+      const phone = cleanPhone(phoneRaw);
       if (phone && name) {
+        const tags = [...new Set([...(r.tags ? r.tags.split(',').map(s => s.trim()) : []), 'SHOPIFY'])];
         const ref = doc(db, 'contacts', phone);
-        batch.set(ref, { name, categories: currentCat ? [currentCat] : [], createdBy: user.uid }, { merge: true });
+        batch.set(ref, { name, surname, tags, categories: currentCat ? [currentCat] : [], createdBy: user.uid }, { merge: true });
       }
     });
     await batch.commit();
   };
 
   const addNewContact = async () => {
-    const phone = newContactPhone.trim();
+    const phoneClean = cleanPhone(newContactPhone.trim());
     const name = newContactName.trim();
-    if (!phone || !name || (!currentCat && !showUnassigned)) return alert('Compila nome, telefono e seleziona una categoria.');
-    const ref = doc(db, 'contacts', phone);
-    await setDoc(ref, { name, categories: currentCat ? [currentCat] : [], createdBy: user.uid }, { merge: true });
+    const surname = newContactSurname.trim();
+    const tagsArr = newContactTags.split(',').map(s => s.trim()).filter(Boolean);
+    if (!phoneClean || !name) return alert('Compila nome e telefono validi!');
+    const ref = doc(db, 'contacts', phoneClean);
+    await setDoc(ref, {
+      name,
+      surname,
+      tags: tagsArr,
+      categories: currentCat ? [currentCat] : [],
+      createdBy: user.uid
+    }, { merge: true });
     setNewContactName('');
+    setNewContactSurname('');
     setNewContactPhone('');
+    setNewContactTags('');
   };
 
   const toggleSelect = id => {
@@ -231,12 +260,12 @@ export default function ContactsPage() {
   };
 
   const sendTemplateMassive = async () => {
-    if (!templateToSend || (!currentCat && !showUnassigned)) return alert('Seleziona un template.');
+    if (!templateToSend) return alert('Seleziona un template.');
     setSending(true);
-    setSendLog(`Invio template "${templateToSend.name}" a tutti i contatti della lista selezionata...\n`);
+    setSendLog(`Invio template "${templateToSend.name}" ai contatti selezionati...\n`);
     setReport([]);
     try {
-      const contactsToSend = contacts;
+      const contactsToSend = contacts.filter(c => selected.has(c.id));
       let reportArr = [];
       for (let i = 0; i < contactsToSend.length; i++) {
         const c = contactsToSend[i];
@@ -291,8 +320,9 @@ export default function ContactsPage() {
                   size="icon"
                   variant="ghost"
                   className="p-0"
-                  title="Invia template a tutta la categoria"
-                  onClick={e => { e.stopPropagation(); setCurrentCat(cat.id); setShowUnassigned(false); setModalOpen(true); }}
+                  title="Invia template ai selezionati"
+                  onClick={e => { e.stopPropagation(); setModalOpen(true); }}
+                  disabled={selected.size === 0}
                 >
                   <Send size={16} />
                 </Button>
@@ -337,6 +367,16 @@ export default function ContactsPage() {
             Crea
           </Button>
         </div>
+        {/* Filtro tag */}
+        <div className="mt-6">
+          <label className="text-sm text-gray-600 mr-2">Filtro per tag:</label>
+          <select value={tagFilter} onChange={e => setTagFilter(e.target.value)}>
+            <option value="">Tutti</option>
+            {[...new Set(contacts.flatMap(c => c.tags||[]))].map(tag => (
+              <option key={tag} value={tag}>{tag}</option>
+            ))}
+          </select>
+        </div>
       </aside>
 
       {/* Contatti e azioni */}
@@ -358,16 +398,28 @@ export default function ContactsPage() {
               </label>
               <div className="flex gap-2 items-center">
                 <Input
-                  placeholder="Nome nuovo contatto"
+                  placeholder="Nome"
                   value={newContactName}
                   onChange={e => setNewContactName(e.target.value)}
-                  className="w-48"
+                  className="w-32"
+                />
+                <Input
+                  placeholder="Cognome"
+                  value={newContactSurname}
+                  onChange={e => setNewContactSurname(e.target.value)}
+                  className="w-32"
                 />
                 <Input
                   placeholder="Telefono"
                   value={newContactPhone}
                   onChange={e => setNewContactPhone(e.target.value)}
                   className="w-40"
+                />
+                <Input
+                  placeholder="Tag (virgola separati)"
+                  value={newContactTags}
+                  onChange={e => setNewContactTags(e.target.value)}
+                  className="w-48"
                 />
                 <Button
                   onClick={addNewContact}
@@ -401,6 +453,13 @@ export default function ContactsPage() {
                     <Trash2 size={16} />
                     Elimina
                   </Button>
+                  <Button
+                    onClick={() => setModalOpen(true)}
+                    className="flex items-center gap-1 bg-blue-700 hover:bg-blue-900 text-white"
+                  >
+                    <Send size={16} />
+                    Invia template
+                  </Button>
                 </>
               )}
             </div>
@@ -422,7 +481,9 @@ export default function ContactsPage() {
                       />
                     </th>
                     <th className="p-2 text-left">Nome</th>
+                    <th className="p-2 text-left">Cognome</th>
                     <th className="p-2 text-left">Telefono</th>
+                    <th className="p-2 text-left">Tag</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -436,7 +497,13 @@ export default function ContactsPage() {
                         />
                       </td>
                       <td className="p-2">{c.name}</td>
+                      <td className="p-2">{c.surname}</td>
                       <td className="p-2">{c.id}</td>
+                      <td className="p-2">
+                        {(c.tags||[]).map(tag =>
+                          <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -459,7 +526,7 @@ export default function ContactsPage() {
             </button>
 
             <h3 className="text-lg font-semibold mb-4">
-              Invia template a tutta la lista selezionata
+              Invia template ai selezionati ({selected.size})
             </h3>
 
             <div className="mb-4">
@@ -488,7 +555,7 @@ export default function ContactsPage() {
                 className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
               >
                 {sending && <Loader2 className="animate-spin" size={18} />}
-                Invia a tutti
+                Invia ai selezionati
               </Button>
               <Button onClick={() => setModalOpen(false)} variant="outline">
                 Annulla
