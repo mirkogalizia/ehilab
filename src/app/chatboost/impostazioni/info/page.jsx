@@ -5,7 +5,7 @@ import { db } from "@/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { useAuth } from "@/lib/useAuth";
 import { Button } from '@/components/ui/button';
-import { Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle, CreditCard } from 'lucide-react';
 
 export default function InfoPage() {
   const { user } = useAuth();
@@ -13,12 +13,16 @@ export default function InfoPage() {
   const [loading, setLoading] = useState(true);
   const [showSignup, setShowSignup] = useState(false);
 
-  // Costruzione URL Meta signup (passa email via state)
+  // KPI WhatsApp Spend
+  const [whatsappSpend, setWhatsappSpend] = useState(null);
+  const [spendLoading, setSpendLoading] = useState(false);
+
+  // Meta signup URL
   const META_SIGNUP_URL = user?.email
     ? `https://www.facebook.com/v18.0/dialog/oauth?client_id=1578488926445019&redirect_uri=https%3A%2F%2Fehi-lab.it%2Fapi%2Fwebhook&state=${encodeURIComponent(user.email)}`
     : "";
 
-  // Recupero dati utente Firestore SOLO by UID
+  // Load user data
   useEffect(() => {
     if (!user?.uid) return;
     setLoading(true);
@@ -36,10 +40,32 @@ export default function InfoPage() {
     fetchUserData();
   }, [user]);
 
-  // Recupero dinamico del numero WhatsApp (compatibile entrambi i nomi campo)
+  // Load WhatsApp spend KPI via Meta API
+  useEffect(() => {
+    // Serve sia waba_id che access token
+    if (!userData?.waba_id) return;
+    const accessToken = process.env.NEXT_PUBLIC_WHATSAPP_ACCESS_TOKEN;
+    if (!accessToken) return;
+    setSpendLoading(true);
+    fetch(
+      `https://graph.facebook.com/v18.0/${userData.waba_id}/insights/message_template?fields=spend,currency&access_token=${accessToken}`
+    )
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.data && data.data[0]) {
+          setWhatsappSpend(data.data[0]);
+        }
+      })
+      .catch((err) => {
+        console.error("Errore fetch spend WhatsApp:", err);
+      })
+      .finally(() => setSpendLoading(false));
+  }, [userData]);
+
+  // WhatsApp number compatibilità nomi campo
   const whatsappNum = userData?.whatsappNumber || userData?.numeroWhatsapp || "";
 
-  // Aggiorna stato WhatsApp
+  // Stato WhatsApp
   const renderWhatsAppStatus = () => {
     if (loading) {
       return (
@@ -76,7 +102,6 @@ export default function InfoPage() {
           <span className="font-semibold text-lg text-gray-800">WhatsApp</span>
           {renderWhatsAppStatus()}
         </div>
-        {/* Bottone signup solo se non connesso */}
         {(!userData?.waba_id || !userData?.phone_number_id || !whatsappNum) && (
           <Button
             className="mt-2 w-fit font-bold"
@@ -86,7 +111,6 @@ export default function InfoPage() {
             Connetti WhatsApp
           </Button>
         )}
-        {/* Modal embedded signup */}
         {showSignup && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
             <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-2xl relative">
@@ -112,6 +136,30 @@ export default function InfoPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* KPI WhatsApp Spend */}
+      <div className="bg-gradient-to-r from-green-50 via-emerald-100 to-white rounded-2xl shadow flex items-center gap-4 px-5 py-4 mb-8 border border-emerald-200">
+        <CreditCard className="w-8 h-8 text-emerald-500 drop-shadow" />
+        <div className="flex flex-col">
+          <span className="text-sm text-gray-500 font-semibold mb-1">Spesa WhatsApp Business</span>
+          {spendLoading ? (
+            <span className="flex items-center gap-2 text-gray-400 text-sm">
+              <Loader2 className="animate-spin w-4 h-4" /> Caricamento...
+            </span>
+          ) : whatsappSpend ? (
+            <span className="text-xl font-bold text-emerald-700">
+              {whatsappSpend.spend} {whatsappSpend.currency}
+            </span>
+          ) : (
+            <span className="text-gray-500 text-sm">Nessun dato disponibile</span>
+          )}
+        </div>
+      </div>
+      <div className="mb-8 text-xs text-gray-400 px-2">
+        La spesa è calcolata da Meta/WhatsApp su base mensile e include i costi dei messaggi a pagamento inviati tramite questa piattaforma.  
+        <br />
+        <span className="text-emerald-600 font-semibold">Il valore si aggiorna automaticamente dalle API Meta.</span>
       </div>
 
       {/* DATI UTENTE */}
