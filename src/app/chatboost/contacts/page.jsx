@@ -17,8 +17,8 @@ import { useAuth } from '@/lib/useAuth';
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim()
-    .replace(/^[+]+/, '') // togli tutti i "+" all'inizio
-    .replace(/^00/, '')   // togli 00 iniziale
+    .replace(/^[+]+/, '')
+    .replace(/^00/, '')
     .replace(/[\s\-().]/g, '');
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
   if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
@@ -35,13 +35,15 @@ export default function ContactsPage() {
   const [selected, setSelected] = useState(new Set());
   const [showUnassigned, setShowUnassigned] = useState(false);
 
-  const [newCat, setNewCat] = useState('');
+  // Popup nuovo contatto
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newContactName, setNewContactName] = useState('');
   const [newContactSurname, setNewContactSurname] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactTags, setNewContactTags] = useState('');
 
+  const [newCat, setNewCat] = useState('');
   const [templates, setTemplates] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [templateToSend, setTemplateToSend] = useState(null);
@@ -86,7 +88,6 @@ export default function ContactsPage() {
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
     const unsub = onSnapshot(qContacts, snap => {
       let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Ricerca dinamica
       if (search) {
         arr = arr.filter(c =>
           (c.firstName || c.name || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -161,6 +162,7 @@ export default function ContactsPage() {
     setNewContactPhone('');
     setNewContactEmail('');
     setNewContactTags('');
+    setCreateModalOpen(false);
   };
 
   // --------- IMPORT FILE EXCEL/CSV -----------
@@ -201,9 +203,11 @@ export default function ContactsPage() {
     setSelected(s);
   };
 
-  // ----------- BULK SELECT -----------
-  const selectAll = () => setSelected(new Set(contacts.map(c => c.phone || c.id)));
-  const deselectAll = () => setSelected(new Set());
+  // Checkbox nella header per bulk
+  const toggleSelectAll = (checked) => {
+    if (checked) setSelected(new Set(contacts.map(c => c.phone || c.id)));
+    else setSelected(new Set());
+  };
 
   // ----------- BULK DELETE -----------
   const deleteSelectedContacts = async () => {
@@ -391,7 +395,7 @@ export default function ContactsPage() {
           <div className="text-gray-500">Seleziona una categoria o "senza categoria"</div>
         ) : (
           <>
-            {/* Ricerca e bulk select */}
+            {/* Barra ricerca, + e importa */}
             <div className="mb-4 flex flex-wrap gap-4 items-center">
               <Input
                 placeholder="Cerca nome, cognome, telefono..."
@@ -399,8 +403,12 @@ export default function ContactsPage() {
                 onChange={e => setSearch(e.target.value)}
                 className="w-64"
               />
-              <Button variant="outline" onClick={selectAll} className="text-xs">Seleziona tutti</Button>
-              <Button variant="outline" onClick={deselectAll} className="text-xs">Deseleziona tutti</Button>
+              <Button
+                onClick={() => setCreateModalOpen(true)}
+                className="bg-green-700 text-white flex items-center gap-1"
+              >
+                <Plus size={18}/> Crea contatto
+              </Button>
               <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
                 Importa Excel/CSV
                 <input
@@ -410,44 +418,6 @@ export default function ContactsPage() {
                   onChange={e => e.target.files[0] && importFile(e.target.files[0])}
                 />
               </label>
-              <div className="flex gap-2 items-center">
-                <Input
-                  placeholder="Nome"
-                  value={newContactName}
-                  onChange={e => setNewContactName(e.target.value)}
-                  className="w-32"
-                />
-                <Input
-                  placeholder="Cognome"
-                  value={newContactSurname}
-                  onChange={e => setNewContactSurname(e.target.value)}
-                  className="w-32"
-                />
-                <Input
-                  placeholder="Telefono"
-                  value={newContactPhone}
-                  onChange={e => setNewContactPhone(e.target.value)}
-                  className="w-40"
-                />
-                <Input
-                  placeholder="Email"
-                  value={newContactEmail}
-                  onChange={e => setNewContactEmail(e.target.value)}
-                  className="w-40"
-                />
-                <Input
-                  placeholder="Tag (virgola separati)"
-                  value={newContactTags}
-                  onChange={e => setNewContactTags(e.target.value)}
-                  className="w-48"
-                />
-                <Button
-                  onClick={addNewContact}
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                >
-                  Aggiungi
-                </Button>
-              </div>
               {/* Azioni bulk */}
               {selected.size > 0 && (
                 <>
@@ -490,7 +460,14 @@ export default function ContactsPage() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-100">
-                    <th className="p-2"></th>
+                    <th className="p-2">
+                      <input
+                        type="checkbox"
+                        onChange={e => toggleSelectAll(e.target.checked)}
+                        checked={selected.size === contacts.length && contacts.length > 0}
+                        indeterminate={selected.size > 0 && selected.size < contacts.length}
+                      />
+                    </th>
                     <th className="p-2 text-left">Nome</th>
                     <th className="p-2 text-left">Cognome</th>
                     <th className="p-2 text-left">Telefono</th>
@@ -535,6 +512,54 @@ export default function ContactsPage() {
           </>
         )}
       </main>
+
+      {/* --- MODAL NUOVO CONTATTO --- */}
+      {createModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-7 max-w-lg w-full relative">
+            <button
+              className="absolute top-3 right-4 text-gray-400 hover:text-gray-700 text-2xl"
+              onClick={() => setCreateModalOpen(false)}
+            >×</button>
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Plus className="text-green-600" /> Nuovo contatto
+            </h3>
+            <div className="space-y-4">
+              <Input
+                placeholder="Nome"
+                value={newContactName}
+                onChange={e => setNewContactName(e.target.value)}
+              />
+              <Input
+                placeholder="Cognome"
+                value={newContactSurname}
+                onChange={e => setNewContactSurname(e.target.value)}
+              />
+              <Input
+                placeholder="Telefono"
+                value={newContactPhone}
+                onChange={e => setNewContactPhone(e.target.value)}
+              />
+              <Input
+                placeholder="Email"
+                value={newContactEmail}
+                onChange={e => setNewContactEmail(e.target.value)}
+              />
+              <Input
+                placeholder="Tag (virgola separati)"
+                value={newContactTags}
+                onChange={e => setNewContactTags(e.target.value)}
+              />
+              <Button
+                onClick={addNewContact}
+                className="bg-green-600 hover:bg-green-700 text-white w-full"
+              >
+                Salva contatto
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- MODAL DETTAGLIO E MODIFICA --- */}
       {selectedContact && (
