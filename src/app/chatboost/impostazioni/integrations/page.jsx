@@ -79,12 +79,16 @@ export default function ShopifyIntegrationPage() {
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-tr from-green-50 via-white to-blue-50 py-10 px-2 font-[Montserrat]">
-      {/* Hero / Header */}
+      {/* Header */}
       <div className="max-w-2xl mx-auto mb-6 relative">
         <div className="flex flex-col items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="inline-flex items-center rounded-xl bg-green-100 px-3 py-1 text-green-700 font-semibold tracking-wide shadow">
-              <img src="/shopify.svg" alt="Shopify" className="w-7 h-7 mr-2" />
+              {/* LOGO SHOPIFY SVG INLINE */}
+              <svg width="28" height="28" viewBox="0 0 32 32" fill="none" className="mr-2">
+                <rect width="32" height="32" rx="6" fill="#96BF48"/>
+                <path d="M12.7 7.7c.2-1.5 1.3-2.9 2.6-2.9 1.5 0 2.3 1.3 2.5 2.7 1-.1 2.3.1 2.9.2.2.1.5.3.5.6l2.9 13.5c0 .2-.1.5-.4.5l-11.4-2.1c-.2 0-.4-.2-.4-.5l2.2-13.4c.1-.3.4-.5.6-.5zm3.5.5c-.1-.7-.6-1.8-1.6-1.8-1.2 0-1.6 1.5-1.7 2.1l3.3-.3zm-4.2 1.2l-2.2 13.5 10.7 2 2.9-13.6-11.4-2.1zm2.7 5.6c.4-.7.8-1.4 1.2-2.1.5-.8.9-1.6 1.3-2.3-.1-.1-.1-.3-.2-.3-.3.1-.6.2-.9.3-.2.1-.5.2-.7.4l-.2.1c-.3.4-.7.8-1.1 1.3-.3.5-.7 1-.9 1.5 0 .1.1.3.2.4.3-.2.6-.3.9-.5.3-.1.6-.3.9-.5.1 0 .1.1.1.1zm-1.6 1.5c-.2.3-.4.7-.6 1-.2.3-.3.7-.5 1 .2.1.3.3.5.4.3-.3.7-.7 1.1-1 .2-.1.4-.3.6-.4-.3-.2-.6-.4-.9-.6-.1-.1-.1-.2-.2-.3zm3.7 3.1c-.1-.1-.1-.2-.2-.3-.3.2-.6.4-.9.6.2.1.4.3.6.4.4.3.8.7 1.1 1-.1-.2-.2-.5-.4-.7-.1-.2-.2-.4-.2-.6zm-2.1 1.8c-.4.1-.8.2-1.2.3.2.3.5.6.7.9.3.3.7.7 1.2 1-.1-.2-.1-.5-.2-.8-.1-.2-.2-.5-.3-.7zm3.7-2.1c-.3.2-.6.3-.9.5.1.1.1.2.2.3.3-.2.6-.4.9-.6-.1-.1-.1-.2-.2-.2z" fill="#fff"/>
+              </svg>
               Integrazione Shopify
             </span>
           </div>
