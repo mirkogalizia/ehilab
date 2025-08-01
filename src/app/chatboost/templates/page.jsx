@@ -98,8 +98,9 @@ export default function TemplatePage() {
     }
   };
 
-  // Raggruppamento per stato
-  const grouped = templateList.reduce((acc, tpl) => {
+  // ----------- FILTRO PER NON MOSTRARE I SAMPLE -----------
+  const filteredTemplates = templateList.filter(tpl => !tpl.name.startsWith('sample_'));
+  const grouped = filteredTemplates.reduce((acc, tpl) => {
     if (!acc[tpl.status]) acc[tpl.status] = [];
     acc[tpl.status].push(tpl);
     return acc;
