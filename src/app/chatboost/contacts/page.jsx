@@ -16,13 +16,17 @@ import { useAuth } from '@/lib/useAuth';
 function cleanPhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim()
-    .replace(/^[+]+/, '') // togli tutti i "+" all'inizio
-    .replace(/^00/, '')  // togli 00 iniziale
-    .replace(/[\s\-().]/g, ''); // togli spazi e simboli
+    .replace(/^[+]+/, '')
+    .replace(/^00/, '')
+    .replace(/[\s\-().]/g, '');
   if (phone.startsWith('39') && phone.length >= 11) return phone;
   if (phone.startsWith('3') && phone.length === 10) return '39' + phone;
   return phone;
 }
+
+const SAFE_FIELDS = [
+  'name', 'surname', 'email', 'address', 'city', 'zip', 'province', 'country', 'shop', 'orderId'
+];
 
 export default function ContactsPage() {
   const { user } = useAuth();
@@ -109,15 +113,8 @@ export default function ContactsPage() {
     if (user?.uid) loadTemplates();
   }, [user]);
 
-  const createCategory = async () => {
-    const name = newCat.trim();
-    if (!name) return;
-    await setDoc(doc(db, 'categories', name), { name, createdBy: user.uid });
-    setNewCat('');
-  };
-
-  // --- Funzioni aggiuntive: import, add, move, delete, send come PRIMA ---
-  // ...(Invariato, omesso qui per brevità. Usa quello che hai già.)...
+  // --- Funzioni aggiuntive: import, add, move, delete, send ---
+  // Usa le tue funzioni di import/export già stabili!
 
   // --- Dettagli/Modifica ---
   const handleOpenContact = (contact) => {
@@ -138,8 +135,7 @@ export default function ContactsPage() {
   // ----- RENDER -----
   return (
     <div className="h-screen flex flex-col md:flex-row">
-      {/* Sidebar categorie... invariata */}
-      {/* ...tutto come nel tuo codice... */}
+      {/* Sidebar categorie: lascia invariato */}
 
       {/* Contatti e azioni */}
       <main className="flex-1 p-4 overflow-y-auto flex flex-col">
@@ -164,7 +160,7 @@ export default function ContactsPage() {
                 </thead>
                 <tbody>
                   {contacts.map(c => (
-                    <tr key={c.id} className="hover:bg-gray-50">
+                    <tr key={c.id || Math.random()} className="hover:bg-gray-50">
                       <td className="p-2">
                         <input
                           type="checkbox"
@@ -176,11 +172,11 @@ export default function ContactsPage() {
                           }}
                         />
                       </td>
-                      <td className="p-2">{c.name}</td>
-                      <td className="p-2">{c.surname}</td>
-                      <td className="p-2">{c.id && `+${c.id}`}</td>
+                      <td className="p-2">{c.name || <span className="text-gray-400">–</span>}</td>
+                      <td className="p-2">{c.surname || <span className="text-gray-400">–</span>}</td>
+                      <td className="p-2">{c.id ? `+${c.id}` : <span className="text-gray-400">–</span>}</td>
                       <td className="p-2">
-                        {(c.tags||[]).map(tag =>
+                        {(c.tags || []).map(tag =>
                           <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
                         )}
                       </td>
@@ -214,7 +210,7 @@ export default function ContactsPage() {
               <Info className="text-blue-600" /> {editMode ? 'Modifica contatto' : 'Dettagli contatto'}
             </h3>
             <div className="space-y-3 text-base">
-              {['name', 'surname', 'email', 'address', 'city', 'zip', 'province', 'country', 'shop', 'orderId'].map((field) => (
+              {SAFE_FIELDS.map((field) => (
                 <div key={field}>
                   <b className="capitalize">{field}:</b>{' '}
                   {editMode ? (
