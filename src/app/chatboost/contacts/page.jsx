@@ -53,6 +53,7 @@ export default function ContactsPage() {
   const [targetCategories, setTargetCategories] = useState([]);
   const [userData, setUserData] = useState(null);
   const [tagFilter, setTagFilter] = useState('');
+  const [search, setSearch] = useState('');
 
   // --- Dettaglio e modifica contatto ---
   const [selectedContact, setSelectedContact] = useState(null);
@@ -84,7 +85,15 @@ export default function ContactsPage() {
     if (!user?.uid) return;
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
     const unsub = onSnapshot(qContacts, snap => {
-      const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Ricerca dinamica
+      if (search) {
+        arr = arr.filter(c =>
+          (c.firstName || c.name || '').toLowerCase().includes(search.toLowerCase()) ||
+          (c.lastName || c.surname || '').toLowerCase().includes(search.toLowerCase()) ||
+          (c.phone || c.id || '').toLowerCase().includes(search.toLowerCase())
+        );
+      }
       let filtered = arr;
       if (showUnassigned) {
         filtered = arr.filter(c => !c.categories || c.categories.length === 0);
@@ -98,7 +107,7 @@ export default function ContactsPage() {
       setSelected(new Set());
     });
     return () => unsub();
-  }, [user, currentCat, showUnassigned, tagFilter]);
+  }, [user, currentCat, showUnassigned, tagFilter, search]);
 
   // Carica templates solo per user_uid
   useEffect(() => {
@@ -192,6 +201,54 @@ export default function ContactsPage() {
     setSelected(s);
   };
 
+  // ----------- BULK SELECT -----------
+  const selectAll = () => setSelected(new Set(contacts.map(c => c.phone || c.id)));
+  const deselectAll = () => setSelected(new Set());
+
+  // ----------- BULK DELETE -----------
+  const deleteSelectedContacts = async () => {
+    if (!window.confirm('Sei sicuro di voler eliminare i contatti selezionati?')) return;
+    const batch = writeBatch(db);
+    contacts.forEach(c => {
+      if (selected.has(c.phone || c.id)) batch.delete(doc(db, 'contacts', c.phone || c.id));
+    });
+    await batch.commit();
+    setSelected(new Set());
+  };
+
+  // ----------- MOVE TO CATEGORY -----------
+  const moveContacts = async () => {
+    if (targetCategories.length === 0 || selected.size === 0) return;
+    const batch = writeBatch(db);
+    contacts.forEach(c => {
+      if (selected.has(c.phone || c.id)) {
+        let categoriesToSet = [...targetCategories];
+        if (!showUnassigned && currentCat) {
+          categoriesToSet = [...new Set([...(c.categories||[]).filter(cat=>cat!==currentCat), ...targetCategories])];
+        }
+        batch.update(doc(db, 'contacts', c.phone || c.id), { categories: categoriesToSet });
+      }
+    });
+    await batch.commit();
+    setMoveModalOpen(false);
+    setSelected(new Set());
+    setTargetCategories([]);
+  };
+
+  // ----------- REMOVE FROM CATEGORY -----------
+  const removeSelectedFromCategory = async () => {
+    if (!currentCat) return;
+    const batch = writeBatch(db);
+    contacts.forEach(c => {
+      if (selected.has(c.phone || c.id)) {
+        const updated = (c.categories||[]).filter(cat => cat !== currentCat);
+        batch.update(doc(db, 'contacts', c.phone || c.id), { categories: updated });
+      }
+    });
+    await batch.commit();
+    setSelected(new Set());
+  };
+
   // ----------- INFO / EDIT MODAL -----------
   const handleOpenContact = (contact) => {
     setSelectedContact(contact);
@@ -202,10 +259,79 @@ export default function ContactsPage() {
     setEditData((prev) => ({ ...prev, [field]: value }));
   };
   const handleSaveEdit = async () => {
-    if (!selectedContact?.id) return;
-    await updateDoc(doc(db, 'contacts', selectedContact.id), { ...editData, updatedAt: new Date() });
+    if (!selectedContact?.id && !selectedContact?.phone) return;
+    const docId = selectedContact.phone || selectedContact.id;
+    await updateDoc(doc(db, 'contacts', docId), { ...editData, updatedAt: new Date() });
     setSelectedContact({ ...selectedContact, ...editData });
     setEditMode(false);
+  };
+
+  // ----------- BULK SEND TEMPLATE -----------
+  const sendTemplateToContact = async (phone, templateName) => {
+    if (!user || !phone || !templateName || !userData) return false;
+    const payload = {
+      messaging_product: "whatsapp",
+      to: phone,
+      type: "template",
+      template: { name: templateName, language: { code: "it" } }
+    };
+    const res = await fetch(
+      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      }
+    );
+    const data = await res.json();
+    if (data.messages) {
+      await addDoc(collection(db, "messages"), {
+        text: `Template inviato: ${templateName}`,
+        to: phone,
+        from: "operator",
+        timestamp: Date.now(),
+        createdAt: serverTimestamp(),
+        type: "template",
+        user_uid: user.uid,
+        message_id: data.messages[0].id
+      });
+      return true;
+    } else {
+      return data.error ? data.error.message || 'Errore sconosciuto' : 'Errore sconosciuto';
+    }
+  };
+
+  const sendTemplateMassive = async () => {
+    if (!templateToSend) return alert('Seleziona un template.');
+    setSending(true);
+    setSendLog(`Invio template "${templateToSend.name}" ai contatti selezionati...\n`);
+    setReport([]);
+    try {
+      const contactsToSend = contacts.filter(c => selected.has(c.phone || c.id));
+      let reportArr = [];
+      for (let i = 0; i < contactsToSend.length; i++) {
+        const c = contactsToSend[i];
+        setSendLog(prev => prev + `Invio a ${c.firstName || c.name} (${c.phone || c.id})... `);
+        let res = await sendTemplateToContact(c.phone || c.id, templateToSend.name);
+        if (res === true) {
+          setSendLog(prev => prev + '✔️\n');
+          reportArr.push({ name: c.firstName || c.name, id: c.phone || c.id, status: 'OK' });
+        } else {
+          setSendLog(prev => prev + `❌ (${res})\n`);
+          reportArr.push({ name: c.firstName || c.name, id: c.phone || c.id, status: 'KO', error: res });
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      setReport(reportArr);
+      setSendLog(prev => prev + 'Invio completato!\n');
+    } catch (err) {
+      setSendLog(prev => prev + `Errore: ${err.message}\n`);
+    }
+    setSending(false);
+    setTimeout(() => setModalOpen(false), 1200);
   };
 
   // ----- RENDER -----
@@ -233,7 +359,6 @@ export default function ContactsPage() {
                 ${currentCat === cat.id && !showUnassigned ? 'bg-blue-100 border-blue-600 text-blue-900' : 'bg-white border-gray-200 text-gray-800 hover:bg-gray-100'}`}
             >
               <span className="flex-1 text-left">{cat.name}</span>
-              {/* ...puoi aggiungere azioni categoria qui... */}
             </button>
           ))}
         </div>
@@ -266,8 +391,16 @@ export default function ContactsPage() {
           <div className="text-gray-500">Seleziona una categoria o "senza categoria"</div>
         ) : (
           <>
-            {/* Import e nuovo contatto */}
+            {/* Ricerca e bulk select */}
             <div className="mb-4 flex flex-wrap gap-4 items-center">
+              <Input
+                placeholder="Cerca nome, cognome, telefono..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-64"
+              />
+              <Button variant="outline" onClick={selectAll} className="text-xs">Seleziona tutti</Button>
+              <Button variant="outline" onClick={deselectAll} className="text-xs">Deseleziona tutti</Button>
               <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
                 Importa Excel/CSV
                 <input
@@ -315,6 +448,41 @@ export default function ContactsPage() {
                   Aggiungi
                 </Button>
               </div>
+              {/* Azioni bulk */}
+              {selected.size > 0 && (
+                <>
+                  <Button
+                    onClick={() => setMoveModalOpen(true)}
+                    className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white"
+                  >
+                    <FolderSymlink size={16} />
+                    Sposta ({selected.size})
+                  </Button>
+                  {currentCat &&
+                    <Button
+                      onClick={removeSelectedFromCategory}
+                      className="flex items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white"
+                    >
+                      <ArrowRight size={16} />
+                      Rimuovi da categoria
+                    </Button>
+                  }
+                  <Button
+                    onClick={deleteSelectedContacts}
+                    className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    <Trash2 size={16} />
+                    Elimina
+                  </Button>
+                  <Button
+                    onClick={() => setModalOpen(true)}
+                    className="flex items-center gap-1 bg-blue-700 hover:bg-blue-900 text-white"
+                  >
+                    <Send size={16} />
+                    Invia template
+                  </Button>
+                </>
+              )}
             </div>
 
             {/* Tabella contatti */}
@@ -444,7 +612,123 @@ export default function ContactsPage() {
         </div>
       )}
 
-      {/* ...modali per invio massivo/spostamento contatti come prima... */}
+      {/* Modal invio massivo */}
+      {modalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
+            <button
+              onClick={() => setModalOpen(false)}
+              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
+              title="Chiudi"
+            >
+              <X size={20} />
+            </button>
+            <h3 className="text-lg font-semibold mb-4">
+              Invia template ai selezionati ({selected.size})
+            </h3>
+            <div className="mb-4">
+              <label className="block mb-1 font-medium">Seleziona template:</label>
+              <select
+                value={templateToSend?.name || ''}
+                onChange={e => {
+                  const tpl = templates.find(t => t.name === e.target.value);
+                  setTemplateToSend(tpl || null);
+                }}
+                className="w-full border border-gray-300 rounded px-3 py-2"
+              >
+                <option value="">-- Scegli un template --</option>
+                {templates.map(tpl => (
+                  <option key={tpl.name} value={tpl.name}>
+                    {tpl.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={sendTemplateMassive}
+                disabled={sending || !templateToSend}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {sending && <Loader2 className="animate-spin" size={18} />}
+                Invia ai selezionati
+              </Button>
+              <Button onClick={() => setModalOpen(false)} variant="outline">
+                Annulla
+              </Button>
+            </div>
+            {sendLog && (
+              <pre className="mt-4 max-h-40 overflow-y-auto bg-gray-100 p-2 rounded text-xs whitespace-pre-wrap">
+                {sendLog}
+              </pre>
+            )}
+            {report.length > 0 && (
+              <div className="mt-3 bg-blue-50 rounded-lg p-2 max-h-32 overflow-y-auto text-xs">
+                <b>Report invio:</b>
+                <ul>
+                  {report.map(r =>
+                    <li key={r.id}>
+                      {r.name} ({r.id}): <span className={r.status === 'OK' ? 'text-green-700' : 'text-red-600'}>
+                        {r.status}{r.error && ` (${r.error})`}
+                      </span>
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal sposta contatti */}
+      {moveModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
+            <button
+              onClick={() => setMoveModalOpen(false)}
+              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
+              title="Chiudi"
+            >
+              <X size={20} />
+            </button>
+            <h3 className="text-lg font-semibold mb-4">Sposta contatti selezionati</h3>
+            <div>
+              <label className="block mb-2">Categorie di destinazione:</label>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {categories.map(cat => (
+                  <label
+                    key={cat.id}
+                    className={`cursor-pointer px-3 py-2 rounded-lg border ${
+                      targetCategories.includes(cat.id)
+                        ? 'bg-blue-600 text-white border-blue-700'
+                        : 'bg-gray-100 text-gray-800 border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={targetCategories.includes(cat.id)}
+                      onChange={e => {
+                        if (e.target.checked) setTargetCategories([...targetCategories, cat.id]);
+                        else setTargetCategories(targetCategories.filter(id => id !== cat.id));
+                      }}
+                      className="mr-1"
+                    />
+                    {cat.name}
+                  </label>
+                ))}
+              </div>
+              <Button
+                onClick={moveContacts}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white"
+                disabled={targetCategories.length === 0}
+              >
+                Sposta
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
