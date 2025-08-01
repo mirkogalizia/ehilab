@@ -11,6 +11,17 @@ import { Button } from '@/components/ui/button';
 import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
+// --- NORMALIZZA NUMERO (sempre +39... se ITA, +... se internazionale) ---
+function normalizePhone(phoneRaw) {
+  if (!phoneRaw) return '';
+  let phone = phoneRaw.trim().replace(/^[+]+/, '').replace(/^00/, '').replace(/[\s\-().]/g, '');
+  if (phone.startsWith('39') && phone.length >= 11) return '+'+phone;
+  if (phone.startsWith('3') && phone.length === 10) return '+39'+phone;
+  if (/^\d+$/.test(phone) && phone.length > 10) return '+'+phone;
+  if (phone.startsWith('+')) return phone;
+  return '';
+}
+
 export default function ChatPage() {
   const { user } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
@@ -50,13 +61,17 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Recupera nomi contatti
+  // Recupera nomi contatti (associa tramite numero normalizzato)
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
       const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
       const map = {};
-      cs.forEach(d => (map[d.id] = d.data().name));
+      cs.forEach(d => {
+        const c = d.data();
+        const phoneNorm = normalizePhone(c.phone || d.id);
+        map[phoneNorm] = c.firstName || c.name || phoneNorm;
+      });
       setContactNames(map);
     })();
   }, [user]);
@@ -76,11 +91,12 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // Raggruppa conversazioni
+  // Raggruppa conversazioni (raggruppa sempre per numero normalizzato!)
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
-      const phone = m.from !== 'operator' ? m.from : m.to;
+      const rawPhone = m.from !== 'operator' ? m.from : m.to;
+      const phone = normalizePhone(rawPhone);
       if (!phone) return;
       if (!chatMap[phone]) chatMap[phone] = [];
       chatMap[phone].push(m);
@@ -89,7 +105,7 @@ export default function ChatPage() {
       .map(([phone, msgs]) => {
         msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
         const lastMsg = msgs[msgs.length - 1] || {};
-        const unread = msgs.filter(m => m.from === phone && !m.read).length;
+        const unread = msgs.filter(m => normalizePhone(m.from) === phone && !m.read).length;
         return {
           phone,
           name: contactNames[phone] || phone,
@@ -101,16 +117,17 @@ export default function ChatPage() {
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames]);
 
-  // LOGICA 24H: solo se ultimo messaggio RICEVUTO è entro 24h
+  // LOGICA 24H: sempre con numero normalizzato!
   useEffect(() => {
     if (!user?.uid || !selectedPhone) {
       setCanSendMessage(false);
       return;
     }
-    const msgs = allMessages.filter(m => m.from === selectedPhone || m.to === selectedPhone);
-    // Trova l’ultimo messaggio RICEVUTO
+    const msgs = allMessages.filter(m =>
+      normalizePhone(m.from) === selectedPhone || normalizePhone(m.to) === selectedPhone
+    );
     const lastInbound = msgs
-      .filter(m => m.from === selectedPhone)
+      .filter(m => normalizePhone(m.from) === selectedPhone)
       .sort((a, b) => parseTime(b.timestamp || b.createdAt) - parseTime(a.timestamp || a.createdAt))[0];
     if (!lastInbound) {
       setCanSendMessage(false); // Solo template, mai ricevuto niente
@@ -118,18 +135,14 @@ export default function ChatPage() {
     }
     const lastTimestamp = parseTime(lastInbound.timestamp || lastInbound.createdAt);
     const now = Date.now();
-    if (now - lastTimestamp < 86400000) {
-      setCanSendMessage(true); // Finestra aperta
-    } else {
-      setCanSendMessage(false); // Solo template
-    }
+    setCanSendMessage(now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone]);
 
   // Marca messaggi come letti
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
     const unreadMsgIds = allMessages
-      .filter(m => m.from === selectedPhone && m.read === false)
+      .filter(m => normalizePhone(m.from) === selectedPhone && m.read === false)
       .map(m => m.id);
     if (unreadMsgIds.length > 0) {
       const batch = writeBatch(db);
@@ -160,9 +173,12 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // Filtra messaggi della chat attiva (sempre normalizzato)
   const filtered = useMemo(() => (
     allMessages
-      .filter(m => m.from === selectedPhone || m.to === selectedPhone)
+      .filter(m =>
+        normalizePhone(m.from) === selectedPhone || normalizePhone(m.to) === selectedPhone
+      )
       .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
   ), [allMessages, selectedPhone]);
 
@@ -208,7 +224,7 @@ export default function ChatPage() {
   const handleDeleteChat = async () => {
     if (chatMenu.phone) {
       const msgs = allMessages.filter(
-        m => m.from === chatMenu.phone || m.to === chatMenu.phone
+        m => normalizePhone(m.from) === chatMenu.phone || normalizePhone(m.to) === chatMenu.phone
       );
       const batch = writeBatch(db);
       msgs.forEach(m => batch.delete(doc(db, 'messages', m.id)));
@@ -218,10 +234,9 @@ export default function ChatPage() {
     }
   };
 
-  // --- Chiudi menù contestuale su click fuori, ESC, scroll
+  // Chiudi menù contestuale su click fuori, ESC, scroll
   useEffect(() => {
     function close(e) {
-      // Permette click all'interno dei menu
       const menu = document.getElementById("menu-contestuale-msg");
       if (menu && menu.contains(e?.target)) return;
       const chatMenuEl = document.getElementById("menu-contestuale-chat");
@@ -241,7 +256,7 @@ export default function ChatPage() {
     };
   }, [contextMenu.visible, chatMenu.visible]);
 
-  // --- Long press per mobile (messaggio)
+  // Long press per mobile (messaggio)
   const handleTouchStart = (id) => {
     longPressTimeout.current = setTimeout(() => {
       setContextMenu({ visible: true, x: window.innerWidth / 2, y: window.innerHeight / 2, messageId: id });
@@ -439,7 +454,7 @@ export default function ChatPage() {
               <Button
                 onClick={() => {
                   if (newPhone) {
-                    setSelectedPhone(newPhone);
+                    setSelectedPhone(normalizePhone(newPhone));
                     setNewPhone('');
                     setShowNewChat(false);
                   }
