@@ -1,20 +1,15 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/firebase';
-import { collection, addDoc, getDoc, doc as fireDoc } from 'firebase/firestore';
+import { collection, setDoc, getDoc, doc as fireDoc } from 'firebase/firestore';
 
 // Funzione per normalizzare il numero per WhatsApp (solo Italia, estendibile)
 function normalizePhone(phone) {
   if (!phone) return "";
-  // Rimuove spazi, trattini, punti, parentesi
   let norm = phone.replace(/[\s\-\.\(\)]/g, "");
-  // 0039 -> +39
   if (norm.startsWith("0039")) norm = "+39" + norm.slice(4);
-  // 39 senza + all'inizio e lunghezza 11 (es: 39123456789) -> +39
   if (norm.startsWith("39") && norm.length === 11) norm = "+39" + norm.slice(2);
-  // Solo cifre (es: 3471234567) -> +39
   if (!norm.startsWith("+") && norm.length === 10) norm = "+39" + norm;
-  // (Facoltativo) accetta solo numeri con almeno 10 cifre
-  if (!/^\+39\d{9,10}$/.test(norm)) return ""; // ritorna vuoto se non valido
+  if (!/^\+39\d{9,10}$/.test(norm)) return "";
   return norm;
 }
 
@@ -33,30 +28,63 @@ export async function POST(req, { params }) {
     const customer = payload.customer || {};
     const shipping = payload.shipping_address || {};
 
-    // Estrazione e normalizzazione
     const phoneRaw = customer.phone || shipping.phone || "";
     const phone = normalizePhone(phoneRaw);
 
-    const contact = {
+    if (!phone) {
+      return NextResponse.json({ success: false, error: "Telefono non valido" }, { status: 200 });
+    }
+
+    // Prepara tutti i dati da salvare/aggiornare
+    const dataToUpdate = {
+      phone,
+      phone_raw: phoneRaw,
       merchantId,
-      token,
       source: 'shopify',
-      tags: ['shopify'],
-      firstName: customer.first_name || shipping.name || "",
-      lastName: customer.last_name || "",
-      phone,            // numero pulito per WhatsApp (già con +39)
-      phone_raw: phoneRaw, // come arriva da Shopify
-      email: customer.email || payload.email || "",
-      createdAt: new Date(),
       shop: payload.shop || "",
       orderId: payload.id || "",
-      raw: payload
+      firstName: customer.first_name || shipping.name || "",
+      lastName: customer.last_name || "",
+      email: customer.email || payload.email || "",
+      address: shipping.address1 || "",
+      city: shipping.city || "",
+      zip: shipping.zip || "",
+      province: shipping.province || "",
+      country: shipping.country || "",
+      tags: ['shopify'],
+      updatedAt: new Date(),
     };
 
-    // Salva solo se il numero è valido e non vuoto
-    if (phone) {
-      await addDoc(collection(db, "contacts"), contact);
+    // Leggi il contatto esistente (usando phone come docID)
+    const contactRef = fireDoc(db, "contacts", phone);
+    const existingSnap = await getDoc(contactRef);
+
+    let newTags = ['shopify'];
+
+    if (existingSnap.exists()) {
+      // Unisci i tags vecchi con "shopify" (senza duplicati)
+      const prev = existingSnap.data();
+      if (Array.isArray(prev.tags)) {
+        newTags = Array.from(new Set([...prev.tags, 'shopify']));
+      }
+
+      // Aggiorna solo se il dato da Shopify è migliore/non presente
+      dataToUpdate.firstName = dataToUpdate.firstName || prev.firstName || "";
+      dataToUpdate.lastName = dataToUpdate.lastName || prev.lastName || "";
+      dataToUpdate.email = dataToUpdate.email || prev.email || "";
+      dataToUpdate.address = dataToUpdate.address || prev.address || "";
+      dataToUpdate.city = dataToUpdate.city || prev.city || "";
+      dataToUpdate.zip = dataToUpdate.zip || prev.zip || "";
+      dataToUpdate.province = dataToUpdate.province || prev.province || "";
+      dataToUpdate.country = dataToUpdate.country || prev.country || "";
     }
+
+    // Scrivi/aggiorna il contatto (con merge!)
+    await setDoc(contactRef, {
+      ...dataToUpdate,
+      tags: newTags,
+      createdBy: merchantId,
+    }, { merge: true });
 
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -64,4 +92,3 @@ export async function POST(req, { params }) {
     return NextResponse.json({ success: false, error: error.toString() }, { status: 500 });
   }
 }
-
