@@ -151,6 +151,13 @@ export default function ContactsPage() {
       lastName,
       email,
       tags: tagsArr,
+      address: "",
+      city: "",
+      zip: "",
+      province: "",
+      country: "",
+      shop: "",
+      orderId: "",
       categories: currentCat ? [currentCat] : [],
       createdBy: user.uid,
       source: "manual",
@@ -186,6 +193,13 @@ export default function ContactsPage() {
           lastName,
           email,
           tags,
+          address: r.address || "",
+          city: r.city || "",
+          zip: r.zip || "",
+          province: r.province || "",
+          country: r.country || "",
+          shop: r.shop || "",
+          orderId: r.orderId || "",
           categories: currentCat ? [currentCat] : [],
           createdBy: user.uid,
           source: "import",
@@ -255,18 +269,50 @@ export default function ContactsPage() {
 
   // ----------- INFO / EDIT MODAL -----------
   const handleOpenContact = (contact) => {
+    // Inizializza tutti i campi previsti
+    setEditData({
+      firstName: contact.firstName || '',
+      lastName: contact.lastName || '',
+      email: contact.email || '',
+      address: contact.address || '',
+      city: contact.city || '',
+      zip: contact.zip || '',
+      province: contact.province || '',
+      country: contact.country || '',
+      shop: contact.shop || '',
+      orderId: contact.orderId || '',
+      phone: contact.phone || '',
+      tags: contact.tags || [],
+    });
     setSelectedContact(contact);
     setEditMode(false);
-    setEditData(contact);
   };
+
+  // Salva modifiche
   const handleEditField = (field, value) => {
     setEditData((prev) => ({ ...prev, [field]: value }));
   };
   const handleSaveEdit = async () => {
     if (!selectedContact?.id && !selectedContact?.phone) return;
     const docId = selectedContact.phone || selectedContact.id;
-    await updateDoc(doc(db, 'contacts', docId), { ...editData, updatedAt: new Date() });
-    setSelectedContact({ ...selectedContact, ...editData });
+    // Prepara tutti i campi chiave
+    const fullEditData = {
+      firstName: editData.firstName || '',
+      lastName: editData.lastName || '',
+      email: editData.email || '',
+      address: editData.address || '',
+      city: editData.city || '',
+      zip: editData.zip || '',
+      province: editData.province || '',
+      country: editData.country || '',
+      shop: editData.shop || '',
+      orderId: editData.orderId || '',
+      phone: editData.phone || '',
+      tags: Array.isArray(editData.tags) ? editData.tags : [],
+      updatedAt: new Date()
+    };
+    await updateDoc(doc(db, 'contacts', docId), fullEditData);
+    setSelectedContact({ ...selectedContact, ...fullEditData });
     setEditMode(false);
   };
 
@@ -606,7 +652,7 @@ export default function ContactsPage() {
                 {editMode ? (
                   <input
                     type="text"
-                    value={(editData.tags || []).join(', ')}
+                    value={Array.isArray(editData.tags) ? editData.tags.join(', ') : (editData.tags || '')}
                     onChange={e => handleEditField('tags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
                     className="border border-gray-300 rounded px-2 py-1 w-2/3"
                   />
@@ -623,6 +669,24 @@ export default function ContactsPage() {
                   <Button onClick={handleSaveEdit} className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-1">
                     <Save size={16} /> Salva
                   </Button>
+                  <Button onClick={() => setEditMode(false)} variant="outline">
+                    Annulla
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => setEditMode(true)} className="bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1">
+                  <Edit2 size={16} /> Modifica
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ...modali per invio massivo/spostamento contatti come prima... */}
+    </div>
+  );
+}                  </Button>
                   <Button onClick={() => setEditMode(false)} variant="outline">
                     Annulla
                   </Button>
