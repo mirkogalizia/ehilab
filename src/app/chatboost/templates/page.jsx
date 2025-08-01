@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '@/lib/useAuth';
-import { Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2, Image as ImageIcon, FileText, Video } from 'lucide-react';
 
 const STATUS_COLORS = {
   APPROVED: 'bg-green-100 text-green-700 border-green-200',
@@ -16,25 +16,11 @@ const STATUS_COLORS = {
   DRAFT: 'bg-gray-100 text-gray-500 border-gray-200'
 };
 
-const HEADER_TYPES = [
-  { value: '', label: 'Nessuno' },
-  { value: 'IMAGE', label: 'Immagine' },
-  { value: 'DOCUMENT', label: 'Documento' },
-  { value: 'VIDEO', label: 'Video' },
-  { value: 'TEXT', label: 'Testo' }
-];
-
 const DYNAMIC_FIELDS = [
   { label: 'Nome', value: '{{1}}' },
   { label: 'Cognome', value: '{{2}}' },
   { label: 'Telefono', value: '{{3}}' },
-  { label: 'Email', value: '{{4}}' },
-  { label: 'Azienda', value: '{{5}}' },
-  { label: 'Città', value: '{{6}}' },
-  { label: 'Data', value: '{{7}}' },
-  { label: 'Ordine', value: '{{8}}' },
-  { label: 'Importo', value: '{{9}}' },
-  { label: 'Custom', value: '{{10}}' }
+  { label: 'Email', value: '{{4}}' }
 ];
 
 export default function TemplatePage() {
@@ -46,12 +32,14 @@ export default function TemplatePage() {
   const [userData, setUserData] = useState(null);
   const [templateList, setTemplateList] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [headerType, setHeaderType] = useState('');
-  const [headerContent, setHeaderContent] = useState('');
-  const [headerFile, setHeaderFile] = useState(null);
   const { user } = useAuth();
-  const textareaRef = useRef();
 
+  // Header state
+  const [headerType, setHeaderType] = useState('NONE');
+  const [headerText, setHeaderText] = useState('');
+  const [headerFile, setHeaderFile] = useState(null);
+
+  // Carica userData con UID corretto!
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -62,6 +50,7 @@ export default function TemplatePage() {
     })();
   }, [user]);
 
+  // Caricamento e raggruppamento dei template
   const loadTemplates = async () => {
     if (!user?.uid) return;
     setLoading(true);
@@ -77,55 +66,53 @@ export default function TemplatePage() {
 
   useEffect(() => {
     if (userData?.id) loadTemplates();
+    // eslint-disable-next-line
   }, [userData]);
 
-  // Inserisci campo dinamico dove c'è il cursore
-  const insertVariable = (variable) => {
-    const ref = textareaRef.current;
-    if (!ref) return;
-    const start = ref.selectionStart;
-    const end = ref.selectionEnd;
-    const before = bodyText.slice(0, start);
-    const after = bodyText.slice(end);
-    setBodyText(before + variable + after);
-    setTimeout(() => {
-      ref.focus();
-      ref.selectionStart = ref.selectionEnd = start + variable.length;
-    }, 50);
+  // Insert dynamic variable into body
+  const insertVariable = v => {
+    setBodyText(prev => prev + v);
   };
 
-  const handleHeaderFileChange = async (e) => {
-    const file = e.target.files?.[0];
+  // Gestione file header
+  const handleFileChange = e => {
+    const file = e.target.files[0] || null;
     setHeaderFile(file);
-    setHeaderContent('');
   };
 
+  // Submit template
   const handleSubmit = async () => {
     if (!userData) {
       alert('Dati utente mancanti');
       return;
     }
-    let headerData = null;
-
-    if (headerType) {
-      if (headerType === 'TEXT') {
-        headerData = { type: 'TEXT', text: headerContent };
-      } else if (headerType === 'IMAGE' && headerFile) {
-        headerData = { type: 'IMAGE', fileName: headerFile.name };
-      } else if (headerType === 'DOCUMENT' && headerFile) {
-        headerData = { type: 'DOCUMENT', fileName: headerFile.name };
-      } else if (headerType === 'VIDEO' && headerFile) {
-        headerData = { type: 'VIDEO', fileName: headerFile.name };
+    let headerPayload = null;
+    if (headerType !== 'NONE') {
+      if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType)) {
+        if (!headerFile) {
+          alert('Seleziona un file per l’intestazione!');
+          return;
+        }
+        headerPayload = {
+          type: headerType,
+          fileName: headerFile.name
+          // L'upload reale lo fai nel backend!
+        };
+      } else if (headerType === 'TEXT') {
+        if (!headerText) {
+          alert('Inserisci un testo per l’intestazione!');
+          return;
+        }
+        headerPayload = { type: 'TEXT', text: headerText };
       }
     }
-
     const payload = {
       name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
       category,
       language,
       bodyText,
       user_uid: userData.id,
-      header: headerData,
+      header: headerPayload
     };
     const res = await fetch('/api/submit-template', {
       method: 'POST',
@@ -136,8 +123,8 @@ export default function TemplatePage() {
     setResponse(data);
     setName('');
     setBodyText('');
-    setHeaderType('');
-    setHeaderContent('');
+    setHeaderText('');
+    setHeaderType('NONE');
     setHeaderFile(null);
     setLoading(true);
     loadTemplates();
@@ -158,12 +145,86 @@ export default function TemplatePage() {
     }
   };
 
+  // ----------- FILTRO PER NON MOSTRARE I SAMPLE -----------
   const filteredTemplates = templateList.filter(tpl => !tpl.name.startsWith('sample_'));
   const grouped = filteredTemplates.reduce((acc, tpl) => {
     if (!acc[tpl.status]) acc[tpl.status] = [];
     acc[tpl.status].push(tpl);
     return acc;
   }, {});
+
+  // ----------- COMPONENTI UI HEADER -----------
+
+  const renderHeaderInput = () => {
+    if (headerType === 'NONE') return null;
+    if (headerType === 'TEXT') {
+      return (
+        <Input
+          placeholder="Testo intestazione"
+          value={headerText}
+          onChange={e => setHeaderText(e.target.value)}
+          className="mb-2"
+        />
+      );
+    }
+    if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType)) {
+      return (
+        <div className="flex items-center gap-3 mt-2">
+          <label className="relative inline-flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded-lg shadow cursor-pointer hover:bg-gray-200 transition font-medium text-gray-700">
+            <span>
+              <span className="inline-flex items-center gap-1">
+                {headerType === 'IMAGE' && <ImageIcon className="w-5 h-5" />}
+                {headerType === 'DOCUMENT' && <FileText className="w-5 h-5" />}
+                {headerType === 'VIDEO' && <Video className="w-5 h-5" />}
+                Sfoglia file
+              </span>
+              <input
+                type="file"
+                accept={
+                  headerType === 'IMAGE'
+                    ? 'image/*'
+                    : headerType === 'DOCUMENT'
+                    ? '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'
+                    : 'video/*'
+                }
+                className="hidden"
+                onChange={handleFileChange}
+              />
+            </span>
+          </label>
+          {headerFile ? (
+            <div className="flex items-center gap-2">
+              {headerType === 'IMAGE' ? (
+                <img
+                  src={URL.createObjectURL(headerFile)}
+                  alt="Anteprima"
+                  className="h-12 w-12 object-cover rounded shadow border"
+                />
+              ) : (
+                <span className="flex items-center text-sm text-gray-700 font-mono">
+                  {headerType === 'DOCUMENT' && <FileText className="w-4 h-4 mr-1 text-gray-400" />}
+                  {headerType === 'VIDEO' && <Video className="w-4 h-4 mr-1 text-gray-400" />}
+                  {headerFile.name}
+                </span>
+              )}
+              <button
+                className="ml-1 text-xs text-red-500 hover:text-red-700 bg-transparent border-none"
+                type="button"
+                onClick={() => setHeaderFile(null)}
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <span className="text-gray-400 text-sm ml-2">Nessun file selezionato</span>
+          )}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // ----------- RENDER PRINCIPALE -----------
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-tr from-green-50 via-white to-blue-50 py-8 px-2 font-[Montserrat]">
@@ -193,84 +254,55 @@ export default function TemplatePage() {
               <option value="OTP">OTP</option>
             </select>
           </div>
-
-          {/* HEADER */}
-          <div className="flex flex-col md:flex-row gap-4 mb-2">
-            <div className="w-full md:w-1/2">
-              <label className="block text-sm font-medium mb-1">Intestazione (opzionale):</label>
-              <select
-                className="border border-gray-300 rounded px-3 py-2 w-full bg-white"
-                value={headerType}
-                onChange={e => {
-                  setHeaderType(e.target.value);
-                  setHeaderContent('');
-                  setHeaderFile(null);
-                }}
+          <Input
+            placeholder="Lingua (es. it, en_US)"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            className="mb-2"
+          />
+          {/* --- HEADER MULTIMEDIALE --- */}
+          <div className="mb-2">
+            <label className="block font-medium text-gray-700 mb-1">Intestazione (header):</label>
+            <select
+              value={headerType}
+              onChange={e => {
+                setHeaderType(e.target.value);
+                setHeaderFile(null);
+                setHeaderText('');
+              }}
+              className="border border-gray-300 rounded px-3 py-2 w-full md:w-1/2 focus:outline-none focus:ring-2 focus:ring-gray-800 bg-white"
+            >
+              <option value="NONE">Nessuna</option>
+              <option value="IMAGE">Immagine</option>
+              <option value="DOCUMENT">Documento</option>
+              <option value="VIDEO">Video</option>
+              <option value="TEXT">Testo</option>
+            </select>
+            {renderHeaderInput()}
+          </div>
+          {/* --- CAMPI DINAMICI --- */}
+          <div className="mb-2 flex flex-wrap gap-2 items-center">
+            <span className="font-medium text-gray-700 mr-2">Campi dinamici:</span>
+            {DYNAMIC_FIELDS.map(f => (
+              <Button
+                key={f.value}
+                type="button"
+                size="sm"
+                className="bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-full px-3 py-1 text-xs"
+                onClick={() => insertVariable(f.value)}
               >
-                {HEADER_TYPES.map(h => (
-                  <option key={h.value} value={h.value}>{h.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="w-full md:w-1/2">
-              {headerType === 'IMAGE' && (
-                <label className="block mt-2">
-                  <span className="block mb-1 text-sm font-medium">Carica Immagine</span>
-                  <input type="file" accept="image/*" onChange={handleHeaderFileChange} />
-                  {headerFile && <span className="text-xs text-gray-500 mt-1">File selezionato: {headerFile.name}</span>}
-                </label>
-              )}
-              {headerType === 'DOCUMENT' && (
-                <label className="block mt-2">
-                  <span className="block mb-1 text-sm font-medium">Carica Documento</span>
-                  <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.zip,.txt" onChange={handleHeaderFileChange} />
-                  {headerFile && <span className="text-xs text-gray-500 mt-1">File selezionato: {headerFile.name}</span>}
-                </label>
-              )}
-              {headerType === 'VIDEO' && (
-                <label className="block mt-2">
-                  <span className="block mb-1 text-sm font-medium">Carica Video</span>
-                  <input type="file" accept="video/*" onChange={handleHeaderFileChange} />
-                  {headerFile && <span className="text-xs text-gray-500 mt-1">File selezionato: {headerFile.name}</span>}
-                </label>
-              )}
-              {headerType === 'TEXT' && (
-                <Input
-                  className="mt-2"
-                  placeholder="Testo intestazione"
-                  value={headerContent}
-                  onChange={e => setHeaderContent(e.target.value)}
-                />
-              )}
-            </div>
+                {f.label}
+              </Button>
+            ))}
+            <span className="ml-2 text-xs text-gray-400">(clicca per inserire)</span>
           </div>
-
-          {/* CAMPI DINAMICI */}
-          <div>
-            <div className="flex gap-2 mb-1 flex-wrap">
-              {DYNAMIC_FIELDS.map(btn => (
-                <Button
-                  key={btn.value}
-                  variant="outline"
-                  size="sm"
-                  type="button"
-                  className="px-3 py-1 text-xs"
-                  onClick={() => insertVariable(btn.value)}
-                  tabIndex={-1}
-                >
-                  {btn.label}
-                </Button>
-              ))}
-            </div>
-            <textarea
-              ref={textareaRef}
-              placeholder="Corpo del messaggio (usa i pulsanti sopra per inserire variabili dinamiche)"
-              rows={4}
-              className="border border-gray-300 rounded px-3 py-2 w-full resize-none focus:outline-none focus:ring-2 focus:ring-gray-800 mb-2"
-              value={bodyText}
-              onChange={e => setBodyText(e.target.value)}
-            />
-          </div>
+          <textarea
+            placeholder="Corpo del messaggio (puoi inserire variabili come {{1}})"
+            rows={4}
+            className="border border-gray-300 rounded px-3 py-2 w-full resize-none focus:outline-none focus:ring-2 focus:ring-gray-800 mb-2"
+            value={bodyText}
+            onChange={(e) => setBodyText(e.target.value)}
+          />
           <Button
             onClick={handleSubmit}
             className="bg-black text-white hover:bg-gray-800 px-6 py-3 rounded-xl font-semibold transition text-base w-full md:w-fit"
