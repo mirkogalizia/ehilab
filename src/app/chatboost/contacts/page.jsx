@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import {
   collection, doc, setDoc, getDocs, writeBatch, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp, where, query
 } from 'firebase/firestore';
@@ -9,15 +9,16 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import * as XLSX from 'xlsx';
 import {
-  Plus, Users, Send, X, Loader2, ArrowRight, Trash2, FolderSymlink, Info, Edit2, Save, Search
+  Plus, Users, Send, X, Loader2, ArrowRight, Trash2, FolderSymlink, Info, Edit2, Save
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
+// --- Normalizza telefono: restituisce SEMPRE +39... se ITA, accetta +... se internazionale ---
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim()
-    .replace(/^[+]+/, '')
-    .replace(/^00/, '')
+    .replace(/^[+]+/, '') // togli tutti i "+" all'inizio
+    .replace(/^00/, '')   // togli 00 iniziale
     .replace(/[\s\-().]/g, '');
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
   if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
@@ -52,15 +53,13 @@ export default function ContactsPage() {
   const [targetCategories, setTargetCategories] = useState([]);
   const [userData, setUserData] = useState(null);
   const [tagFilter, setTagFilter] = useState('');
-  const [search, setSearch] = useState(''); // <-- Barra di ricerca
 
   // --- Dettaglio e modifica contatto ---
   const [selectedContact, setSelectedContact] = useState(null);
   const [editMode, setEditMode] = useState(false);
   const [editData, setEditData] = useState({});
 
-  // ...[Caricamento dati: useEffect come prima, invariati]...
-
+  // Carica dati utente by UID
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -70,6 +69,7 @@ export default function ContactsPage() {
     })();
   }, [user]);
 
+  // Carica categorie realtime
   useEffect(() => {
     if (!user?.uid) return;
     const qCat = query(collection(db, 'categories'), where('createdBy', '==', user.uid));
@@ -79,6 +79,7 @@ export default function ContactsPage() {
     return () => unsub();
   }, [user]);
 
+  // Carica contatti realtime (nuovo formato, filtro per user.uid)
   useEffect(() => {
     if (!user?.uid) return;
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
@@ -99,6 +100,7 @@ export default function ContactsPage() {
     return () => unsub();
   }, [user, currentCat, showUnassigned, tagFilter]);
 
+  // Carica templates solo per user_uid
   useEffect(() => {
     async function loadTemplates() {
       if (!user?.uid) return;
@@ -115,41 +117,6 @@ export default function ContactsPage() {
     if (user?.uid) loadTemplates();
   }, [user]);
 
-  // --- Ricerca dinamica (filtra su tutti i campi principali) ---
-  const filteredContacts = useMemo(() => {
-    if (!search.trim()) return contacts;
-    const q = search.trim().toLowerCase();
-    return contacts.filter(c =>
-      (c.firstName || c.name || '').toLowerCase().includes(q) ||
-      (c.lastName || c.surname || '').toLowerCase().includes(q) ||
-      (c.phone || c.id || '').toLowerCase().includes(q) ||
-      (c.email || '').toLowerCase().includes(q) ||
-      (Array.isArray(c.tags) ? c.tags.join(',').toLowerCase() : '').includes(q)
-    );
-  }, [contacts, search]);
-
-  // --- Seleziona tutto visibile ---
-  const allVisibleSelected = filteredContacts.length > 0 && filteredContacts.every(c => selected.has(c.phone || c.id));
-  const someVisibleSelected = filteredContacts.some(c => selected.has(c.phone || c.id));
-
-  const toggleSelectAll = () => {
-    if (allVisibleSelected) {
-      setSelected(s => {
-        const updated = new Set(s);
-        filteredContacts.forEach(c => updated.delete(c.phone || c.id));
-        return updated;
-      });
-    } else {
-      setSelected(s => {
-        const updated = new Set(s);
-        filteredContacts.forEach(c => updated.add(c.phone || c.id));
-        return updated;
-      });
-    }
-  };
-
-  // ...[Funzioni add, edit, delete, move ecc. come sopra, invariati]...
-
   const createCategory = async () => {
     const name = newCat.trim();
     if (!name) return;
@@ -157,11 +124,91 @@ export default function ContactsPage() {
     setNewCat('');
   };
 
-  // --- AGGIUNTA NUOVO CONTATTO, IMPORT, MODAL, ecc. --- (tutto come sopra, invariato!)
+  // --------- AGGIUNTA NUOVO CONTATTO ----------
+  const addNewContact = async () => {
+    const phone = normalizePhone(newContactPhone.trim());
+    const firstName = newContactName.trim();
+    const lastName = newContactSurname.trim();
+    const email = newContactEmail.trim();
+    const tagsArr = newContactTags.split(',').map(s => s.trim()).filter(Boolean);
 
-  // ...resto codice come sopra...
+    if (!phone || !firstName) return alert('Compila nome e telefono validi!');
 
-  // --- Render
+    const ref = doc(db, 'contacts', phone);
+    await setDoc(ref, {
+      phone,
+      firstName,
+      lastName,
+      email,
+      tags: tagsArr,
+      categories: currentCat ? [currentCat] : [],
+      createdBy: user.uid,
+      source: "manual",
+      updatedAt: new Date(),
+    }, { merge: true });
+
+    setNewContactName('');
+    setNewContactSurname('');
+    setNewContactPhone('');
+    setNewContactEmail('');
+    setNewContactTags('');
+  };
+
+  // --------- IMPORT FILE EXCEL/CSV -----------
+  const importFile = async f => {
+    const data = await f.arrayBuffer();
+    const wb = XLSX.read(data, { type: 'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet);
+    const batch = writeBatch(db);
+    rows.forEach(r => {
+      const phone = normalizePhone(r.phone?.toString() || "");
+      const firstName = r.firstName || r.nome || r.name || "";
+      const lastName = r.lastName || r.cognome || r.surname || "";
+      const email = r.email || "";
+      const tags = [...new Set([...(r.tags ? r.tags.split(',').map(s => s.trim()) : []), 'import'])];
+      if (phone && firstName) {
+        const ref = doc(db, 'contacts', phone);
+        batch.set(ref, {
+          phone,
+          firstName,
+          lastName,
+          email,
+          tags,
+          categories: currentCat ? [currentCat] : [],
+          createdBy: user.uid,
+          source: "import",
+          updatedAt: new Date(),
+        }, { merge: true });
+      }
+    });
+    await batch.commit();
+  };
+
+  // ----------- SELEZIONA ----------
+  const toggleSelect = id => {
+    const s = new Set(selected);
+    s.has(id) ? s.delete(id) : s.add(id);
+    setSelected(s);
+  };
+
+  // ----------- INFO / EDIT MODAL -----------
+  const handleOpenContact = (contact) => {
+    setSelectedContact(contact);
+    setEditMode(false);
+    setEditData(contact);
+  };
+  const handleEditField = (field, value) => {
+    setEditData((prev) => ({ ...prev, [field]: value }));
+  };
+  const handleSaveEdit = async () => {
+    if (!selectedContact?.id) return;
+    await updateDoc(doc(db, 'contacts', selectedContact.id), { ...editData, updatedAt: new Date() });
+    setSelectedContact({ ...selectedContact, ...editData });
+    setEditMode(false);
+  };
+
+  // ----- RENDER -----
   return (
     <div className="h-screen flex flex-col md:flex-row font-[Montserrat]">
       {/* Sidebar categorie */}
@@ -186,6 +233,7 @@ export default function ContactsPage() {
                 ${currentCat === cat.id && !showUnassigned ? 'bg-blue-100 border-blue-600 text-blue-900' : 'bg-white border-gray-200 text-gray-800 hover:bg-gray-100'}`}
             >
               <span className="flex-1 text-left">{cat.name}</span>
+              {/* ...puoi aggiungere azioni categoria qui... */}
             </button>
           ))}
         </div>
@@ -218,17 +266,6 @@ export default function ContactsPage() {
           <div className="text-gray-500">Seleziona una categoria o "senza categoria"</div>
         ) : (
           <>
-            {/* --- Barra ricerca dinamica --- */}
-            <div className="flex items-center mb-4 gap-2 max-w-lg">
-              <Search className="text-gray-400" />
-              <Input
-                placeholder="Cerca nome, cognome, telefono, tag, email..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="flex-1"
-              />
-            </div>
-
             {/* Import e nuovo contatto */}
             <div className="mb-4 flex flex-wrap gap-4 items-center">
               <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
@@ -278,40 +315,6 @@ export default function ContactsPage() {
                   Aggiungi
                 </Button>
               </div>
-              {selected.size > 0 && (
-                <>
-                  <Button
-                    onClick={() => setMoveModalOpen(true)}
-                    className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white"
-                  >
-                    <FolderSymlink size={16} />
-                    Sposta ({selected.size})
-                  </Button>
-                  {currentCat &&
-                    <Button
-                      onClick={removeSelectedFromCategory}
-                      className="flex items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white"
-                    >
-                      <ArrowRight size={16} />
-                      Rimuovi da categoria
-                    </Button>
-                  }
-                  <Button
-                    onClick={deleteSelectedContacts}
-                    className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white"
-                  >
-                    <Trash2 size={16} />
-                    Elimina
-                  </Button>
-                  <Button
-                    onClick={() => setModalOpen(true)}
-                    className="flex items-center gap-1 bg-blue-700 hover:bg-blue-900 text-white"
-                  >
-                    <Send size={16} />
-                    Invia template
-                  </Button>
-                </>
-              )}
             </div>
 
             {/* Tabella contatti */}
@@ -319,15 +322,7 @@ export default function ContactsPage() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-100">
-                    <th className="p-2">
-                      <input
-                        type="checkbox"
-                        onChange={toggleSelectAll}
-                        checked={allVisibleSelected}
-                        ref={el => { if (el) el.indeterminate = !allVisibleSelected && someVisibleSelected; }}
-                        title="Seleziona tutti i visibili"
-                      />
-                    </th>
+                    <th className="p-2"></th>
                     <th className="p-2 text-left">Nome</th>
                     <th className="p-2 text-left">Cognome</th>
                     <th className="p-2 text-left">Telefono</th>
@@ -337,7 +332,7 @@ export default function ContactsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredContacts.map(c => (
+                  {contacts.map(c => (
                     <tr key={c.phone || c.id} className="hover:bg-gray-50">
                       <td className="p-2">
                         <input
@@ -366,13 +361,6 @@ export default function ContactsPage() {
                       </td>
                     </tr>
                   ))}
-                  {filteredContacts.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="py-8 text-center text-gray-400">
-                        Nessun contatto trovato.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
@@ -380,15 +368,83 @@ export default function ContactsPage() {
         )}
       </main>
 
-      {/* --- Tutte le modali come prima, invariato --- */}
-      {/* ...Modali info/edit, bulk, move... */}
+      {/* --- MODAL DETTAGLIO E MODIFICA --- */}
       {selectedContact && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          {/* ...modale info/edit come sopra... */}
+          <div className="bg-white rounded-xl shadow-2xl p-7 max-w-lg w-full relative">
+            <button
+              className="absolute top-3 right-4 text-gray-400 hover:text-gray-700 text-2xl"
+              onClick={() => { setSelectedContact(null); setEditMode(false); }}
+            >×</button>
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Info className="text-blue-600" /> {editMode ? 'Modifica contatto' : 'Dettagli contatto'}
+            </h3>
+            <div className="space-y-3 text-base">
+              {['firstName', 'lastName', 'email', 'address', 'city', 'zip', 'province', 'country', 'shop', 'orderId'].map((field) => (
+                <div key={field}>
+                  <b className="capitalize">{field}:</b>{' '}
+                  {editMode ? (
+                    <input
+                      type="text"
+                      value={editData[field] || ''}
+                      onChange={e => handleEditField(field, e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1 w-2/3"
+                    />
+                  ) : (
+                    <span>{selectedContact[field] || <span className="text-gray-400">–</span>}</span>
+                  )}
+                </div>
+              ))}
+              <div>
+                <b>Telefono:</b>{' '}
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={editData.phone || ''}
+                    onChange={e => handleEditField('phone', e.target.value)}
+                    className="border border-gray-300 rounded px-2 py-1 w-2/3"
+                  />
+                ) : (
+                  <span>{selectedContact.phone}</span>
+                )}
+              </div>
+              <div>
+                <b>Tag:</b>{' '}
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={(editData.tags || []).join(', ')}
+                    onChange={e => handleEditField('tags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                    className="border border-gray-300 rounded px-2 py-1 w-2/3"
+                  />
+                ) : (
+                  (selectedContact.tags || []).map(tag =>
+                    <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
+                  )
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end mt-6 gap-2">
+              {editMode ? (
+                <>
+                  <Button onClick={handleSaveEdit} className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-1">
+                    <Save size={16} /> Salva
+                  </Button>
+                  <Button onClick={() => setEditMode(false)} variant="outline">
+                    Annulla
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => setEditMode(true)} className="bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1">
+                  <Edit2 size={16} /> Modifica
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
       )}
-      {/* ...modal bulk... */}
-      {/* ...modal move... */}
+
+      {/* ...modali per invio massivo/spostamento contatti come prima... */}
     </div>
   );
 }
