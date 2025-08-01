@@ -17,8 +17,8 @@ import { useAuth } from '@/lib/useAuth';
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim()
-    .replace(/^[+]+/, '')
-    .replace(/^00/, '')
+    .replace(/^[+]+/, '') // togli tutti i "+" all'inizio
+    .replace(/^00/, '')   // togli 00 iniziale
     .replace(/[\s\-().]/g, '');
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
   if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
@@ -35,15 +35,13 @@ export default function ContactsPage() {
   const [selected, setSelected] = useState(new Set());
   const [showUnassigned, setShowUnassigned] = useState(false);
 
-  // Popup nuovo contatto
-  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [newCat, setNewCat] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [newContactSurname, setNewContactSurname] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactTags, setNewContactTags] = useState('');
 
-  const [newCat, setNewCat] = useState('');
   const [templates, setTemplates] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [templateToSend, setTemplateToSend] = useState(null);
@@ -88,6 +86,7 @@ export default function ContactsPage() {
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
     const unsub = onSnapshot(qContacts, snap => {
       let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Ricerca dinamica
       if (search) {
         arr = arr.filter(c =>
           (c.firstName || c.name || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -151,13 +150,6 @@ export default function ContactsPage() {
       lastName,
       email,
       tags: tagsArr,
-      address: "",
-      city: "",
-      zip: "",
-      province: "",
-      country: "",
-      shop: "",
-      orderId: "",
       categories: currentCat ? [currentCat] : [],
       createdBy: user.uid,
       source: "manual",
@@ -169,7 +161,6 @@ export default function ContactsPage() {
     setNewContactPhone('');
     setNewContactEmail('');
     setNewContactTags('');
-    setCreateModalOpen(false);
   };
 
   // --------- IMPORT FILE EXCEL/CSV -----------
@@ -193,13 +184,6 @@ export default function ContactsPage() {
           lastName,
           email,
           tags,
-          address: r.address || "",
-          city: r.city || "",
-          zip: r.zip || "",
-          province: r.province || "",
-          country: r.country || "",
-          shop: r.shop || "",
-          orderId: r.orderId || "",
           categories: currentCat ? [currentCat] : [],
           createdBy: user.uid,
           source: "import",
@@ -217,11 +201,9 @@ export default function ContactsPage() {
     setSelected(s);
   };
 
-  // Checkbox nella header per bulk
-  const toggleSelectAll = (checked) => {
-    if (checked) setSelected(new Set(contacts.map(c => c.phone || c.id)));
-    else setSelected(new Set());
-  };
+  // ----------- BULK SELECT -----------
+  const selectAll = () => setSelected(new Set(contacts.map(c => c.phone || c.id)));
+  const deselectAll = () => setSelected(new Set());
 
   // ----------- BULK DELETE -----------
   const deleteSelectedContacts = async () => {
@@ -269,50 +251,18 @@ export default function ContactsPage() {
 
   // ----------- INFO / EDIT MODAL -----------
   const handleOpenContact = (contact) => {
-    // Inizializza tutti i campi previsti
-    setEditData({
-      firstName: contact.firstName || '',
-      lastName: contact.lastName || '',
-      email: contact.email || '',
-      address: contact.address || '',
-      city: contact.city || '',
-      zip: contact.zip || '',
-      province: contact.province || '',
-      country: contact.country || '',
-      shop: contact.shop || '',
-      orderId: contact.orderId || '',
-      phone: contact.phone || '',
-      tags: Array.isArray(contact.tags) ? contact.tags : [],
-    });
     setSelectedContact(contact);
     setEditMode(false);
+    setEditData(contact);
   };
-
-  // Salva modifiche
   const handleEditField = (field, value) => {
     setEditData((prev) => ({ ...prev, [field]: value }));
   };
   const handleSaveEdit = async () => {
     if (!selectedContact?.id && !selectedContact?.phone) return;
     const docId = selectedContact.phone || selectedContact.id;
-    // Prepara tutti i campi chiave
-    const fullEditData = {
-      firstName: editData.firstName || '',
-      lastName: editData.lastName || '',
-      email: editData.email || '',
-      address: editData.address || '',
-      city: editData.city || '',
-      zip: editData.zip || '',
-      province: editData.province || '',
-      country: editData.country || '',
-      shop: editData.shop || '',
-      orderId: editData.orderId || '',
-      phone: editData.phone || '',
-      tags: Array.isArray(editData.tags) ? editData.tags : [],
-      updatedAt: new Date()
-    };
-    await updateDoc(doc(db, 'contacts', docId), fullEditData);
-    setSelectedContact({ ...selectedContact, ...fullEditData });
+    await updateDoc(doc(db, 'contacts', docId), { ...editData, updatedAt: new Date() });
+    setSelectedContact({ ...selectedContact, ...editData });
     setEditMode(false);
   };
 
@@ -387,8 +337,398 @@ export default function ContactsPage() {
   // ----- RENDER -----
   return (
     <div className="h-screen flex flex-col md:flex-row font-[Montserrat]">
-      {/* ...tutto il JSX identico a quello che hai postato, nessun </Button> fuori posto... */}
-      {/* ...modal per creazione/modifica/spostamento/invio massivo inclusi... */}
+      {/* Sidebar categorie */}
+      <aside className="w-full md:w-1/4 bg-white border-r p-4 overflow-y-auto">
+        <div className="flex items-center gap-2 mb-4">
+          <Users />
+          <span className="text-xl font-semibold">Categorie</span>
+          <Button
+            onClick={() => { setShowUnassigned(true); setCurrentCat(null); }}
+            variant={showUnassigned ? "default" : "outline"}
+            className={`ml-auto text-xs px-3 py-1 ${showUnassigned ? 'bg-blue-600 text-white' : ''}`}
+          >
+            Senza categoria
+          </Button>
+        </div>
+        <div className="flex flex-col gap-2 md:gap-2">
+          {categories.map(cat => (
+            <button
+              key={cat.id}
+              onClick={() => { setCurrentCat(cat.id); setShowUnassigned(false); }}
+              className={`flex items-center justify-between px-4 py-2 rounded-lg font-medium border transition
+                ${currentCat === cat.id && !showUnassigned ? 'bg-blue-100 border-blue-600 text-blue-900' : 'bg-white border-gray-200 text-gray-800 hover:bg-gray-100'}`}
+            >
+              <span className="flex-1 text-left">{cat.name}</span>
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 mt-4">
+          <Input
+            placeholder="Nuova categoria"
+            value={newCat}
+            onChange={e => setNewCat(e.target.value)}
+          />
+          <Button onClick={createCategory} className="flex items-center gap-1">
+            <Plus />
+            Crea
+          </Button>
+        </div>
+        {/* Filtro tag */}
+        <div className="mt-6">
+          <label className="text-sm text-gray-600 mr-2">Filtro per tag:</label>
+          <select value={tagFilter} onChange={e => setTagFilter(e.target.value)}>
+            <option value="">Tutti</option>
+            {[...new Set(contacts.flatMap(c => c.tags||[]))].map(tag => (
+              <option key={tag} value={tag}>{tag}</option>
+            ))}
+          </select>
+        </div>
+      </aside>
+
+      {/* Contatti e azioni */}
+      <main className="flex-1 p-4 overflow-y-auto flex flex-col">
+        {!currentCat && !showUnassigned ? (
+          <div className="text-gray-500">Seleziona una categoria o "senza categoria"</div>
+        ) : (
+          <>
+            {/* Ricerca e bulk select */}
+            <div className="mb-4 flex flex-wrap gap-4 items-center">
+              <Input
+                placeholder="Cerca nome, cognome, telefono..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-64"
+              />
+              <Button variant="outline" onClick={selectAll} className="text-xs">Seleziona tutti</Button>
+              <Button variant="outline" onClick={deselectAll} className="text-xs">Deseleziona tutti</Button>
+              <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
+                Importa Excel/CSV
+                <input
+                  type="file"
+                  accept=".xls,.xlsx,.csv"
+                  className="hidden"
+                  onChange={e => e.target.files[0] && importFile(e.target.files[0])}
+                />
+              </label>
+              <div className="flex gap-2 items-center">
+                <Input
+                  placeholder="Nome"
+                  value={newContactName}
+                  onChange={e => setNewContactName(e.target.value)}
+                  className="w-32"
+                />
+                <Input
+                  placeholder="Cognome"
+                  value={newContactSurname}
+                  onChange={e => setNewContactSurname(e.target.value)}
+                  className="w-32"
+                />
+                <Input
+                  placeholder="Telefono"
+                  value={newContactPhone}
+                  onChange={e => setNewContactPhone(e.target.value)}
+                  className="w-40"
+                />
+                <Input
+                  placeholder="Email"
+                  value={newContactEmail}
+                  onChange={e => setNewContactEmail(e.target.value)}
+                  className="w-40"
+                />
+                <Input
+                  placeholder="Tag (virgola separati)"
+                  value={newContactTags}
+                  onChange={e => setNewContactTags(e.target.value)}
+                  className="w-48"
+                />
+                <Button
+                  onClick={addNewContact}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  Aggiungi
+                </Button>
+              </div>
+              {/* Azioni bulk */}
+              {selected.size > 0 && (
+                <>
+                  <Button
+                    onClick={() => setMoveModalOpen(true)}
+                    className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white"
+                  >
+                    <FolderSymlink size={16} />
+                    Sposta ({selected.size})
+                  </Button>
+                  {currentCat &&
+                    <Button
+                      onClick={removeSelectedFromCategory}
+                      className="flex items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white"
+                    >
+                      <ArrowRight size={16} />
+                      Rimuovi da categoria
+                    </Button>
+                  }
+                  <Button
+                    onClick={deleteSelectedContacts}
+                    className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    <Trash2 size={16} />
+                    Elimina
+                  </Button>
+                  <Button
+                    onClick={() => setModalOpen(true)}
+                    className="flex items-center gap-1 bg-blue-700 hover:bg-blue-900 text-white"
+                  >
+                    <Send size={16} />
+                    Invia template
+                  </Button>
+                </>
+              )}
+            </div>
+
+            {/* Tabella contatti */}
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-gray-100">
+                    <th className="p-2"></th>
+                    <th className="p-2 text-left">Nome</th>
+                    <th className="p-2 text-left">Cognome</th>
+                    <th className="p-2 text-left">Telefono</th>
+                    <th className="p-2 text-left">Email</th>
+                    <th className="p-2 text-left">Tag</th>
+                    <th className="p-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contacts.map(c => (
+                    <tr key={c.phone || c.id} className="hover:bg-gray-50">
+                      <td className="p-2">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(c.phone || c.id)}
+                          onChange={() => toggleSelect(c.phone || c.id)}
+                        />
+                      </td>
+                      <td className="p-2">{c.firstName || c.name}</td>
+                      <td className="p-2">{c.lastName || c.surname}</td>
+                      <td className="p-2">{c.phone || c.id}</td>
+                      <td className="p-2">{c.email || '-'}</td>
+                      <td className="p-2">
+                        {(c.tags||[]).map(tag =>
+                          <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        <button
+                          onClick={() => handleOpenContact(c)}
+                          className="text-blue-600 hover:text-blue-900"
+                          title="Dettagli contatto"
+                        >
+                          <Info size={18} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </main>
+
+      {/* --- MODAL DETTAGLIO E MODIFICA --- */}
+      {selectedContact && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-7 max-w-lg w-full relative">
+            <button
+              className="absolute top-3 right-4 text-gray-400 hover:text-gray-700 text-2xl"
+              onClick={() => { setSelectedContact(null); setEditMode(false); }}
+            >×</button>
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Info className="text-blue-600" /> {editMode ? 'Modifica contatto' : 'Dettagli contatto'}
+            </h3>
+            <div className="space-y-3 text-base">
+              {['firstName', 'lastName', 'email', 'address', 'city', 'zip', 'province', 'country', 'shop', 'orderId'].map((field) => (
+                <div key={field}>
+                  <b className="capitalize">{field}:</b>{' '}
+                  {editMode ? (
+                    <input
+                      type="text"
+                      value={editData[field] || ''}
+                      onChange={e => handleEditField(field, e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1 w-2/3"
+                    />
+                  ) : (
+                    <span>{selectedContact[field] || <span className="text-gray-400">–</span>}</span>
+                  )}
+                </div>
+              ))}
+              <div>
+                <b>Telefono:</b>{' '}
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={editData.phone || ''}
+                    onChange={e => handleEditField('phone', e.target.value)}
+                    className="border border-gray-300 rounded px-2 py-1 w-2/3"
+                  />
+                ) : (
+                  <span>{selectedContact.phone}</span>
+                )}
+              </div>
+              <div>
+                <b>Tag:</b>{' '}
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={(editData.tags || []).join(', ')}
+                    onChange={e => handleEditField('tags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                    className="border border-gray-300 rounded px-2 py-1 w-2/3"
+                  />
+                ) : (
+                  (selectedContact.tags || []).map(tag =>
+                    <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
+                  )
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end mt-6 gap-2">
+              {editMode ? (
+                <>
+                  <Button onClick={handleSaveEdit} className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-1">
+                    <Save size={16} /> Salva
+                  </Button>
+                  <Button onClick={() => setEditMode(false)} variant="outline">
+                    Annulla
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => setEditMode(true)} className="bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1">
+                  <Edit2 size={16} /> Modifica
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal invio massivo */}
+      {modalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
+            <button
+              onClick={() => setModalOpen(false)}
+              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
+              title="Chiudi"
+            >
+              <X size={20} />
+            </button>
+            <h3 className="text-lg font-semibold mb-4">
+              Invia template ai selezionati ({selected.size})
+            </h3>
+            <div className="mb-4">
+              <label className="block mb-1 font-medium">Seleziona template:</label>
+              <select
+                value={templateToSend?.name || ''}
+                onChange={e => {
+                  const tpl = templates.find(t => t.name === e.target.value);
+                  setTemplateToSend(tpl || null);
+                }}
+                className="w-full border border-gray-300 rounded px-3 py-2"
+              >
+                <option value="">-- Scegli un template --</option>
+                {templates.map(tpl => (
+                  <option key={tpl.name} value={tpl.name}>
+                    {tpl.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={sendTemplateMassive}
+                disabled={sending || !templateToSend}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {sending && <Loader2 className="animate-spin" size={18} />}
+                Invia ai selezionati
+              </Button>
+              <Button onClick={() => setModalOpen(false)} variant="outline">
+                Annulla
+              </Button>
+            </div>
+            {sendLog && (
+              <pre className="mt-4 max-h-40 overflow-y-auto bg-gray-100 p-2 rounded text-xs whitespace-pre-wrap">
+                {sendLog}
+              </pre>
+            )}
+            {report.length > 0 && (
+              <div className="mt-3 bg-blue-50 rounded-lg p-2 max-h-32 overflow-y-auto text-xs">
+                <b>Report invio:</b>
+                <ul>
+                  {report.map(r =>
+                    <li key={r.id}>
+                      {r.name} ({r.id}): <span className={r.status === 'OK' ? 'text-green-700' : 'text-red-600'}>
+                        {r.status}{r.error && ` (${r.error})`}
+                      </span>
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal sposta contatti */}
+      {moveModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
+            <button
+              onClick={() => setMoveModalOpen(false)}
+              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
+              title="Chiudi"
+            >
+              <X size={20} />
+            </button>
+            <h3 className="text-lg font-semibold mb-4">Sposta contatti selezionati</h3>
+            <div>
+              <label className="block mb-2">Categorie di destinazione:</label>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {categories.map(cat => (
+                  <label
+                    key={cat.id}
+                    className={`cursor-pointer px-3 py-2 rounded-lg border ${
+                      targetCategories.includes(cat.id)
+                        ? 'bg-blue-600 text-white border-blue-700'
+                        : 'bg-gray-100 text-gray-800 border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={targetCategories.includes(cat.id)}
+                      onChange={e => {
+                        if (e.target.checked) setTargetCategories([...targetCategories, cat.id]);
+                        else setTargetCategories(targetCategories.filter(id => id !== cat.id));
+                      }}
+                      className="mr-1"
+                    />
+                    {cat.name}
+                  </label>
+                ))}
+              </div>
+              <Button
+                onClick={moveContacts}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white"
+                disabled={targetCategories.length === 0}
+              >
+                Sposta
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
