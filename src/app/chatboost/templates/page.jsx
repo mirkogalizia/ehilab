@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { db } from '@/lib/firebase';
@@ -16,6 +16,27 @@ const STATUS_COLORS = {
   DRAFT: 'bg-gray-100 text-gray-500 border-gray-200'
 };
 
+const HEADER_TYPES = [
+  { value: '', label: 'Nessuno' },
+  { value: 'IMAGE', label: 'Immagine' },
+  { value: 'DOCUMENT', label: 'Documento' },
+  { value: 'VIDEO', label: 'Video' },
+  { value: 'TEXT', label: 'Testo' }
+];
+
+const DYNAMIC_FIELDS = [
+  { label: 'Nome', value: '{{1}}' },
+  { label: 'Cognome', value: '{{2}}' },
+  { label: 'Telefono', value: '{{3}}' },
+  { label: 'Email', value: '{{4}}' },
+  { label: 'Azienda', value: '{{5}}' },
+  { label: 'Città', value: '{{6}}' },
+  { label: 'Data', value: '{{7}}' },
+  { label: 'Ordine', value: '{{8}}' },
+  { label: 'Importo', value: '{{9}}' },
+  { label: 'Custom', value: '{{10}}' }
+];
+
 export default function TemplatePage() {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('MARKETING');
@@ -25,9 +46,12 @@ export default function TemplatePage() {
   const [userData, setUserData] = useState(null);
   const [templateList, setTemplateList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [headerType, setHeaderType] = useState('');
+  const [headerContent, setHeaderContent] = useState('');
+  const [headerFile, setHeaderFile] = useState(null);
   const { user } = useAuth();
+  const textareaRef = useRef();
 
-  // Carica userData con UID corretto!
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -38,7 +62,6 @@ export default function TemplatePage() {
     })();
   }, [user]);
 
-  // Caricamento e raggruppamento dei template
   const loadTemplates = async () => {
     if (!user?.uid) return;
     setLoading(true);
@@ -52,23 +75,57 @@ export default function TemplatePage() {
     setLoading(false);
   };
 
-  // Aggiorna templates quando hai userData
   useEffect(() => {
     if (userData?.id) loadTemplates();
-    // eslint-disable-next-line
   }, [userData]);
+
+  // Inserisci campo dinamico dove c'è il cursore
+  const insertVariable = (variable) => {
+    const ref = textareaRef.current;
+    if (!ref) return;
+    const start = ref.selectionStart;
+    const end = ref.selectionEnd;
+    const before = bodyText.slice(0, start);
+    const after = bodyText.slice(end);
+    setBodyText(before + variable + after);
+    setTimeout(() => {
+      ref.focus();
+      ref.selectionStart = ref.selectionEnd = start + variable.length;
+    }, 50);
+  };
+
+  const handleHeaderFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    setHeaderFile(file);
+    setHeaderContent('');
+  };
 
   const handleSubmit = async () => {
     if (!userData) {
       alert('Dati utente mancanti');
       return;
     }
+    let headerData = null;
+
+    if (headerType) {
+      if (headerType === 'TEXT') {
+        headerData = { type: 'TEXT', text: headerContent };
+      } else if (headerType === 'IMAGE' && headerFile) {
+        headerData = { type: 'IMAGE', fileName: headerFile.name };
+      } else if (headerType === 'DOCUMENT' && headerFile) {
+        headerData = { type: 'DOCUMENT', fileName: headerFile.name };
+      } else if (headerType === 'VIDEO' && headerFile) {
+        headerData = { type: 'VIDEO', fileName: headerFile.name };
+      }
+    }
+
     const payload = {
       name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
       category,
       language,
       bodyText,
       user_uid: userData.id,
+      header: headerData,
     };
     const res = await fetch('/api/submit-template', {
       method: 'POST',
@@ -79,6 +136,9 @@ export default function TemplatePage() {
     setResponse(data);
     setName('');
     setBodyText('');
+    setHeaderType('');
+    setHeaderContent('');
+    setHeaderFile(null);
     setLoading(true);
     loadTemplates();
   };
@@ -98,7 +158,6 @@ export default function TemplatePage() {
     }
   };
 
-  // ----------- FILTRO PER NON MOSTRARE I SAMPLE -----------
   const filteredTemplates = templateList.filter(tpl => !tpl.name.startsWith('sample_'));
   const grouped = filteredTemplates.reduce((acc, tpl) => {
     if (!acc[tpl.status]) acc[tpl.status] = [];
@@ -134,19 +193,84 @@ export default function TemplatePage() {
               <option value="OTP">OTP</option>
             </select>
           </div>
-          <Input
-            placeholder="Lingua (es. it, en_US)"
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="mb-2"
-          />
-          <textarea
-            placeholder="Corpo del messaggio"
-            rows={4}
-            className="border border-gray-300 rounded px-3 py-2 w-full resize-none focus:outline-none focus:ring-2 focus:ring-gray-800 mb-2"
-            value={bodyText}
-            onChange={(e) => setBodyText(e.target.value)}
-          />
+
+          {/* HEADER */}
+          <div className="flex flex-col md:flex-row gap-4 mb-2">
+            <div className="w-full md:w-1/2">
+              <label className="block text-sm font-medium mb-1">Intestazione (opzionale):</label>
+              <select
+                className="border border-gray-300 rounded px-3 py-2 w-full bg-white"
+                value={headerType}
+                onChange={e => {
+                  setHeaderType(e.target.value);
+                  setHeaderContent('');
+                  setHeaderFile(null);
+                }}
+              >
+                {HEADER_TYPES.map(h => (
+                  <option key={h.value} value={h.value}>{h.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="w-full md:w-1/2">
+              {headerType === 'IMAGE' && (
+                <label className="block mt-2">
+                  <span className="block mb-1 text-sm font-medium">Carica Immagine</span>
+                  <input type="file" accept="image/*" onChange={handleHeaderFileChange} />
+                  {headerFile && <span className="text-xs text-gray-500 mt-1">File selezionato: {headerFile.name}</span>}
+                </label>
+              )}
+              {headerType === 'DOCUMENT' && (
+                <label className="block mt-2">
+                  <span className="block mb-1 text-sm font-medium">Carica Documento</span>
+                  <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.zip,.txt" onChange={handleHeaderFileChange} />
+                  {headerFile && <span className="text-xs text-gray-500 mt-1">File selezionato: {headerFile.name}</span>}
+                </label>
+              )}
+              {headerType === 'VIDEO' && (
+                <label className="block mt-2">
+                  <span className="block mb-1 text-sm font-medium">Carica Video</span>
+                  <input type="file" accept="video/*" onChange={handleHeaderFileChange} />
+                  {headerFile && <span className="text-xs text-gray-500 mt-1">File selezionato: {headerFile.name}</span>}
+                </label>
+              )}
+              {headerType === 'TEXT' && (
+                <Input
+                  className="mt-2"
+                  placeholder="Testo intestazione"
+                  value={headerContent}
+                  onChange={e => setHeaderContent(e.target.value)}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* CAMPI DINAMICI */}
+          <div>
+            <div className="flex gap-2 mb-1 flex-wrap">
+              {DYNAMIC_FIELDS.map(btn => (
+                <Button
+                  key={btn.value}
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  className="px-3 py-1 text-xs"
+                  onClick={() => insertVariable(btn.value)}
+                  tabIndex={-1}
+                >
+                  {btn.label}
+                </Button>
+              ))}
+            </div>
+            <textarea
+              ref={textareaRef}
+              placeholder="Corpo del messaggio (usa i pulsanti sopra per inserire variabili dinamiche)"
+              rows={4}
+              className="border border-gray-300 rounded px-3 py-2 w-full resize-none focus:outline-none focus:ring-2 focus:ring-gray-800 mb-2"
+              value={bodyText}
+              onChange={e => setBodyText(e.target.value)}
+            />
+          </div>
           <Button
             onClick={handleSubmit}
             className="bg-black text-white hover:bg-gray-800 px-6 py-3 rounded-xl font-semibold transition text-base w-full md:w-fit"
