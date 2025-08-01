@@ -13,12 +13,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
-// --- Normalizza telefono: restituisce SEMPRE +39... se ITA, accetta +... se internazionale ---
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim()
-    .replace(/^[+]+/, '') // togli tutti i "+" all'inizio
-    .replace(/^00/, '')   // togli 00 iniziale
+    .replace(/^[+]+/, '')
+    .replace(/^00/, '')
     .replace(/[\s\-().]/g, '');
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
   if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
@@ -35,13 +34,15 @@ export default function ContactsPage() {
   const [selected, setSelected] = useState(new Set());
   const [showUnassigned, setShowUnassigned] = useState(false);
 
-  const [newCat, setNewCat] = useState('');
+  // Popup nuovo contatto
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const [newContactName, setNewContactName] = useState('');
   const [newContactSurname, setNewContactSurname] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactTags, setNewContactTags] = useState('');
 
+  const [newCat, setNewCat] = useState('');
   const [templates, setTemplates] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [templateToSend, setTemplateToSend] = useState(null);
@@ -86,7 +87,6 @@ export default function ContactsPage() {
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
     const unsub = onSnapshot(qContacts, snap => {
       let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Ricerca dinamica
       if (search) {
         arr = arr.filter(c =>
           (c.firstName || c.name || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -150,6 +150,13 @@ export default function ContactsPage() {
       lastName,
       email,
       tags: tagsArr,
+      address: "",
+      city: "",
+      zip: "",
+      province: "",
+      country: "",
+      shop: "",
+      orderId: "",
       categories: currentCat ? [currentCat] : [],
       createdBy: user.uid,
       source: "manual",
@@ -161,6 +168,7 @@ export default function ContactsPage() {
     setNewContactPhone('');
     setNewContactEmail('');
     setNewContactTags('');
+    setCreateModalOpen(false);
   };
 
   // --------- IMPORT FILE EXCEL/CSV -----------
@@ -184,6 +192,13 @@ export default function ContactsPage() {
           lastName,
           email,
           tags,
+          address: r.address || "",
+          city: r.city || "",
+          zip: r.zip || "",
+          province: r.province || "",
+          country: r.country || "",
+          shop: r.shop || "",
+          orderId: r.orderId || "",
           categories: currentCat ? [currentCat] : [],
           createdBy: user.uid,
           source: "import",
@@ -201,11 +216,11 @@ export default function ContactsPage() {
     setSelected(s);
   };
 
-  // ----------- BULK SELECT -----------
-  const selectAll = () => setSelected(new Set(contacts.map(c => c.phone || c.id)));
-  const deselectAll = () => setSelected(new Set());
+  const toggleSelectAll = (checked) => {
+    if (checked) setSelected(new Set(contacts.map(c => c.phone || c.id)));
+    else setSelected(new Set());
+  };
 
-  // ----------- BULK DELETE -----------
   const deleteSelectedContacts = async () => {
     if (!window.confirm('Sei sicuro di voler eliminare i contatti selezionati?')) return;
     const batch = writeBatch(db);
@@ -216,7 +231,6 @@ export default function ContactsPage() {
     setSelected(new Set());
   };
 
-  // ----------- MOVE TO CATEGORY -----------
   const moveContacts = async () => {
     if (targetCategories.length === 0 || selected.size === 0) return;
     const batch = writeBatch(db);
@@ -235,7 +249,6 @@ export default function ContactsPage() {
     setTargetCategories([]);
   };
 
-  // ----------- REMOVE FROM CATEGORY -----------
   const removeSelectedFromCategory = async () => {
     if (!currentCat) return;
     const batch = writeBatch(db);
@@ -251,18 +264,47 @@ export default function ContactsPage() {
 
   // ----------- INFO / EDIT MODAL -----------
   const handleOpenContact = (contact) => {
+    setEditData({
+      firstName: contact.firstName || '',
+      lastName: contact.lastName || '',
+      email: contact.email || '',
+      address: contact.address || '',
+      city: contact.city || '',
+      zip: contact.zip || '',
+      province: contact.province || '',
+      country: contact.country || '',
+      shop: contact.shop || '',
+      orderId: contact.orderId || '',
+      phone: contact.phone || '',
+      tags: Array.isArray(contact.tags) ? contact.tags : [],
+    });
     setSelectedContact(contact);
     setEditMode(false);
-    setEditData(contact);
   };
+
   const handleEditField = (field, value) => {
     setEditData((prev) => ({ ...prev, [field]: value }));
   };
   const handleSaveEdit = async () => {
     if (!selectedContact?.id && !selectedContact?.phone) return;
     const docId = selectedContact.phone || selectedContact.id;
-    await updateDoc(doc(db, 'contacts', docId), { ...editData, updatedAt: new Date() });
-    setSelectedContact({ ...selectedContact, ...editData });
+    const fullEditData = {
+      firstName: editData.firstName || '',
+      lastName: editData.lastName || '',
+      email: editData.email || '',
+      address: editData.address || '',
+      city: editData.city || '',
+      zip: editData.zip || '',
+      province: editData.province || '',
+      country: editData.country || '',
+      shop: editData.shop || '',
+      orderId: editData.orderId || '',
+      phone: editData.phone || '',
+      tags: Array.isArray(editData.tags) ? editData.tags : [],
+      updatedAt: new Date()
+    };
+    await updateDoc(doc(db, 'contacts', docId), fullEditData);
+    setSelectedContact({ ...selectedContact, ...fullEditData });
     setEditMode(false);
   };
 
@@ -387,154 +429,172 @@ export default function ContactsPage() {
 
       {/* Contatti e azioni */}
       <main className="flex-1 p-4 overflow-y-auto flex flex-col">
-        {!currentCat && !showUnassigned ? (
-          <div className="text-gray-500">Seleziona una categoria o "senza categoria"</div>
-        ) : (
-          <>
-            {/* Ricerca e bulk select */}
-            <div className="mb-4 flex flex-wrap gap-4 items-center">
-              <Input
-                placeholder="Cerca nome, cognome, telefono..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="w-64"
-              />
-              <Button variant="outline" onClick={selectAll} className="text-xs">Seleziona tutti</Button>
-              <Button variant="outline" onClick={deselectAll} className="text-xs">Deseleziona tutti</Button>
-              <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
-                Importa Excel/CSV
-                <input
-                  type="file"
-                  accept=".xls,.xlsx,.csv"
-                  className="hidden"
-                  onChange={e => e.target.files[0] && importFile(e.target.files[0])}
-                />
-              </label>
-              <div className="flex gap-2 items-center">
-                <Input
-                  placeholder="Nome"
-                  value={newContactName}
-                  onChange={e => setNewContactName(e.target.value)}
-                  className="w-32"
-                />
-                <Input
-                  placeholder="Cognome"
-                  value={newContactSurname}
-                  onChange={e => setNewContactSurname(e.target.value)}
-                  className="w-32"
-                />
-                <Input
-                  placeholder="Telefono"
-                  value={newContactPhone}
-                  onChange={e => setNewContactPhone(e.target.value)}
-                  className="w-40"
-                />
-                <Input
-                  placeholder="Email"
-                  value={newContactEmail}
-                  onChange={e => setNewContactEmail(e.target.value)}
-                  className="w-40"
-                />
-                <Input
-                  placeholder="Tag (virgola separati)"
-                  value={newContactTags}
-                  onChange={e => setNewContactTags(e.target.value)}
-                  className="w-48"
-                />
+        {/* Barra ricerca, + e importa */}
+        <div className="mb-4 flex flex-wrap gap-4 items-center">
+          <Input
+            placeholder="Cerca nome, cognome, telefono..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-64"
+          />
+          <Button
+            onClick={() => setCreateModalOpen(true)}
+            className="bg-green-700 text-white flex items-center gap-1"
+          >
+            <Plus size={18}/> Crea contatto
+          </Button>
+          <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
+            Importa Excel/CSV
+            <input
+              type="file"
+              accept=".xls,.xlsx,.csv"
+              className="hidden"
+              onChange={e => e.target.files[0] && importFile(e.target.files[0])}
+            />
+          </label>
+          {selected.size > 0 && (
+            <>
+              <Button
+                onClick={() => setMoveModalOpen(true)}
+                className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white"
+              >
+                <FolderSymlink size={16} />
+                Sposta ({selected.size})
+              </Button>
+              {currentCat &&
                 <Button
-                  onClick={addNewContact}
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  onClick={removeSelectedFromCategory}
+                  className="flex items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white"
                 >
-                  Aggiungi
+                  <ArrowRight size={16} />
+                  Rimuovi da categoria
                 </Button>
-              </div>
-              {/* Azioni bulk */}
-              {selected.size > 0 && (
-                <>
-                  <Button
-                    onClick={() => setMoveModalOpen(true)}
-                    className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white"
-                  >
-                    <FolderSymlink size={16} />
-                    Sposta ({selected.size})
-                  </Button>
-                  {currentCat &&
-                    <Button
-                      onClick={removeSelectedFromCategory}
-                      className="flex items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white"
-                    >
-                      <ArrowRight size={16} />
-                      Rimuovi da categoria
-                    </Button>
-                  }
-                  <Button
-                    onClick={deleteSelectedContacts}
-                    className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white"
-                  >
-                    <Trash2 size={16} />
-                    Elimina
-                  </Button>
-                  <Button
-                    onClick={() => setModalOpen(true)}
-                    className="flex items-center gap-1 bg-blue-700 hover:bg-blue-900 text-white"
-                  >
-                    <Send size={16} />
-                    Invia template
-                  </Button>
-                </>
-              )}
-            </div>
+              }
+              <Button
+                onClick={deleteSelectedContacts}
+                className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white"
+              >
+                <Trash2 size={16} />
+                Elimina
+              </Button>
+              <Button
+                onClick={() => setModalOpen(true)}
+                className="flex items-center gap-1 bg-blue-700 hover:bg-blue-900 text-white"
+              >
+                <Send size={16} />
+                Invia template
+              </Button>
+            </>
+          )}
+        </div>
 
-            {/* Tabella contatti */}
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-gray-100">
-                    <th className="p-2"></th>
-                    <th className="p-2 text-left">Nome</th>
-                    <th className="p-2 text-left">Cognome</th>
-                    <th className="p-2 text-left">Telefono</th>
-                    <th className="p-2 text-left">Email</th>
-                    <th className="p-2 text-left">Tag</th>
-                    <th className="p-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contacts.map(c => (
-                    <tr key={c.phone || c.id} className="hover:bg-gray-50">
-                      <td className="p-2">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(c.phone || c.id)}
-                          onChange={() => toggleSelect(c.phone || c.id)}
-                        />
-                      </td>
-                      <td className="p-2">{c.firstName || c.name}</td>
-                      <td className="p-2">{c.lastName || c.surname}</td>
-                      <td className="p-2">{c.phone || c.id}</td>
-                      <td className="p-2">{c.email || '-'}</td>
-                      <td className="p-2">
-                        {(c.tags||[]).map(tag =>
-                          <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        <button
-                          onClick={() => handleOpenContact(c)}
-                          className="text-blue-600 hover:text-blue-900"
-                          title="Dettagli contatto"
-                        >
-                          <Info size={18} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
+        {/* Tabella contatti */}
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="bg-gray-100">
+                <th className="p-2">
+                  <input
+                    type="checkbox"
+                    onChange={e => toggleSelectAll(e.target.checked)}
+                    checked={selected.size === contacts.length && contacts.length > 0}
+                    indeterminate={selected.size > 0 && selected.size < contacts.length}
+                  />
+                </th>
+                <th className="p-2 text-left">Nome</th>
+                <th className="p-2 text-left">Cognome</th>
+                <th className="p-2 text-left">Telefono</th>
+                <th className="p-2 text-left">Email</th>
+                <th className="p-2 text-left">Tag</th>
+                <th className="p-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {contacts.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="text-center text-gray-400 p-6">Nessun contatto trovato</td>
+                </tr>
+              ) : contacts.map(c => (
+                <tr key={c.phone || c.id} className="hover:bg-gray-50">
+                  <td className="p-2">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(c.phone || c.id)}
+                      onChange={() => toggleSelect(c.phone || c.id)}
+                    />
+                  </td>
+                  <td className="p-2">{c.firstName || c.name}</td>
+                  <td className="p-2">{c.lastName || c.surname}</td>
+                  <td className="p-2">{c.phone || c.id}</td>
+                  <td className="p-2">{c.email || '-'}</td>
+                  <td className="p-2">
+                    {(c.tags||[]).map(tag =>
+                      <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
+                    )}
+                  </td>
+                  <td className="p-2">
+                    <button
+                      onClick={() => handleOpenContact(c)}
+                      className="text-blue-600 hover:text-blue-900"
+                      title="Dettagli contatto"
+                    >
+                      <Info size={18} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </main>
+
+      {/* --- MODAL NUOVO CONTATTO --- */}
+      {createModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-7 max-w-lg w-full relative">
+            <button
+              className="absolute top-3 right-4 text-gray-400 hover:text-gray-700 text-2xl"
+              onClick={() => setCreateModalOpen(false)}
+            >×</button>
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Plus className="text-green-600" /> Nuovo contatto
+            </h3>
+            <div className="space-y-4">
+              <Input
+                placeholder="Nome"
+                value={newContactName}
+                onChange={e => setNewContactName(e.target.value)}
+              />
+              <Input
+                placeholder="Cognome"
+                value={newContactSurname}
+                onChange={e => setNewContactSurname(e.target.value)}
+              />
+              <Input
+                placeholder="Telefono"
+                value={newContactPhone}
+                onChange={e => setNewContactPhone(e.target.value)}
+              />
+              <Input
+                placeholder="Email"
+                value={newContactEmail}
+                onChange={e => setNewContactEmail(e.target.value)}
+              />
+              <Input
+                placeholder="Tag (virgola separati)"
+                value={newContactTags}
+                onChange={e => setNewContactTags(e.target.value)}
+              />
+              <Button
+                onClick={addNewContact}
+                className="bg-green-600 hover:bg-green-700 text-white w-full"
+              >
+                Salva contatto
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* --- MODAL DETTAGLIO E MODIFICA --- */}
       {selectedContact && (
@@ -581,7 +641,7 @@ export default function ContactsPage() {
                 {editMode ? (
                   <input
                     type="text"
-                    value={(editData.tags || []).join(', ')}
+                    value={Array.isArray(editData.tags) ? editData.tags.join(', ') : (editData.tags || '')}
                     onChange={e => handleEditField('tags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
                     className="border border-gray-300 rounded px-2 py-1 w-2/3"
                   />
