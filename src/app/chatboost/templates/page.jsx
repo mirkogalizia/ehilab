@@ -3,11 +3,11 @@
 import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { db, storage } from '@/lib/firebase';
+import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useAuth } from '@/lib/useAuth';
 import { Loader2, Trash2, Image as ImageIcon, FileText, Video } from 'lucide-react';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const STATUS_COLORS = {
   APPROVED: 'bg-green-100 text-green-700 border-green-200',
@@ -39,7 +39,7 @@ export default function TemplatePage() {
   const [headerType, setHeaderType] = useState('NONE');
   const [headerText, setHeaderText] = useState('');
   const [headerFile, setHeaderFile] = useState(null);
-  const [headerFileUrl, setHeaderFileUrl] = useState('');
+  const [headerUploadLoading, setHeaderUploadLoading] = useState(false);
 
   // Carica userData con UID corretto!
   useEffect(() => {
@@ -71,55 +71,64 @@ export default function TemplatePage() {
     // eslint-disable-next-line
   }, [userData]);
 
-  // Insert dynamic variable into bodyText dove sta il cursore
-  const insertVariable = (v) => {
-    const textarea = document.getElementById('template-body-text');
-    if (textarea) {
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      setBodyText((prev) => prev.slice(0, start) + v + prev.slice(end));
-      setTimeout(() => {
-        textarea.focus();
-        textarea.selectionEnd = start + v.length;
-      }, 1);
-    } else {
-      setBodyText((prev) => prev + v);
+  // Insert dynamic variable into body
+  const insertVariable = v => {
+    // Inserisci dove è il cursore:
+    const textarea = document.getElementById("body-textarea");
+    if (!textarea) {
+      setBodyText(prev => prev + v);
+      return;
     }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    setBodyText(prev =>
+      prev.substring(0, start) + v + prev.substring(end)
+    );
+    setTimeout(() => {
+      textarea.focus();
+      textarea.selectionEnd = start + v.length;
+    }, 10);
   };
 
-  // Gestione file header, upload su Firebase Storage e salva URL pubblica
-  const handleFileChange = async (e) => {
+  // Gestione file header
+  const handleFileChange = e => {
     const file = e.target.files[0] || null;
     setHeaderFile(file);
-    setHeaderFileUrl('');
-    if (file && user?.uid) {
-      const ext = file.name.split('.').pop();
-      const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-      const storageRef = ref(storage, `wa-templates/${user.uid}/${filename}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      setHeaderFileUrl(url);
-    }
   };
 
-  // Submit template
+  // Submit template (con upload su Firebase Storage)
   const handleSubmit = async () => {
     if (!userData) {
       alert('Dati utente mancanti');
       return;
     }
     let headerPayload = null;
+
     if (headerType !== 'NONE') {
       if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType)) {
-        if (!headerFile || !headerFileUrl) {
+        if (!headerFile) {
           alert('Seleziona e carica un file per l’intestazione!');
           return;
         }
-        headerPayload = {
-          type: headerType,
-          url: headerFileUrl,
-          fileName: headerFile.name
-        };
+        setHeaderUploadLoading(true);
+        try {
+          // Upload su Firebase Storage
+          const storage = getStorage();
+          const storageRef = ref(storage, `templates/${userData.id}/${Date.now()}_${headerFile.name}`);
+          await uploadBytes(storageRef, headerFile);
+          const downloadUrl = await getDownloadURL(storageRef);
+
+          headerPayload = {
+            type: headerType,
+            url: downloadUrl,
+            fileName: headerFile.name
+          };
+        } catch (err) {
+          alert('Errore upload file: ' + err.message);
+          setHeaderUploadLoading(false);
+          return;
+        }
+        setHeaderUploadLoading(false);
       } else if (headerType === 'TEXT') {
         if (!headerText) {
           alert('Inserisci un testo per l’intestazione!');
@@ -128,6 +137,7 @@ export default function TemplatePage() {
         headerPayload = { type: 'TEXT', text: headerText };
       }
     }
+
     const payload = {
       name: name.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
       category,
@@ -136,6 +146,7 @@ export default function TemplatePage() {
       user_uid: userData.id,
       header: headerPayload
     };
+    setLoading(true);
     const res = await fetch('/api/submit-template', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -148,8 +159,7 @@ export default function TemplatePage() {
     setHeaderText('');
     setHeaderType('NONE');
     setHeaderFile(null);
-    setHeaderFileUrl('');
-    setLoading(true);
+    setLoading(false);
     loadTemplates();
   };
 
@@ -199,7 +209,7 @@ export default function TemplatePage() {
                 {headerType === 'IMAGE' && <ImageIcon className="w-5 h-5" />}
                 {headerType === 'DOCUMENT' && <FileText className="w-5 h-5" />}
                 {headerType === 'VIDEO' && <Video className="w-5 h-5" />}
-                Sfoglia file
+                {headerUploadLoading ? "Caricamento..." : "Sfoglia file"}
               </span>
               <input
                 type="file"
@@ -212,14 +222,15 @@ export default function TemplatePage() {
                 }
                 className="hidden"
                 onChange={handleFileChange}
+                disabled={headerUploadLoading}
               />
             </span>
           </label>
           {headerFile ? (
             <div className="flex items-center gap-2">
-              {headerType === 'IMAGE' && headerFileUrl ? (
+              {headerType === 'IMAGE' ? (
                 <img
-                  src={headerFileUrl}
+                  src={URL.createObjectURL(headerFile)}
                   alt="Anteprima"
                   className="h-12 w-12 object-cover rounded shadow border"
                 />
@@ -233,7 +244,8 @@ export default function TemplatePage() {
               <button
                 className="ml-1 text-xs text-red-500 hover:text-red-700 bg-transparent border-none"
                 type="button"
-                onClick={() => { setHeaderFile(null); setHeaderFileUrl(''); }}
+                onClick={() => setHeaderFile(null)}
+                disabled={headerUploadLoading}
               >
                 ✕
               </button>
@@ -291,7 +303,6 @@ export default function TemplatePage() {
               onChange={e => {
                 setHeaderType(e.target.value);
                 setHeaderFile(null);
-                setHeaderFileUrl('');
                 setHeaderText('');
               }}
               className="border border-gray-300 rounded px-3 py-2 w-full md:w-1/2 focus:outline-none focus:ring-2 focus:ring-gray-800 bg-white"
@@ -321,7 +332,7 @@ export default function TemplatePage() {
             <span className="ml-2 text-xs text-gray-400">(clicca per inserire)</span>
           </div>
           <textarea
-            id="template-body-text"
+            id="body-textarea"
             placeholder="Corpo del messaggio (puoi inserire variabili come {{1}})"
             rows={4}
             className="border border-gray-300 rounded px-3 py-2 w-full resize-none focus:outline-none focus:ring-2 focus:ring-gray-800 mb-2"
@@ -331,9 +342,16 @@ export default function TemplatePage() {
           <Button
             onClick={handleSubmit}
             className="bg-black text-white hover:bg-gray-800 px-6 py-3 rounded-xl font-semibold transition text-base w-full md:w-fit"
-            disabled={loading || !name || !bodyText}
+            disabled={loading || !name || !bodyText || headerUploadLoading}
           >
-            📤 Invia Template
+            {headerUploadLoading ? (
+              <>
+                <Loader2 className="animate-spin inline-block mr-2" />
+                Upload file...
+              </>
+            ) : (
+              "📤 Invia Template"
+            )}
           </Button>
           {response && (
             <pre className="bg-gray-100 p-4 rounded text-sm whitespace-pre-wrap font-mono mt-3">
