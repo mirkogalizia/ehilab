@@ -43,6 +43,7 @@ export async function POST(req, { params }) {
       source: 'shopify',
       shop: payload.shop || "",
       orderId: payload.id || "",
+      orderNumber: payload.order_number || payload.name || "", // <--- AGGIUNTO QUI
       firstName: customer.first_name || shipping.name || "",
       lastName: customer.last_name || "",
       email: customer.email || payload.email || "",
