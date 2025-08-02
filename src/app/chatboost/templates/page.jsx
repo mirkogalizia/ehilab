@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '@/lib/useAuth';
-import { Loader2, Trash2, Image as ImageIcon, FileText, Video } from 'lucide-react';
+import { Loader2, Trash2, Image as ImageIcon, FileText, Video, Link as LinkIcon } from 'lucide-react';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const STATUS_COLORS = {
@@ -39,6 +39,8 @@ export default function TemplatePage() {
   const [headerType, setHeaderType] = useState('NONE');
   const [headerText, setHeaderText] = useState('');
   const [headerFile, setHeaderFile] = useState(null);
+  const [headerFilePreview, setHeaderFilePreview] = useState('');
+  const [headerFileUrl, setHeaderFileUrl] = useState('');
   const [headerUploadLoading, setHeaderUploadLoading] = useState(false);
 
   // Carica userData con UID corretto!
@@ -71,9 +73,8 @@ export default function TemplatePage() {
     // eslint-disable-next-line
   }, [userData]);
 
-  // Insert dynamic variable into body
+  // Insert dynamic variable into body dove è il cursore
   const insertVariable = v => {
-    // Inserisci dove è il cursore:
     const textarea = document.getElementById("body-textarea");
     if (!textarea) {
       setBodyText(prev => prev + v);
@@ -90,45 +91,51 @@ export default function TemplatePage() {
     }, 10);
   };
 
-  // Gestione file header
-  const handleFileChange = e => {
+  // Gestione file header con preview
+  const handleFileChange = async e => {
     const file = e.target.files[0] || null;
     setHeaderFile(file);
+    setHeaderFilePreview('');
+    setHeaderFileUrl('');
+    if (!file) return;
+    // Mostra preview solo per immagine
+    if (headerType === 'IMAGE') {
+      setHeaderFilePreview(URL.createObjectURL(file));
+    } else {
+      setHeaderFilePreview('');
+    }
+    // Carica subito il file per mostrare il link
+    setHeaderUploadLoading(true);
+    try {
+      const storage = getStorage();
+      const storageRef = ref(storage, `templates/${userData.id}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(storageRef);
+      setHeaderFileUrl(downloadUrl);
+    } catch (err) {
+      alert('Errore upload file: ' + err.message);
+    }
+    setHeaderUploadLoading(false);
   };
 
-  // Submit template (con upload su Firebase Storage)
+  // Submit template (usa link già caricato su headerFileUrl)
   const handleSubmit = async () => {
     if (!userData) {
       alert('Dati utente mancanti');
       return;
     }
     let headerPayload = null;
-
     if (headerType !== 'NONE') {
       if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType)) {
-        if (!headerFile) {
+        if (!headerFile || !headerFileUrl) {
           alert('Seleziona e carica un file per l’intestazione!');
           return;
         }
-        setHeaderUploadLoading(true);
-        try {
-          // Upload su Firebase Storage
-          const storage = getStorage();
-          const storageRef = ref(storage, `templates/${userData.id}/${Date.now()}_${headerFile.name}`);
-          await uploadBytes(storageRef, headerFile);
-          const downloadUrl = await getDownloadURL(storageRef);
-
-          headerPayload = {
-            type: headerType,
-            url: downloadUrl,
-            fileName: headerFile.name
-          };
-        } catch (err) {
-          alert('Errore upload file: ' + err.message);
-          setHeaderUploadLoading(false);
-          return;
-        }
-        setHeaderUploadLoading(false);
+        headerPayload = {
+          type: headerType,
+          url: headerFileUrl,
+          fileName: headerFile.name
+        };
       } else if (headerType === 'TEXT') {
         if (!headerText) {
           alert('Inserisci un testo per l’intestazione!');
@@ -159,6 +166,8 @@ export default function TemplatePage() {
     setHeaderText('');
     setHeaderType('NONE');
     setHeaderFile(null);
+    setHeaderFilePreview('');
+    setHeaderFileUrl('');
     setLoading(false);
     loadTemplates();
   };
@@ -202,55 +211,69 @@ export default function TemplatePage() {
     }
     if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType)) {
       return (
-        <div className="flex items-center gap-3 mt-2">
-          <label className="relative inline-flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded-lg shadow cursor-pointer hover:bg-gray-200 transition font-medium text-gray-700">
-            <span>
-              <span className="inline-flex items-center gap-1">
-                {headerType === 'IMAGE' && <ImageIcon className="w-5 h-5" />}
-                {headerType === 'DOCUMENT' && <FileText className="w-5 h-5" />}
-                {headerType === 'VIDEO' && <Video className="w-5 h-5" />}
-                {headerUploadLoading ? "Caricamento..." : "Sfoglia file"}
-              </span>
-              <input
-                type="file"
-                accept={
-                  headerType === 'IMAGE'
-                    ? 'image/*'
-                    : headerType === 'DOCUMENT'
-                    ? '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'
-                    : 'video/*'
-                }
-                className="hidden"
-                onChange={handleFileChange}
-                disabled={headerUploadLoading}
-              />
+        <div className="flex flex-col gap-2 mt-2">
+          <label className="relative inline-flex items-center px-4 py-2 bg-gray-100 border border-gray-300 rounded-lg shadow cursor-pointer hover:bg-gray-200 transition font-medium text-gray-700 w-fit">
+            <span className="inline-flex items-center gap-1">
+              {headerType === 'IMAGE' && <ImageIcon className="w-5 h-5" />}
+              {headerType === 'DOCUMENT' && <FileText className="w-5 h-5" />}
+              {headerType === 'VIDEO' && <Video className="w-5 h-5" />}
+              {headerUploadLoading ? "Caricamento..." : "Sfoglia file"}
             </span>
+            <input
+              type="file"
+              accept={
+                headerType === 'IMAGE'
+                  ? 'image/*'
+                  : headerType === 'DOCUMENT'
+                  ? '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt'
+                  : 'video/*'
+              }
+              className="hidden"
+              onChange={handleFileChange}
+              disabled={headerUploadLoading}
+            />
           </label>
-          {headerFile ? (
-            <div className="flex items-center gap-2">
-              {headerType === 'IMAGE' ? (
-                <img
-                  src={URL.createObjectURL(headerFile)}
-                  alt="Anteprima"
-                  className="h-12 w-12 object-cover rounded shadow border"
-                />
-              ) : (
+          {/* Preview file */}
+          {headerFile && (
+            <div className="flex items-center gap-3">
+              {headerType === 'IMAGE' && headerFilePreview && (
+                <img src={headerFilePreview} alt="Preview" className="h-16 w-16 object-cover rounded shadow border" />
+              )}
+              {headerType !== 'IMAGE' && (
                 <span className="flex items-center text-sm text-gray-700 font-mono">
                   {headerType === 'DOCUMENT' && <FileText className="w-4 h-4 mr-1 text-gray-400" />}
                   {headerType === 'VIDEO' && <Video className="w-4 h-4 mr-1 text-gray-400" />}
                   {headerFile.name}
                 </span>
               )}
-              <button
-                className="ml-1 text-xs text-red-500 hover:text-red-700 bg-transparent border-none"
-                type="button"
-                onClick={() => setHeaderFile(null)}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setHeaderFile(null);
+                  setHeaderFilePreview('');
+                  setHeaderFileUrl('');
+                }}
+                className="text-red-500 hover:bg-red-50 ml-2"
+                title="Rimuovi"
                 disabled={headerUploadLoading}
-              >
-                ✕
-              </button>
+              >✕</Button>
             </div>
-          ) : (
+          )}
+          {/* Mostra il link pubblico appena caricato */}
+          {headerFileUrl && (
+            <div className="flex items-center gap-2 text-xs text-green-700 mt-1">
+              <LinkIcon className="w-4 h-4" />
+              <a href={headerFileUrl} target="_blank" rel="noopener noreferrer" className="underline break-all">
+                {headerFileUrl.slice(0, 48) + "..."}
+              </a>
+              <span className="text-gray-400">(link pubblico)</span>
+            </div>
+          )}
+          {!headerFileUrl && headerUploadLoading && (
+            <span className="text-gray-400 text-sm ml-2">Caricamento file...</span>
+          )}
+          {!headerFile && !headerUploadLoading && (
             <span className="text-gray-400 text-sm ml-2">Nessun file selezionato</span>
           )}
         </div>
@@ -304,6 +327,8 @@ export default function TemplatePage() {
                 setHeaderType(e.target.value);
                 setHeaderFile(null);
                 setHeaderText('');
+                setHeaderFilePreview('');
+                setHeaderFileUrl('');
               }}
               className="border border-gray-300 rounded px-3 py-2 w-full md:w-1/2 focus:outline-none focus:ring-2 focus:ring-gray-800 bg-white"
             >
