@@ -36,9 +36,12 @@ export async function POST(req) {
       return new Response(JSON.stringify({ error: data }), { status: res.status });
     }
 
-    return new Response(JSON.stringify(data.data || []), { status: 200 });
+    // Ritorna SEMPRE un array (vuoto o pieno)
+    if (Array.isArray(data.data)) {
+      return new Response(JSON.stringify(data.data), { status: 200 });
+    }
+    return new Response(JSON.stringify([]), { status: 200 });
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
-

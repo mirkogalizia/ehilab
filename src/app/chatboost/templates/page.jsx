@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { db } from '@/lib/firebase';
+import { db, storage } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useAuth } from '@/lib/useAuth';
 import { Loader2, Trash2, Image as ImageIcon, FileText, Video } from 'lucide-react';
 
@@ -38,6 +39,7 @@ export default function TemplatePage() {
   const [headerType, setHeaderType] = useState('NONE');
   const [headerText, setHeaderText] = useState('');
   const [headerFile, setHeaderFile] = useState(null);
+  const [headerFileUrl, setHeaderFileUrl] = useState('');
 
   // Carica userData con UID corretto!
   useEffect(() => {
@@ -69,15 +71,35 @@ export default function TemplatePage() {
     // eslint-disable-next-line
   }, [userData]);
 
-  // Insert dynamic variable into body
-  const insertVariable = v => {
-    setBodyText(prev => prev + v);
+  // Insert dynamic variable into bodyText dove sta il cursore
+  const insertVariable = (v) => {
+    const textarea = document.getElementById('template-body-text');
+    if (textarea) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      setBodyText((prev) => prev.slice(0, start) + v + prev.slice(end));
+      setTimeout(() => {
+        textarea.focus();
+        textarea.selectionEnd = start + v.length;
+      }, 1);
+    } else {
+      setBodyText((prev) => prev + v);
+    }
   };
 
-  // Gestione file header
-  const handleFileChange = e => {
+  // Gestione file header, upload su Firebase Storage e salva URL pubblica
+  const handleFileChange = async (e) => {
     const file = e.target.files[0] || null;
     setHeaderFile(file);
+    setHeaderFileUrl('');
+    if (file && user?.uid) {
+      const ext = file.name.split('.').pop();
+      const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
+      const storageRef = ref(storage, `wa-templates/${user.uid}/${filename}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      setHeaderFileUrl(url);
+    }
   };
 
   // Submit template
@@ -89,14 +111,14 @@ export default function TemplatePage() {
     let headerPayload = null;
     if (headerType !== 'NONE') {
       if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerType)) {
-        if (!headerFile) {
-          alert('Seleziona un file per l’intestazione!');
+        if (!headerFile || !headerFileUrl) {
+          alert('Seleziona e carica un file per l’intestazione!');
           return;
         }
         headerPayload = {
           type: headerType,
+          url: headerFileUrl,
           fileName: headerFile.name
-          // L'upload reale lo fai nel backend!
         };
       } else if (headerType === 'TEXT') {
         if (!headerText) {
@@ -126,6 +148,7 @@ export default function TemplatePage() {
     setHeaderText('');
     setHeaderType('NONE');
     setHeaderFile(null);
+    setHeaderFileUrl('');
     setLoading(true);
     loadTemplates();
   };
@@ -194,9 +217,9 @@ export default function TemplatePage() {
           </label>
           {headerFile ? (
             <div className="flex items-center gap-2">
-              {headerType === 'IMAGE' ? (
+              {headerType === 'IMAGE' && headerFileUrl ? (
                 <img
-                  src={URL.createObjectURL(headerFile)}
+                  src={headerFileUrl}
                   alt="Anteprima"
                   className="h-12 w-12 object-cover rounded shadow border"
                 />
@@ -210,7 +233,7 @@ export default function TemplatePage() {
               <button
                 className="ml-1 text-xs text-red-500 hover:text-red-700 bg-transparent border-none"
                 type="button"
-                onClick={() => setHeaderFile(null)}
+                onClick={() => { setHeaderFile(null); setHeaderFileUrl(''); }}
               >
                 ✕
               </button>
@@ -268,6 +291,7 @@ export default function TemplatePage() {
               onChange={e => {
                 setHeaderType(e.target.value);
                 setHeaderFile(null);
+                setHeaderFileUrl('');
                 setHeaderText('');
               }}
               className="border border-gray-300 rounded px-3 py-2 w-full md:w-1/2 focus:outline-none focus:ring-2 focus:ring-gray-800 bg-white"
@@ -297,6 +321,7 @@ export default function TemplatePage() {
             <span className="ml-2 text-xs text-gray-400">(clicca per inserire)</span>
           </div>
           <textarea
+            id="template-body-text"
             placeholder="Corpo del messaggio (puoi inserire variabili come {{1}})"
             rows={4}
             className="border border-gray-300 rounded px-3 py-2 w-full resize-none focus:outline-none focus:ring-2 focus:ring-gray-800 mb-2"

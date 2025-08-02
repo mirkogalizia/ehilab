@@ -371,15 +371,56 @@ export default function ChatPage() {
     }
   };
 
-  // Invio template WhatsApp
+  // Invio template WhatsApp (header multimediale supportato)
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
+    const template = templates.find(t => t.name === name);
+    if (!template) return alert("Template non trovato!");
+    // Recupera header
+    let components = [];
+    if (template.header && template.header.type !== "NONE") {
+      if (template.header.type === "TEXT") {
+        components.push({
+          type: "HEADER",
+          parameters: [
+            {
+              type: "text",
+              text: template.header.text || ""
+            }
+          ]
+        });
+      } else if (["IMAGE", "DOCUMENT", "VIDEO"].includes(template.header.type)) {
+        if (!template.header.url) return alert("File header non trovato!");
+        components.push({
+          type: "HEADER",
+          parameters: [
+            {
+              type: template.header.type.toLowerCase(),
+              [template.header.type.toLowerCase()]: {
+                link: template.header.url
+              }
+            }
+          ]
+        });
+      }
+    }
+    // Corpo (body) e parametri dinamici (qui puoi metterli se vuoi)
+    components.push({
+      type: "BODY",
+      parameters: []
+    });
+
     const payload = {
       messaging_product: "whatsapp",
       to: selectedPhone,
       type: "template",
-      template: { name, language: { code: "it" } }
+      template: {
+        name,
+        language: { code: template.language || "it" },
+        components
+      }
     };
+
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
@@ -410,7 +451,7 @@ export default function ChatPage() {
     }
   };
 
-  // UI
+  // -------------- UI (resta invariata) --------------------
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* Lista chat */}
