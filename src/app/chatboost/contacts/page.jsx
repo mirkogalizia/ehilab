@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import {
-  collection, doc, setDoc, getDocs, writeBatch, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp, where, query
+  collection, doc, setDoc, getDocs, writeBatch, onSnapshot, updateDoc, addDoc, serverTimestamp, where, query
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Input } from '@/components/ui/input';
@@ -79,13 +79,14 @@ export default function ContactsPage() {
     return () => unsub();
   }, [user]);
 
-  // Carica contatti realtime (RICERCA GLOBALE)
+  // Carica contatti realtime (RICERCA GLOBALE, non filtrata dalla categoria)
   useEffect(() => {
     if (!user?.uid) return;
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
     const unsub = onSnapshot(qContacts, snap => {
       let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
+      // RICERCA GLOBALE SEMPRE ATTIVA
       let filtered = arr;
       if (search) {
         const s = search.toLowerCase();
@@ -365,12 +366,6 @@ export default function ContactsPage() {
     setSending(false);
     setTimeout(() => setModalOpen(false), 1200);
   };
-
-  // ----- RENDER -----
-  // Copia tutta la parte di render che già avevi qui senza alcuna modifica!
-  // Puoi prendere quella del tuo file attuale (sidebar, modali, tabelle ecc.)
-
-}
 
   // ----- RENDER -----
   return (
