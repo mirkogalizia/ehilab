@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
-// --- NORMALIZZA NUMERO (sempre +39... se ITA, +... se internazionale) ---
+// --- NORMALIZZA NUMERO ---
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim().replace(/^[+]+/, '').replace(/^00/, '').replace(/[\s\-().]/g, '');
@@ -31,10 +31,14 @@ export default function ChatPage() {
   const [templates, setTemplates] = useState([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
-  const [newPhone, setNewPhone] = useState('');
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(false);
   const messagesEndRef = useRef(null);
+
+  // Per ricerca contatti avanzata
+  const [searchContact, setSearchContact] = useState('');
+  const [filteredContacts, setFilteredContacts] = useState([]);
+  const [allContacts, setAllContacts] = useState([]);
 
   // Menù contestuale
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
@@ -61,20 +65,44 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Recupera nomi contatti (associa tramite numero normalizzato)
+  // Recupera TUTTI i contatti con campi extra, popola anche la mappa rapida dei nomi
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
       const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
+      const contactsArr = [];
       const map = {};
       cs.forEach(d => {
         const c = d.data();
         const phoneNorm = normalizePhone(c.phone || d.id);
+        contactsArr.push({
+          phone: phoneNorm,
+          name: c.firstName || c.name || '',
+          lastName: c.lastName || '',
+          email: c.email || '',
+        });
         map[phoneNorm] = c.firstName || c.name || phoneNorm;
       });
+      setAllContacts(contactsArr);
       setContactNames(map);
     })();
   }, [user]);
+
+  // Cerca tra tutti i campi
+  useEffect(() => {
+    if (!searchContact.trim()) {
+      setFilteredContacts([]);
+      return;
+    }
+    const search = searchContact.toLowerCase();
+    const found = allContacts.filter(c =>
+      c.phone.replace(/[^0-9]/g, '').includes(search.replace(/[^0-9]/g, '')) ||
+      (c.name && c.name.toLowerCase().includes(search)) ||
+      (c.lastName && c.lastName.toLowerCase().includes(search)) ||
+      (c.email && c.email.toLowerCase().includes(search))
+    );
+    setFilteredContacts(found);
+  }, [searchContact, allContacts]);
 
   // Ascolta messaggi realtime
   useEffect(() => {
@@ -91,7 +119,7 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // Raggruppa conversazioni (raggruppa sempre per numero normalizzato!)
+  // Raggruppa conversazioni per numero normalizzato
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -117,7 +145,7 @@ export default function ChatPage() {
       .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
   }, [allMessages, contactNames]);
 
-  // LOGICA 24H: sempre con numero normalizzato!
+  // LOGICA 24H
   useEffect(() => {
     if (!user?.uid || !selectedPhone) {
       setCanSendMessage(false);
@@ -130,7 +158,7 @@ export default function ChatPage() {
       .filter(m => normalizePhone(m.from) === selectedPhone)
       .sort((a, b) => parseTime(b.timestamp || b.createdAt) - parseTime(a.timestamp || a.createdAt))[0];
     if (!lastInbound) {
-      setCanSendMessage(false); // Solo template, mai ricevuto niente
+      setCanSendMessage(false);
       return;
     }
     const lastTimestamp = parseTime(lastInbound.timestamp || lastInbound.createdAt);
@@ -173,7 +201,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Filtra messaggi della chat attiva (sempre normalizzato)
+  // Filtra messaggi della chat attiva
   const filtered = useMemo(() => (
     allMessages
       .filter(m =>
@@ -192,7 +220,7 @@ export default function ChatPage() {
     setMessageText('');
   };
 
-  // --- CANCELLAZIONE MESSAGGIO SINGOLO
+  // CANCELLAZIONE MESSAGGIO SINGOLO
   const handleMessageContextMenu = (e, id) => {
     e.preventDefault();
     e.stopPropagation();
@@ -210,7 +238,7 @@ export default function ChatPage() {
     }
   };
 
-  // --- CANCELLAZIONE INTERA CHAT
+  // CANCELLAZIONE INTERA CHAT
   const handleChatContextMenu = (e, phone) => {
     e.preventDefault();
     e.stopPropagation();
@@ -234,7 +262,7 @@ export default function ChatPage() {
     }
   };
 
-  // Chiudi menù contestuale su click fuori, ESC, scroll
+  // Chiudi menù contestuale
   useEffect(() => {
     function close(e) {
       const menu = document.getElementById("menu-contestuale-msg");
@@ -274,7 +302,7 @@ export default function ChatPage() {
       return;
     }
 
-    // Invio MEDIA (WhatsApp API CORRETTO)
+    // Invio MEDIA
     if (selectedMedia) {
       const uploadData = new FormData();
       uploadData.append('file', selectedMedia.file);
@@ -334,7 +362,7 @@ export default function ChatPage() {
       return;
     }
 
-    // Invio messaggi testuali normali
+    // Invio messaggi testuali
     const payload = {
       messaging_product: "whatsapp",
       to: selectedPhone,
@@ -404,7 +432,6 @@ export default function ChatPage() {
         });
       }
     }
-    // Corpo (body) e parametri dinamici (qui puoi metterli se vuoi)
     components.push({
       type: "BODY",
       parameters: []
@@ -451,7 +478,7 @@ export default function ChatPage() {
     }
   };
 
-  // -------------- UI (resta invariata) --------------------
+  // ------------------ UI ------------------
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* Lista chat */}
@@ -484,19 +511,40 @@ export default function ChatPage() {
         {/* Modal nuova chat */}
         {showNewChat && (
           <div className="mt-4 p-4 bg-gray-100 rounded-lg shadow">
-            <h3 className="mb-2 font-medium">📞 Inserisci numero</h3>
+            <h3 className="mb-2 font-medium">📞 Cerca contatto o inserisci numero</h3>
             <Input
-              placeholder="3931234567"
-              value={newPhone}
-              onChange={e => setNewPhone(e.target.value)}
+              placeholder="Nome, cognome, email o numero…"
+              value={searchContact}
+              onChange={e => setSearchContact(e.target.value)}
               className="mb-2"
+              autoFocus
             />
+            {/* Risultati ricerca */}
+            {searchContact && filteredContacts.length > 0 && (
+              <div className="max-h-40 overflow-auto mb-2 rounded border bg-white shadow">
+                {filteredContacts.map((c, i) => (
+                  <div
+                    key={c.phone}
+                    className="px-3 py-2 cursor-pointer hover:bg-gray-200 flex flex-col"
+                    onClick={() => {
+                      setSelectedPhone(c.phone);
+                      setSearchContact('');
+                      setShowNewChat(false);
+                    }}
+                  >
+                    <span className="font-medium">{c.name} {c.lastName}</span>
+                    <span className="text-xs text-gray-400">{c.phone}</span>
+                    {c.email && <span className="text-xs text-gray-400">{c.email}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2">
               <Button
                 onClick={() => {
-                  if (newPhone) {
-                    setSelectedPhone(normalizePhone(newPhone));
-                    setNewPhone('');
+                  if (searchContact) {
+                    setSelectedPhone(normalizePhone(searchContact));
+                    setSearchContact('');
                     setShowNewChat(false);
                   }
                 }}
