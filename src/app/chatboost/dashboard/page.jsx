@@ -90,19 +90,32 @@ export default function ChatPage() {
 
   // Cerca tra tutti i campi
   useEffect(() => {
-    if (!searchContact.trim()) {
-      setFilteredContacts([]);
-      return;
+  if (!searchContact.trim()) {
+    setFilteredContacts([]);
+    return;
+  }
+  const search = searchContact.trim().toLowerCase();
+  const tokens = search.split(/\s+/).filter(Boolean);
+
+  const found = allContacts.filter(c => {
+    // Crea un array di campi su cui cercare
+    const fields = [
+      (c.name || '').toLowerCase(),
+      (c.lastName || '').toLowerCase(),
+      (c.email || '').toLowerCase(),
+      (c.phone || '').toLowerCase(),
+    ];
+
+    // Se c'è solo una parola, basta che sia presente in uno dei campi
+    if (tokens.length === 1) {
+      return fields.some(f => f.includes(tokens[0]));
     }
-    const search = searchContact.toLowerCase();
-    const found = allContacts.filter(c =>
-      c.phone.replace(/[^0-9]/g, '').includes(search.replace(/[^0-9]/g, '')) ||
-      (c.name && c.name.toLowerCase().includes(search)) ||
-      (c.lastName && c.lastName.toLowerCase().includes(search)) ||
-      (c.email && c.email.toLowerCase().includes(search))
-    );
-    setFilteredContacts(found);
-  }, [searchContact, allContacts]);
+    // Se ci sono più parole: TUTTE devono essere in almeno un campo
+    return tokens.every(tok => fields.some(f => f.includes(tok)));
+  });
+
+  setFilteredContacts(found);
+}, [searchContact, allContacts]);
 
   // Ascolta messaggi realtime
   useEffect(() => {
