@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
-import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu } from 'lucide-react';
+import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu, Zap } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 
@@ -50,6 +50,7 @@ export default function ChatBoostLayout({ children }) {
     }
   };
 
+  // NAV principali
   const navItems = [
     { label: 'Chat',      icon: MessageSquare, path: '/chatboost/dashboard' },
     { label: 'Template',  icon: FileText,      path: '/chatboost/templates' },
@@ -57,13 +58,16 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Impostaz.', icon: Settings,      path: '/chatboost/impostazioni' },
   ];
 
+  // SUBNAV impostazioni (aggiunta Automazioni!)
   const settingsSubnav = [
     { label: 'Info', path: '/chatboost/impostazioni/info', icon: Info },
     { label: 'Integrazioni', path: '/chatboost/impostazioni/integrations', icon: Plug },
+    { label: 'Automazioni', path: '/chatboost/impostazioni/automazioni', icon: Zap },
   ];
 
   // ----- DRAWER (mobile menu) -----
   function MobileDrawer() {
+    // Aggiungi Automazioni anche qui sotto Impostazioni
     return (
       <div className="fixed inset-0 z-[999] flex md:hidden">
         <div
@@ -93,6 +97,27 @@ export default function ChatBoostLayout({ children }) {
                 {label}
               </button>
             ))}
+            {/* Submenu impostazioni mobile */}
+            {pathname.startsWith('/chatboost/impostazioni') && (
+              <div className="ml-4 mt-2 flex flex-col gap-1">
+                {settingsSubnav.map(({ label, path, icon: SubIcon }) => (
+                  <button
+                    key={path}
+                    onClick={() => {
+                      setShowDrawer(false);
+                      router.push(path);
+                    }}
+                    className={`flex items-center gap-2 px-2 py-1 rounded text-[15px] transition-all ${
+                      pathname === path
+                        ? 'bg-gray-900 text-white'
+                        : 'hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    <SubIcon size={17} /> {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </nav>
           <button
             onClick={handleLogout}
