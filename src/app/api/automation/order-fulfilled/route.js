@@ -1,7 +1,7 @@
 // src/app/api/automation/order-fulfilled/route.js
 
 import { db } from '@/firebase';
-import { getDoc, doc, setDoc } from 'firebase/firestore';
+import { getDoc, doc, setDoc, addDoc, collection } from 'firebase/firestore';
 
 // Funzione di invio template WhatsApp
 async function sendWhatsappTemplateMessage({ phone, template_name, parameters, phone_number_id, access_token }) {
@@ -34,6 +34,9 @@ async function sendWhatsappTemplateMessage({ phone, template_name, parameters, p
   if (!data.messages) {
     throw new Error("Errore WhatsApp API: " + JSON.stringify(data.error || data));
   }
+
+  // Restituisci ID messaggio WhatsApp (se vuoi salvarlo in Firestore)
+  return data.messages[0]?.id || null;
 }
 
 export async function POST(req) {
@@ -87,8 +90,11 @@ export async function POST(req) {
       { type: "text", text: trackingUrl }
     ];
 
+    // TESTO finale inviato (così lo vedi come lo riceve il cliente)
+    const testoFinale = `Ciao ${nome}, il tuo ordine #${ordine} è stato spedito! 🚚 Corriere: ${corriere} Tracking: ${tracking} Puoi tracciare la spedizione qui: ${trackingUrl} Questo numero WhatsApp viene utilizzato solo per comunicazioni relative al tuo ordine. 👕🛒`;
+
     // 4. Invia WhatsApp template
-    await sendWhatsappTemplateMessage({
+    const message_id = await sendWhatsappTemplateMessage({
       phone: order.customer?.phone,
       template_name,
       parameters,
@@ -96,10 +102,24 @@ export async function POST(req) {
       access_token
     });
 
-    // 5. Segna come inviato
+    // 5. Salva anche in messages
+    await addDoc(collection(db, 'messages'), {
+      text: testoFinale,
+      to: order.customer?.phone,
+      from: "operator",
+      timestamp: Date.now(),
+      createdAt: new Date(),
+      type: "template",
+      template_name,
+      parameters,
+      user_uid: merchantData.user_uid || merchantId,
+      message_id: message_id || ("order_fulfilled_" + orderId)
+    });
+
+    // 6. Segna come inviato
     await setDoc(orderRef, { evasione_inviata: true }, { merge: true });
 
-    return new Response(JSON.stringify({ ok: true, message: 'WhatsApp inviato' }), { status: 200 });
+    return new Response(JSON.stringify({ ok: true, message: 'WhatsApp inviato e salvato' }), { status: 200 });
 
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
