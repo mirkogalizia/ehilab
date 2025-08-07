@@ -47,10 +47,12 @@ export default function AutomazioniPage() {
   async function saveAutomazione() {
     setLoading(true);
     const merchantRef = doc(db, "shopify_merchants", user.uid);
+
+    // Salva solo il NAME del template selezionato
     await updateDoc(merchantRef, {
       "automation.order_fulfilled": {
         enabled,
-        template_id: selectedTemplate
+        template_id: selectedTemplate // <-- è il name, non l'id numerico
       }
     });
     setLoading(false);
@@ -79,10 +81,10 @@ export default function AutomazioniPage() {
         >
           <option value="">Seleziona un template</option>
           {templateList.map(t => (
-            <option key={t.id || t.name} value={t.id || t.name}>
+            <option key={t.name} value={t.name}>
               {t.components?.[0]?.text
                 ? t.components[0].text.slice(0, 60) + (t.components[0].text.length > 60 ? '...' : '')
-                : t.bodyText || t.name}
+                : t.name}
             </option>
           ))}
         </select>
