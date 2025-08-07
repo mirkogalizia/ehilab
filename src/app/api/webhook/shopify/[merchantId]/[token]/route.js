@@ -106,29 +106,33 @@ export async function POST(req, { params }) {
     // 7. Salva/aggiorna ordine in Firestore (merge con eventuali dati precedenti)
     await setDoc(orderRef, { ...prevOrder, ...orderData }, { merge: true });
 
-// ... Tutto il codice sopra invariato
+    // 8. TRIGGER AUTOMAZIONE: fulfilled appena diventato true
+    if (isNowFulfilled && !wasFulfilled && !wasEvasioneInviata) {
+      // LOG: trigger automazione
+      console.log("🚚 TRIGGER ordine fulfilled:", {
+        orderId,
+        merchantId,
+        url: `${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/order-fulfilled`
+      });
 
-// 8. TRIGGER AUTOMAZIONE: fulfilled appena diventato true
-if (isNowFulfilled && !wasFulfilled && !wasEvasioneInviata) {
-  // LOG: trigger automazione
-  console.log("🚚 TRIGGER ordine fulfilled:", {
-    orderId,
-    merchantId,
-    url: `${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/order-fulfilled`
-  });
+      // NON aspettare risposta (fire and forget!)
+      fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/order-fulfilled`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, merchantId }),
+      }).then(r => {
+        // LOG: risposta fetch automazione
+        console.log("📩 Risposta automazione:", r.status, r.statusText);
+      }).catch(err => {
+        // LOG: errore fetch automazione
+        console.error("❌ Errore chiamata automazione:", err);
+      });
+    }
 
-  // NON aspettare risposta (fire and forget!)
-  fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/order-fulfilled`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderId, merchantId }),
-  }).then(r => {
-    // LOG: risposta fetch automazione
-    console.log("📩 Risposta automazione:", r.status, r.statusText);
-  }).catch(err => {
-    // LOG: errore fetch automazione
-    console.error("❌ Errore chiamata automazione:", err);
-  });
+    return NextResponse.json({ success: true, orderId, phone });
+
+  } catch (error) {
+    console.error("Errore webhook Shopify:", error);
+    return NextResponse.json({ success: false, error: error.toString() }, { status: 500 });
+  }
 }
-
-return NextResponse.json({ success: true, orderId, phone });
