@@ -79,6 +79,30 @@ export async function POST(req, { params }) {
       raw: { ...payload },
     };
 
+    // 6bis. CREA/AGGIORNA CONTATTO in Firestore
+    const contactDocId = phone || (customer.email || "").toLowerCase() || customer.id?.toString() || "";
+    if (contactDocId) {
+      await setDoc(
+        fireDoc(db, "contacts", contactDocId),
+        {
+          id: contactDocId,
+          phone,
+          firstName: customer.first_name || shipping.name || "",
+          lastName: customer.last_name || "",
+          email: customer.email || payload.email || "",
+          address: shipping.address1 || "",
+          city: shipping.city || "",
+          zip: shipping.zip || "",
+          province: shipping.province || "",
+          country: shipping.country || "",
+          createdBy: merchantId,
+          updatedAt: new Date(),
+          source: "shopify",
+        },
+        { merge: true }
+      );
+    }
+
     // 7. Salva/aggiorna ordine in Firestore (merge con eventuali dati precedenti)
     await setDoc(orderRef, { ...prevOrder, ...orderData }, { merge: true });
 
