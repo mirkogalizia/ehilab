@@ -3,7 +3,6 @@
 import { db } from '@/firebase';
 import { getDoc, doc, setDoc, addDoc, collection } from 'firebase/firestore';
 
-// Funzione di invio template WhatsApp
 async function sendWhatsappTemplateMessage({ phone, template_name, parameters, phone_number_id, access_token }) {
   const payload = {
     messaging_product: "whatsapp",
@@ -21,6 +20,8 @@ async function sendWhatsappTemplateMessage({ phone, template_name, parameters, p
     }
   };
 
+  console.log("WA API Payload:", payload);
+
   const res = await fetch(`https://graph.facebook.com/v17.0/${phone_number_id}/messages`, {
     method: "POST",
     headers: {
@@ -31,57 +32,90 @@ async function sendWhatsappTemplateMessage({ phone, template_name, parameters, p
   });
 
   const data = await res.json();
+  console.log("WA API Response:", data);
   if (!data.messages) {
     throw new Error("Errore WhatsApp API: " + JSON.stringify(data.error || data));
   }
 
-  // Restituisci ID messaggio WhatsApp (se vuoi salvarlo in Firestore)
   return data.messages[0]?.id || null;
 }
 
 export async function POST(req) {
   try {
-    const { orderId, merchantId } = await req.json();
-    if (!orderId || !merchantId)
-      return new Response(JSON.stringify({ error: 'orderId/merchantId required' }), { status: 400 });
+    const body = await req.json();
+    console.log("🚀 [order-fulfilled] BODY:", body);
 
-    // 1. Prendi impostazioni automazione dal merchant
+    const { orderId, merchantId } = body;
+    if (!orderId || !merchantId) {
+      console.log("❌ [order-fulfilled] Manca orderId o merchantId");
+      return new Response(JSON.stringify({ error: 'orderId/merchantId required' }), { status: 400 });
+    }
+
+    // 1. Merchant
     const merchantRef = doc(db, "shopify_merchants", merchantId);
     const merchantSnap = await getDoc(merchantRef);
     const merchantData = merchantSnap.data();
-    const automation = merchantData?.automation?.order_fulfilled || {};
+    if (!merchantData) {
+      console.log("❌ [order-fulfilled] Merchant non trovato:", merchantId);
+      return new Response(JSON.stringify({ error: 'Merchant not found' }), { status: 400 });
+    }
 
+    const automation = merchantData?.automation?.order_fulfilled || {};
     if (!automation.enabled) {
+      console.log("⏭️ [order-fulfilled] Automazione disattivata per merchant:", merchantId);
       return new Response(JSON.stringify({ ok: true, message: "Automazione disattivata" }), { status: 200 });
     }
 
-    // Prendi parametri WhatsApp necessari
+    // 2. Credenziali WhatsApp
     const template_name = automation.template_id;
     const phone_number_id = merchantData.phone_number_id;
-    const access_token = merchantData.access_token; // assicurati che sia salvato e aggiornato
+    const access_token = merchantData.access_token;
 
     if (!template_name || !phone_number_id || !access_token) {
+      console.log("❌ [order-fulfilled] Dati WhatsApp mancanti", { template_name, phone_number_id, access_token });
       return new Response(JSON.stringify({ error: 'Dati WhatsApp non configurati' }), { status: 400 });
     }
 
-    // 2. Prendi ordine
+    // 3. Order
     const orderRef = doc(db, "orders", orderId);
     const snap = await getDoc(orderRef);
-    if (!snap.exists()) return new Response(JSON.stringify({ error: 'Order not found' }), { status: 404 });
+    if (!snap.exists()) {
+      console.log("❌ [order-fulfilled] Ordine non trovato:", orderId);
+      return new Response(JSON.stringify({ error: 'Order not found' }), { status: 404 });
+    }
     const order = snap.data();
-    if (!order.fulfilled || order.evasione_inviata)
+    if (!order.fulfilled) {
+      console.log("⏭️ [order-fulfilled] Ordine non ancora fulfilled:", orderId);
+      return new Response(JSON.stringify({ ok: true, message: 'Order not fulfilled' }), { status: 200 });
+    }
+    if (order.evasione_inviata) {
+      console.log("⏭️ [order-fulfilled] Già inviato WA per questo ordine:", orderId);
       return new Response(JSON.stringify({ ok: true, message: 'No send needed' }), { status: 200 });
+    }
 
-    // 3. Estrai variabili dai dati ordine (ordine dei placeholder!)
+    // 4. Estrazione variabili
     const nome = order.customer?.firstName || '';
     const ordine = order.orderNumber || orderId;
     const fulfillments = order.raw?.fulfillments || [];
     const fulfillment = fulfillments[0] || {};
-    const corriere = fulfillment.tracking_company || '';
-    const tracking = fulfillment.tracking_number || '';
-    const trackingUrl = fulfillment.tracking_url || '';
+    const corriere = fulfillment.tracking_company || order.trackingCompany || '';
+    const tracking = fulfillment.tracking_number || order.trackingNumber || '';
+    const trackingUrl = fulfillment.tracking_url || order.trackingUrl || '';
 
-    // Array parametri ordinati: {{1}}=nome, {{2}}=ordine, {{3}}=corriere, {{4}}=tracking, {{5}}=trackingUrl
+    // 5. LOG dei dati che si mandano
+    console.log("📦 [order-fulfilled] Dati WA", {
+      nome,
+      ordine,
+      corriere,
+      tracking,
+      trackingUrl,
+      phone: order.customer?.phone,
+      template_name,
+      phone_number_id,
+      access_token
+    });
+
+    // 6. Parametri e testo
     const parameters = [
       { type: "text", text: nome },
       { type: "text", text: ordine },
@@ -89,20 +123,25 @@ export async function POST(req) {
       { type: "text", text: tracking },
       { type: "text", text: trackingUrl }
     ];
-
-    // TESTO finale inviato (così lo vedi come lo riceve il cliente)
     const testoFinale = `Ciao ${nome}, il tuo ordine #${ordine} è stato spedito! 🚚 Corriere: ${corriere} Tracking: ${tracking} Puoi tracciare la spedizione qui: ${trackingUrl} Questo numero WhatsApp viene utilizzato solo per comunicazioni relative al tuo ordine. 👕🛒`;
 
-    // 4. Invia WhatsApp template
-    const message_id = await sendWhatsappTemplateMessage({
-      phone: order.customer?.phone,
-      template_name,
-      parameters,
-      phone_number_id,
-      access_token
-    });
+    // 7. Invio WhatsApp
+    let message_id = null;
+    try {
+      message_id = await sendWhatsappTemplateMessage({
+        phone: order.customer?.phone,
+        template_name,
+        parameters,
+        phone_number_id,
+        access_token
+      });
+      console.log("✅ [order-fulfilled] WhatsApp inviato, message_id:", message_id);
+    } catch (waErr) {
+      console.error("❌ [order-fulfilled] Errore invio WhatsApp:", waErr);
+      return new Response(JSON.stringify({ error: waErr.message }), { status: 500 });
+    }
 
-    // 5. Salva anche in messages
+    // 8. Salva messaggio in Firestore
     await addDoc(collection(db, 'messages'), {
       text: testoFinale,
       to: order.customer?.phone,
@@ -116,12 +155,15 @@ export async function POST(req) {
       message_id: message_id || ("order_fulfilled_" + orderId)
     });
 
-    // 6. Segna come inviato
+    // 9. Segna ordine come evaso-inviato
     await setDoc(orderRef, { evasione_inviata: true }, { merge: true });
+
+    console.log("✅ [order-fulfilled] Ordine aggiornato con evasione_inviata true");
 
     return new Response(JSON.stringify({ ok: true, message: 'WhatsApp inviato e salvato' }), { status: 200 });
 
   } catch (err) {
+    console.error("❌ [order-fulfilled] Errore generale:", err);
     return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
