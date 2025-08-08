@@ -36,12 +36,10 @@ export default function ChatPage() {
   const messagesTopRef = useRef(null);
   const listChatRef = useRef(null);
 
-  // Ricerca contatti avanzata
   const [searchContact, setSearchContact] = useState('');
   const [filteredContacts, setFilteredContacts] = useState([]);
   const [allContacts, setAllContacts] = useState([]);
 
-  // Menù contestuale
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
   const [chatMenu, setChatMenu] = useState({ visible: false, x: 0, y: 0, phone: null });
 
@@ -124,7 +122,6 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // --- ORDINAMENTO: sposta chat con messaggio più recente (non letto o nuovo) in alto ---
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -145,18 +142,15 @@ export default function ChatPage() {
           lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
           lastMsgText: lastMsg.text || (lastMsg.type === 'image' ? '[Immagine]' : lastMsg.type === 'document' ? '[Documento]' : ''),
           unread,
-          // Identifica mittente ultimo messaggio
           lastMsgFrom: lastMsg.from
         };
       })
-      // CHAT DA LEGGERE (unread>0) PRIMA, POI TUTTO ORDINATO PER DATA (anche se già era così)
       .sort((a, b) => {
         if ((b.unread > 0) !== (a.unread > 0)) return b.unread - a.unread;
         return b.lastMsgTime - a.lastMsgTime;
       });
   }, [allMessages, contactNames]);
 
-  // --- SCROLL AUTOMATICO: focus sulla chat attiva nella lista a sinistra (sposta in alto se selezionata) ---
   useEffect(() => {
     if (!selectedPhone || !listChatRef.current) return;
     const activeLi = listChatRef.current.querySelector(`[data-phone="${selectedPhone}"]`);
@@ -165,7 +159,6 @@ export default function ChatPage() {
     }
   }, [selectedPhone, phonesData.length]);
 
-  // --- LOGICA 24H ---
   useEffect(() => {
     if (!user?.uid || !selectedPhone) {
       setCanSendMessage(false);
@@ -186,7 +179,6 @@ export default function ChatPage() {
     setCanSendMessage(now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone]);
 
-  // Marca messaggi come letti
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
     const unreadMsgIds = allMessages
@@ -202,12 +194,10 @@ export default function ChatPage() {
     }
   }, [selectedPhone, allMessages, user]);
 
-  // --- SCROLL CHAT ---  
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // ---- SCROLL TO TOP / BOTTOM LOGIC (aggiungi bottoni se necessario) ----
   const [showScrollButtons, setShowScrollButtons] = useState(false);
   const chatBoxRef = useRef();
   const handleScroll = () => {
@@ -223,7 +213,6 @@ export default function ChatPage() {
     chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight, behavior: 'smooth' });
   };
 
-  // --- TEMPLATES ---
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -237,7 +226,6 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Filtra messaggi della chat attiva
   const filtered = useMemo(() => (
     allMessages
       .filter(m =>
@@ -255,7 +243,6 @@ export default function ChatPage() {
     setMessageText('');
   };
 
-  // CANCELLAZIONE MESSAGGIO SINGOLO
   const handleMessageContextMenu = (e, id) => {
     e.preventDefault();
     e.stopPropagation();
@@ -273,7 +260,6 @@ export default function ChatPage() {
     }
   };
 
-  // CANCELLAZIONE INTERA CHAT
   const handleChatContextMenu = (e, phone) => {
     e.preventDefault();
     e.stopPropagation();
@@ -297,7 +283,6 @@ export default function ChatPage() {
     }
   };
 
-  // Chiudi menù contestuale
   useEffect(() => {
     function close(e) {
       const menu = document.getElementById("menu-contestuale-msg");
@@ -319,7 +304,6 @@ export default function ChatPage() {
     };
   }, [contextMenu.visible, chatMenu.visible]);
 
-  // Long press per mobile (messaggio)
   const handleTouchStart = (id) => {
     longPressTimeout.current = setTimeout(() => {
       setContextMenu({ visible: true, x: window.innerWidth / 2, y: window.innerHeight / 2, messageId: id });
@@ -329,7 +313,7 @@ export default function ChatPage() {
     clearTimeout(longPressTimeout.current);
   };
 
-  // Invio messaggi testuali/media
+  // FOTO+TESTO = invio doppio: prima la foto, poi il testo
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
@@ -353,13 +337,14 @@ export default function ChatPage() {
         return;
       }
 
+      // PRIMA LA FOTO (senza caption)
       const payload = {
         messaging_product: "whatsapp",
         to: selectedPhone,
         type: selectedMedia.type,
         [selectedMedia.type]: {
           id: media_id,
-          caption: messageText || '',
+          caption: "",
         },
       };
 
@@ -377,7 +362,7 @@ export default function ChatPage() {
       const data = await res.json();
       if (data.messages) {
         await addDoc(collection(db, "messages"), {
-          text: messageText,
+          text: "",
           to: selectedPhone,
           from: "operator",
           timestamp: Date.now(),
@@ -388,6 +373,41 @@ export default function ChatPage() {
           read: true,
           message_id: data.messages[0].id,
         });
+
+        // POI IL TESTO se presente
+        if (messageText.trim()) {
+          const payloadText = {
+            messaging_product: "whatsapp",
+            to: selectedPhone,
+            type: "text",
+            text: { body: messageText.trim() }
+          };
+          const resText = await fetch(
+            `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify(payloadText),
+            }
+          );
+          const dataText = await resText.json();
+          if (dataText.messages) {
+            await addDoc(collection(db, "messages"), {
+              text: messageText.trim(),
+              to: selectedPhone,
+              from: "operator",
+              timestamp: Date.now(),
+              createdAt: serverTimestamp(),
+              type: "text",
+              user_uid: user.uid,
+              read: true,
+              message_id: dataText.messages[0].id,
+            });
+          }
+        }
         setMessageText('');
         setSelectedMedia(null);
       } else {
@@ -396,7 +416,7 @@ export default function ChatPage() {
       return;
     }
 
-    // Invio messaggi testuali
+    // SOLO TESTO
     const payload = {
       messaging_product: "whatsapp",
       to: selectedPhone,
@@ -433,6 +453,7 @@ export default function ChatPage() {
     }
   };
 
+  // --- Invio template WhatsApp ---
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const template = templates.find(t => t.name === name);
@@ -521,32 +542,73 @@ export default function ChatPage() {
             <Plus size={16} /> Nuova
           </button>
         </div>
-        <ul className="space-y-2">
-          {phonesData.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
-            <li
-              key={phone}
-              data-phone={phone}
-              onClick={() => setSelectedPhone(phone)}
-              onContextMenu={e => handleChatContextMenu(e, phone)}
-              className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition ${
-                selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"
-              }`}
-            >
-              <div>
-                <span className={`${unread > 0 ? 'font-bold text-black' : ''}`}>
-                  {name}
-                  {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
-                </span>
-                {/* ANTEPRIMA SINGOLA RIGA (32 caratteri) */}
-                <span className="block text-xs text-gray-400">
-                  {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
-                </span>
-              </div>
-              {unread > 0 && (
-                <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
-              )}
-            </li>
-          ))}
+        <ul className="space-y-0">
+          {(() => {
+            const unreadChats = phonesData.filter(x => x.unread > 0);
+            const readChats = phonesData.filter(x => x.unread === 0);
+            return (
+              <>
+                {unreadChats.length > 0 && (
+                  <>
+                    <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Non letti</li>
+                    {unreadChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
+                      <li
+                        key={phone}
+                        data-phone={phone}
+                        onClick={() => setSelectedPhone(phone)}
+                        onContextMenu={e => handleChatContextMenu(e, phone)}
+                        className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
+                          ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
+                          border-b border-gray-100`}
+                        style={{ boxShadow: selectedPhone === phone ? "0 4px 16px #0001" : "" }}
+                      >
+                        <div>
+                          <span className={`${unread > 0 ? 'font-bold text-black' : ''}`}>
+                            {name}
+                            {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
+                          </span>
+                          <span className="block text-xs text-gray-400">
+                            {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
+                          </span>
+                        </div>
+                        {unread > 0 && (
+                          <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
+                        )}
+                      </li>
+                    ))}
+                    <li className="my-2 border-t border-gray-200"></li>
+                  </>
+                )}
+                {readChats.length > 0 && (
+                  <>
+                    {readChats.length > 0 && (
+                      <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Conversazioni</li>
+                    )}
+                    {readChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
+                      <li
+                        key={phone}
+                        data-phone={phone}
+                        onClick={() => setSelectedPhone(phone)}
+                        onContextMenu={e => handleChatContextMenu(e, phone)}
+                        className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
+                          ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
+                          border-b border-gray-100`}
+                      >
+                        <div>
+                          <span>
+                            {name}
+                          </span>
+                          <span className="block text-xs text-gray-400">
+                            {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </>
+                )}
+              </>
+            );
+          })()}
         </ul>
 
         {/* Modal nuova chat */}
@@ -560,7 +622,6 @@ export default function ChatPage() {
               className="mb-2"
               autoFocus
             />
-            {/* Risultati ricerca */}
             {searchContact && filteredContacts.length > 0 && (
               <div className="max-h-40 overflow-auto mb-2 rounded border bg-white shadow">
                 {filteredContacts.map((c, i) => (
@@ -611,8 +672,6 @@ export default function ChatPage() {
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
-
-          {/* ----------- MESSAGGIO 24H ----------- */}
           {!canSendMessage && (
             <div className="flex items-center justify-center px-4 py-3 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-sm font-medium">
               ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
@@ -675,7 +734,6 @@ export default function ChatPage() {
               ))}
               <div ref={messagesEndRef} />
             </div>
-            {/* Bottoni scroll top/bottom se la chat è lunga */}
             {showScrollButtons && (
               <div className="fixed bottom-28 right-8 z-40 flex flex-col gap-1">
                 <Button
@@ -700,7 +758,6 @@ export default function ChatPage() {
             )}
           </div>
 
-          {/* ----------- ANTEPRIMA MEDIA ----------- */}
           {selectedMedia && (
             <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
               {selectedMedia.type === 'image' ? (
@@ -727,7 +784,6 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Input + Attach */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
             {/* Foto */}
             <label className="flex items-center cursor-pointer">
@@ -777,7 +833,6 @@ export default function ChatPage() {
             </Button>
           </div>
 
-          {/* Lista Template */}
           {showTemplates && (
             <div className="absolute bottom-16 right-4 z-50 bg-white rounded-lg shadow-lg border w-80 max-w-full p-4">
               <h3 className="font-semibold mb-2">Template WhatsApp</h3>
@@ -795,7 +850,6 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* --- MENÙ CONTESTUALE SINGOLO MESSAGGIO --- */}
           {contextMenu.visible && (
             <div
               id="menu-contestuale-msg"
@@ -821,7 +875,6 @@ export default function ChatPage() {
               </button>
             </div>
           )}
-          {/* --- MENÙ CONTESTUALE CHAT --- */}
           {chatMenu.visible && (
             <div
               id="menu-contestuale-chat"
