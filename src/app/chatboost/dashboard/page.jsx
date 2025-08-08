@@ -8,10 +8,9 @@ import {
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2 } from 'lucide-react';
+import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
-// --- NORMALIZZA NUMERO ---
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim().replace(/^[+]+/, '').replace(/^00/, '').replace(/[\s\-().]/g, '');
@@ -34,8 +33,10 @@ export default function ChatPage() {
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(false);
   const messagesEndRef = useRef(null);
+  const messagesTopRef = useRef(null);
+  const listChatRef = useRef(null);
 
-  // Per ricerca contatti avanzata
+  // Ricerca contatti avanzata
   const [searchContact, setSearchContact] = useState('');
   const [filteredContacts, setFilteredContacts] = useState([]);
   const [allContacts, setAllContacts] = useState([]);
@@ -44,7 +45,6 @@ export default function ChatPage() {
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
   const [chatMenu, setChatMenu] = useState({ visible: false, x: 0, y: 0, phone: null });
 
-  // For mobile long press
   let longPressTimeout = useRef();
 
   const parseTime = val => {
@@ -54,7 +54,6 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
-  // Recupera dati utente
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -65,7 +64,6 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Recupera TUTTI i contatti con campi extra, popola anche la mappa rapida dei nomi
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -88,36 +86,30 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // Cerca tra tutti i campi
   useEffect(() => {
-  if (!searchContact.trim()) {
-    setFilteredContacts([]);
-    return;
-  }
-  const search = searchContact.trim().toLowerCase();
-  const tokens = search.split(/\s+/).filter(Boolean);
-
-  const found = allContacts.filter(c => {
-    // Crea un array di campi su cui cercare
-    const fields = [
-      (c.name || '').toLowerCase(),
-      (c.lastName || '').toLowerCase(),
-      (c.email || '').toLowerCase(),
-      (c.phone || '').toLowerCase(),
-    ];
-
-    // Se c'è solo una parola, basta che sia presente in uno dei campi
-    if (tokens.length === 1) {
-      return fields.some(f => f.includes(tokens[0]));
+    if (!searchContact.trim()) {
+      setFilteredContacts([]);
+      return;
     }
-    // Se ci sono più parole: TUTTE devono essere in almeno un campo
-    return tokens.every(tok => fields.some(f => f.includes(tok)));
-  });
+    const search = searchContact.trim().toLowerCase();
+    const tokens = search.split(/\s+/).filter(Boolean);
 
-  setFilteredContacts(found);
-}, [searchContact, allContacts]);
+    const found = allContacts.filter(c => {
+      const fields = [
+        (c.name || '').toLowerCase(),
+        (c.lastName || '').toLowerCase(),
+        (c.email || '').toLowerCase(),
+        (c.phone || '').toLowerCase(),
+      ];
+      if (tokens.length === 1) {
+        return fields.some(f => f.includes(tokens[0]));
+      }
+      return tokens.every(tok => fields.some(f => f.includes(tok)));
+    });
 
-  // Ascolta messaggi realtime
+    setFilteredContacts(found);
+  }, [searchContact, allContacts]);
+
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -132,7 +124,7 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // Raggruppa conversazioni per numero normalizzato
+  // --- ORDINAMENTO: sposta chat con messaggio più recente (non letto o nuovo) in alto ---
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -153,12 +145,27 @@ export default function ChatPage() {
           lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
           lastMsgText: lastMsg.text || (lastMsg.type === 'image' ? '[Immagine]' : lastMsg.type === 'document' ? '[Documento]' : ''),
           unread,
+          // Identifica mittente ultimo messaggio
+          lastMsgFrom: lastMsg.from
         };
       })
-      .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
+      // CHAT DA LEGGERE (unread>0) PRIMA, POI TUTTO ORDINATO PER DATA (anche se già era così)
+      .sort((a, b) => {
+        if ((b.unread > 0) !== (a.unread > 0)) return b.unread - a.unread;
+        return b.lastMsgTime - a.lastMsgTime;
+      });
   }, [allMessages, contactNames]);
 
-  // LOGICA 24H
+  // --- SCROLL AUTOMATICO: focus sulla chat attiva nella lista a sinistra (sposta in alto se selezionata) ---
+  useEffect(() => {
+    if (!selectedPhone || !listChatRef.current) return;
+    const activeLi = listChatRef.current.querySelector(`[data-phone="${selectedPhone}"]`);
+    if (activeLi && typeof activeLi.scrollIntoView === 'function') {
+      activeLi.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [selectedPhone, phonesData.length]);
+
+  // --- LOGICA 24H ---
   useEffect(() => {
     if (!user?.uid || !selectedPhone) {
       setCanSendMessage(false);
@@ -195,12 +202,28 @@ export default function ChatPage() {
     }
   }, [selectedPhone, allMessages, user]);
 
-  // Scroll automatico
+  // --- SCROLL CHAT ---  
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // Carica templates APPROVED
+  // ---- SCROLL TO TOP / BOTTOM LOGIC (aggiungi bottoni se necessario) ----
+  const [showScrollButtons, setShowScrollButtons] = useState(false);
+  const chatBoxRef = useRef();
+  const handleScroll = () => {
+    if (!chatBoxRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatBoxRef.current;
+    setShowScrollButtons(scrollHeight - clientHeight > 600);
+  };
+
+  const scrollToTop = () => {
+    chatBoxRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const scrollToBottom = () => {
+    chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight, behavior: 'smooth' });
+  };
+
+  // --- TEMPLATES ---
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -223,7 +246,6 @@ export default function ChatPage() {
       .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
   ), [allMessages, selectedPhone]);
 
-  // Gestione file media selezionato
   const [selectedMedia, setSelectedMedia] = useState(null);
   const handleMediaInput = type => e => {
     const file = e.target.files[0];
@@ -315,7 +337,6 @@ export default function ChatPage() {
       return;
     }
 
-    // Invio MEDIA
     if (selectedMedia) {
       const uploadData = new FormData();
       uploadData.append('file', selectedMedia.file);
@@ -412,12 +433,10 @@ export default function ChatPage() {
     }
   };
 
-  // Invio template WhatsApp (header multimediale supportato)
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const template = templates.find(t => t.name === name);
     if (!template) return alert("Template non trovato!");
-    // Recupera header
     let components = [];
     if (template.header && template.header.type !== "NONE") {
       if (template.header.type === "TEXT") {
@@ -495,7 +514,7 @@ export default function ChatPage() {
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* Lista chat */}
-      <div className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}>
+      <div className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`} ref={listChatRef}>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Conversazioni</h2>
           <button onClick={() => setShowNewChat(true)} className="flex items-center gap-1 px-3 py-1 bg-black text-white rounded-full">
@@ -503,15 +522,21 @@ export default function ChatPage() {
           </button>
         </div>
         <ul className="space-y-2">
-          {phonesData.map(({ phone, name, lastMsgText, unread }) => (
+          {phonesData.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
             <li
               key={phone}
+              data-phone={phone}
               onClick={() => setSelectedPhone(phone)}
               onContextMenu={e => handleChatContextMenu(e, phone)}
-              className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition ${selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"}`}
+              className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition ${
+                selectedPhone === phone ? "bg-gray-200 font-semibold" : "hover:bg-gray-100"
+              }`}
             >
               <div>
-                <span>{name}</span>
+                <span className={`${unread > 0 ? 'font-bold text-black' : ''}`}>
+                  {name}
+                  {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
+                </span>
                 <span className="block text-xs text-gray-400">{lastMsgText}</span>
               </div>
               {unread > 0 && (
@@ -593,7 +618,13 @@ export default function ChatPage() {
           )}
 
           {/* Messaggi */}
-          <div className="flex-1 overflow-y-auto p-4">
+          <div
+            className="flex-1 overflow-y-auto p-4 scroll-smooth relative"
+            ref={chatBoxRef}
+            onScroll={handleScroll}
+            style={{ scrollBehavior: 'smooth' }}
+          >
+            <div ref={messagesTopRef} />
             <div className="space-y-3">
               {filtered.map((msg, idx) => (
                 <div
@@ -641,6 +672,29 @@ export default function ChatPage() {
               ))}
               <div ref={messagesEndRef} />
             </div>
+            {/* Bottoni scroll top/bottom se la chat è lunga */}
+            {showScrollButtons && (
+              <div className="fixed bottom-28 right-8 z-40 flex flex-col gap-1">
+                <Button
+                  size="icon"
+                  className="rounded-full shadow bg-gray-200 hover:bg-black hover:text-white"
+                  onClick={scrollToTop}
+                  title="Vai all'inizio"
+                  type="button"
+                >
+                  <ChevronUp size={20} />
+                </Button>
+                <Button
+                  size="icon"
+                  className="rounded-full shadow bg-gray-200 hover:bg-black hover:text-white"
+                  onClick={scrollToBottom}
+                  title="Vai in fondo"
+                  type="button"
+                >
+                  <ChevronDown size={20} />
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* ----------- ANTEPRIMA MEDIA ----------- */}
