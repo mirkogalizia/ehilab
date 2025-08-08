@@ -537,7 +537,10 @@ export default function ChatPage() {
                   {name}
                   {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
                 </span>
-                <span className="block text-xs text-gray-400">{lastMsgText}</span>
+                {/* ANTEPRIMA SINGOLA RIGA (32 caratteri) */}
+                <span className="block text-xs text-gray-400">
+                  {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
+                </span>
               </div>
               {unread > 0 && (
                 <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
