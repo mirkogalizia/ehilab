@@ -2,15 +2,18 @@ import { NextResponse } from 'next/server';
 import { db } from '@/firebase';
 import { setDoc, getDoc, doc as fireDoc } from 'firebase/firestore';
 
-// --- Utility per normalizzare il numero ---
-function normalizePhone(phone) {
-  if (!phone) return "";
-  let norm = phone.replace(/[\s\-\.\(\)]/g, "");
-  if (norm.startsWith("0039")) norm = "+39" + norm.slice(4);
-  if (norm.startsWith("39") && norm.length === 11) norm = "+39" + norm.slice(2);
-  if (!norm.startsWith("+") && norm.length === 10) norm = "+39" + norm;
-  if (!/^\+39\d{9,10}$/.test(norm)) return "";
-  return norm;
+// --- Utility normalizzazione phone identica a ContactsPage ---
+function normalizePhone(phoneRaw) {
+  if (!phoneRaw) return '';
+  let phone = phoneRaw.trim()
+    .replace(/^[+]+/, '')
+    .replace(/^00/, '')
+    .replace(/[\s\-().]/g, '');
+  if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
+  if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
+  if (/^\d+$/.test(phone) && phone.length > 10) return '+' + phone;
+  if (phone.startsWith('+')) return phone;
+  return '';
 }
 
 // --- WEBHOOK Shopify ---
@@ -79,9 +82,19 @@ export async function POST(req, { params }) {
       raw: { ...payload },
     };
 
-    // 6bis. CREA/AGGIORNA CONTATTO in Firestore
-    const contactDocId = phone || (customer.email || "").toLowerCase() || customer.id?.toString() || "";
+    // 6bis. CREA/AGGIORNA CONTATTO in Firestore con tag "shopify" senza duplicati
+    const contactDocId = phone;
     if (contactDocId) {
+      // Recupera i tag già esistenti per evitare duplicati
+      let existingTags = [];
+      const contactSnap = await getDoc(fireDoc(db, "contacts", contactDocId));
+      if (contactSnap.exists()) {
+        const data = contactSnap.data();
+        if (Array.isArray(data.tags)) existingTags = data.tags;
+      }
+      // Merge tag "shopify" senza duplicati
+      const newTags = Array.from(new Set([...(existingTags || []), "shopify"]));
+
       await setDoc(
         fireDoc(db, "contacts", contactDocId),
         {
@@ -98,6 +111,7 @@ export async function POST(req, { params }) {
           createdBy: merchantId,
           updatedAt: new Date(),
           source: "shopify",
+          tags: newTags,
         },
         { merge: true }
       );
