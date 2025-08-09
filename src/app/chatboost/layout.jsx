@@ -34,6 +34,7 @@ export default function ChatBoostLayout({ children }) {
       where('from', '!=', 'operator')
     );
     const unsub = onSnapshot(q, snap => {
+      console.log('[unread count]', snap.size); // debug
       setTotalUnread(snap.size);
     });
     return () => unsub();
@@ -41,7 +42,6 @@ export default function ChatBoostLayout({ children }) {
 
   useEffect(() => {
     function handleClickOutside(e) {
-      // @ts-ignore
       if (subnavRef.current && !subnavRef.current.contains(e.target)) {
         setShowSettingsMenu(false);
       }
@@ -68,7 +68,6 @@ export default function ChatBoostLayout({ children }) {
     }
   };
 
-  // NAV principali
   const navItems = [
     { label: 'Chat',      icon: MessageSquare, path: '/chatboost/dashboard' },
     { label: 'Template',  icon: FileText,      path: '/chatboost/templates' },
@@ -76,16 +75,13 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Impostaz.', icon: Settings,      path: '/chatboost/impostazioni' },
   ];
 
-  // SUBNAV impostazioni (aggiunta Automazioni!)
   const settingsSubnav = [
     { label: 'Info', path: '/chatboost/impostazioni/info', icon: Info },
     { label: 'Integrazioni', path: '/chatboost/impostazioni/integrations', icon: Plug },
     { label: 'Automazioni', path: '/chatboost/impostazioni/automazioni', icon: Zap },
   ];
 
-  // ----- DRAWER (mobile menu) -----
   function MobileDrawer() {
-    // Aggiungi Automazioni anche qui sotto Impostazioni
     return (
       <div className="fixed inset-0 z-[999] flex md:hidden">
         <div
@@ -120,7 +116,6 @@ export default function ChatBoostLayout({ children }) {
                 )}
               </button>
             ))}
-            {/* Submenu impostazioni mobile */}
             {pathname.startsWith('/chatboost/impostazioni') && (
               <div className="ml-4 mt-2 flex flex-col gap-1">
                 {settingsSubnav.map(({ label, path, icon: SubIcon }) => (
@@ -149,7 +144,6 @@ export default function ChatBoostLayout({ children }) {
             <LogOut size={20} /> Logout
           </button>
         </div>
-        {/* Overlay */}
         <div className="flex-1 bg-black/30" onClick={() => setShowDrawer(false)} />
         <style jsx global>{`
           @keyframes slideDrawer {
@@ -222,7 +216,7 @@ export default function ChatBoostLayout({ children }) {
         </button>
       </aside>
 
-      {/* Mini-sidebar settings (Apple style) - desktop */}
+      {/* Mini-sidebar settings - desktop */}
       {showSettingsMenu && (
         <div
           ref={subnavRef}
@@ -256,7 +250,6 @@ export default function ChatBoostLayout({ children }) {
           </div>
         </div>
       )}
-      {/* Overlay per chiudere la mini-sidebar cliccando fuori */}
       {showSettingsMenu && (
         <div
           className="hidden md:block fixed inset-0 z-10"
@@ -268,13 +261,13 @@ export default function ChatBoostLayout({ children }) {
       {/* Drawer nav mobile */}
       {showDrawer && <MobileDrawer />}
 
-      {/* HEADER mobile - fixed */}
+      {/* HEADER mobile */}
       <header className="md:hidden fixed top-0 left-0 w-full z-30 bg-white shadow-sm flex items-center justify-between px-4 py-3 border-b border-gray-100">
         <button onClick={() => setShowDrawer(true)}>
           <Menu size={28} className="text-gray-800" />
         </button>
         <span className="text-lg font-extrabold tracking-tight text-emerald-700 select-none">EHI! Chat Boost</span>
-        <span className="w-8" /> {/* Spacer per simmetria */}
+        <span className="w-8" />
       </header>
 
       {/* Main content */}
@@ -282,27 +275,25 @@ export default function ChatBoostLayout({ children }) {
         {children}
       </main>
 
-      {/* Floating Chat Button (badge non letti) */}
-      {!pathname.startsWith('/chatboost/dashboard') && (
-        <Link
-          href="/chatboost/dashboard"
-          aria-label="Vai alla chat"
-          className="fixed bottom-5 right-5 z-[1000] rounded-full p-4 bg-emerald-600 text-white shadow-xl hover:bg-emerald-700 transition"
-        >
-          <div className="relative">
-            <MessageSquare size={26} />
-            {totalUnread > 0 && (
-              <span
-                className="absolute -top-2 -right-2 min-w-[22px] h-[22px] px-1.5
-                           rounded-full bg-red-500 text-white text-[11px] font-bold
-                           flex items-center justify-center shadow"
-              >
-                {totalUnread > 99 ? '99+' : totalUnread}
-              </span>
-            )}
-          </div>
-        </Link>
-      )}
+      {/* Floating Chat Button (sempre visibile) */}
+      <Link
+        href="/chatboost/dashboard"
+        aria-label="Vai alla chat"
+        className="fixed bottom-5 right-5 z-[1000] rounded-full p-4 bg-emerald-600 text-white shadow-xl hover:bg-emerald-700 transition"
+      >
+        <div className="relative">
+          <MessageSquare size={26} />
+          {totalUnread > 0 && (
+            <span
+              className="absolute -top-2 -right-2 min-w-[22px] h-[22px] px-1.5
+                         rounded-full bg-red-500 text-white text-[11px] font-bold
+                         flex items-center justify-center shadow"
+            >
+              {totalUnread > 99 ? '99+' : totalUnread}
+            </span>
+          )}
+        </div>
+      </Link>
     </div>
   );
 }
