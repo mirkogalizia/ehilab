@@ -8,7 +8,7 @@ import {
 } from 'firebase/firestore';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2, ChevronDown, ChevronUp, AlertTriangle, X } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 import toast, { Toaster } from 'react-hot-toast';
 
@@ -338,6 +338,7 @@ export default function ChatPage() {
   }, [contextMenu.visible, chatMenu.visible]);
 
   // Invio messaggio
+  const [isSending, setIsSending] = useState(false);
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
@@ -345,6 +346,7 @@ export default function ChatPage() {
       return;
     }
 
+    setIsSending(true);
     try {
       if (selectedMedia) {
         const uploadData = new FormData();
@@ -447,6 +449,8 @@ export default function ChatPage() {
       }
     } catch (error) {
       toast.error(`Errore: ${error.message}`);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -459,6 +463,7 @@ export default function ChatPage() {
       return;
     }
 
+    setIsSending(true);
     try {
       let components = [];
       if (template.header && template.header.type !== "NONE") {
@@ -510,25 +515,37 @@ export default function ChatPage() {
       setShowTemplates(false);
     } catch (error) {
       toast.error(`Errore: ${error.message}`);
+    } finally {
+      setIsSending(false);
     }
   };
 
   // UI
   return (
     <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
-      <Toaster position="top-right" />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          style: {
+            background: '#1E3A8A',
+            color: '#FFFFFF',
+            borderRadius: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+          },
+        }}
+      />
       {/* Lista chat */}
       <div
-        className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`}
+        className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-gray-100 border-r overflow-y-auto p-3`}
         ref={listChatRef}
         role="navigation"
         aria-label="Lista delle conversazioni"
       >
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold">Conversazioni</h2>
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="text-lg font-semibold">Conversazioni</h2>
           <Button
             onClick={() => setShowNewChat(true)}
-            className="flex items-center gap-1 px-3 py-1 bg-black text-white rounded-full"
+            className="flex items-center gap-1 px-3 py-1 bg-blue-900 text-white rounded-full hover:bg-blue-800"
             aria-label="Avvia nuova conversazione"
           >
             <Plus size={16} /> Nuova
@@ -542,7 +559,7 @@ export default function ChatPage() {
               <>
                 {unreadChats.length > 0 && (
                   <>
-                    <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide" role="presentation">
+                    <li className="text-xs uppercase text-gray-500 font-bold px-2 py-1 tracking-wide" role="presentation">
                       Non letti
                     </li>
                     {unreadChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
@@ -551,9 +568,9 @@ export default function ChatPage() {
                         data-phone={phone}
                         onClick={() => setSelectedPhone(phone)}
                         onContextMenu={e => handleChatContextMenu(e, phone)}
-                        className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
+                        className={`group flex items-center justify-between px-3 py-2 mb-1 rounded-xl cursor-pointer transition 
                           ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
-                          border-b border-gray-100`}
+                          border-b border-gray-100 focus-visible:ring-2 focus-visible:ring-blue-900`}
                         style={{ boxShadow: selectedPhone === phone ? "0 4px 16px #0001" : "" }}
                         role="option"
                         aria-selected={selectedPhone === phone}
@@ -561,16 +578,16 @@ export default function ChatPage() {
                         onKeyDown={e => e.key === 'Enter' && setSelectedPhone(phone)}
                       >
                         <div>
-                          <span className={`${unread > 0 ? 'font-bold text-black' : ''}`}>
+                          <span className={`font-medium tracking-tight ${unread > 0 ? 'font-bold text-black' : ''}`}>
                             {name}
-                            {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
+                            {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-500">●</span> : ''}
                           </span>
                           <span className="block text-xs text-gray-400">
                             {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
                           </span>
                         </div>
                         {unread > 0 && (
-                          <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">
+                          <span className="ml-2 px-2 py-0.5 rounded-full bg-green-500 text-white text-xs font-bold animate-pulse">
                             {unread}
                           </span>
                         )}
@@ -581,7 +598,7 @@ export default function ChatPage() {
                 )}
                 {readChats.length > 0 && (
                   <>
-                    <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide" role="presentation">
+                    <li className="text-xs uppercase text-gray-500 font-bold px-2 py-1 tracking-wide" role="presentation">
                       Conversazioni
                     </li>
                     {readChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
@@ -590,16 +607,17 @@ export default function ChatPage() {
                         data-phone={phone}
                         onClick={() => setSelectedPhone(phone)}
                         onContextMenu={e => handleChatContextMenu(e, phone)}
-                        className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
+                        className={`group flex items-center justify-between px-3 py-2 mb-1 rounded-xl cursor-pointer transition 
                           ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
-                          border-b border-gray-100`}
+                          border-b border-gray-100 focus-visible:ring-2 focus-visible:ring-blue-900`}
+                        style={{ boxShadow: selectedPhone === phone ? "0 4px 16px #0001" : "" }}
                         role="option"
                         aria-selected={selectedPhone === phone}
                         tabIndex={0}
                         onKeyDown={e => e.key === 'Enter' && setSelectedPhone(phone)}
                       >
                         <div>
-                          <span>{name}</span>
+                          <span className="font-medium tracking-tight">{name}</span>
                           <span className="block text-xs text-gray-400">
                             {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
                           </span>
@@ -615,13 +633,18 @@ export default function ChatPage() {
 
         {/* Modal nuova chat */}
         {showNewChat && (
-          <div className="mt-4 p-4 bg-gray-100 rounded-lg shadow" role="dialog" aria-label="Nuova conversazione">
+          <div
+            className="mt-3 p-3 bg-gray-100 rounded-lg shadow transition-all duration-200"
+            style={{ opacity: showNewChat ? 1 : 0, transform: showNewChat ? 'scale(1)' : 'scale(0.95)' }}
+            role="dialog"
+            aria-label="Nuova conversazione"
+          >
             <h3 className="mb-2 font-medium">📞 Cerca contatto o inserisci numero</h3>
             <Input
               placeholder="Nome, cognome, email o numero…"
               value={searchContact}
               onChange={e => setSearchContact(e.target.value)}
-              className="mb-2"
+              className="mb-2 border-gray-300 focus:ring-2 focus:ring-blue-900 disabled:opacity-30 disabled:border-gray-400"
               autoFocus
               aria-label="Cerca contatto"
             />
@@ -633,7 +656,7 @@ export default function ChatPage() {
                   filteredContacts.map((c, i) => (
                     <div
                       key={c.phone}
-                      className="px-3 py-2 cursor-pointer hover:bg-gray-200 flex flex-col"
+                      className="px-3 py-2 cursor-pointer hover:bg-gray-200 flex flex-col focus-visible:ring-2 focus-visible:ring-blue-900"
                       onClick={() => {
                         setSelectedPhone(c.phone);
                         setSearchContact('');
@@ -643,7 +666,7 @@ export default function ChatPage() {
                       tabIndex={0}
                       onKeyDown={e => e.key === 'Enter' && (setSelectedPhone(c.phone), setSearchContact(''), setShowNewChat(false))}
                     >
-                      <span className="font-medium">{c.name} {c.lastName}</span>
+                      <span className="font-medium tracking-tight">{c.name} {c.lastName}</span>
                       <span className="text-xs text-gray-400">{c.phone}</span>
                       {c.email && <span className="text-xs text-gray-400">{c.email}</span>}
                     </div>
@@ -663,7 +686,7 @@ export default function ChatPage() {
                   setSearchContact('');
                   setShowNewChat(false);
                 }}
-                className="flex-1 bg-black text-white"
+                className="flex-1 bg-blue-900 text-white hover:bg-blue-800"
                 aria-label="Avvia conversazione"
               >
                 Avvia
@@ -671,7 +694,7 @@ export default function ChatPage() {
               <Button
                 variant="outline"
                 onClick={() => setShowNewChat(false)}
-                className="flex-1"
+                className="flex-1 border-gray-300 text-gray-700 hover:bg-gray-100"
                 aria-label="Annulla"
               >
                 Annulla
@@ -683,12 +706,12 @@ export default function ChatPage() {
 
       {/* Chat */}
       {selectedPhone && (
-        <div className="flex flex-col flex-1 bg-gray-100 relative">
+        <div className="flex flex-col flex-1 bg-gray-50 relative">
           {/* Header */}
-          <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
+          <div className="flex items-center gap-3 p-3 bg-white border-b sticky top-0 z-20">
             <Button
               onClick={() => setSelectedPhone('')}
-              className="md:hidden text-gray-600 hover:text-black p-0"
+              className="md:hidden text-gray-600 hover:text-blue-900 p-0"
               aria-label="Torna alla lista delle conversazioni"
             >
               <ArrowLeft size={22} />
@@ -696,14 +719,14 @@ export default function ChatPage() {
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
           {!canSendMessage && (
-            <div className="flex items-center justify-center px-4 py-3 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-sm font-medium text-center">
-              ⚠️ Finestra di 24h chiusa. Puoi inviare solo template WhatsApp.
+            <div className="flex items-center gap-2 px-3 py-2 bg-orange-200 text-orange-900 text-sm font-medium">
+              <AlertTriangle size={16} /> Finestra 24h chiusa. Usa template.
             </div>
           )}
 
           {/* Messaggi */}
           <div
-            className="flex-1 overflow-y-auto p-4 scroll-smooth relative"
+            className="flex-1 overflow-y-auto p-3 sm:p-2 scroll-smooth relative"
             ref={chatBoxRef}
             onScroll={handleScroll}
             style={{ scrollBehavior: 'smooth' }}
@@ -724,7 +747,7 @@ export default function ChatPage() {
                     <img
                       src={`/api/media-proxy?media_id=${msg.media_id}`}
                       alt="Immagine inviata"
-                      className="max-w-xs rounded-lg shadow-md"
+                      className="max-w-[50%] rounded-lg shadow-md border border-blue-200"
                       loading="lazy"
                     />
                   ) : msg.type === 'document' && msg.media_id ? (
@@ -741,14 +764,14 @@ export default function ChatPage() {
                     <div
                       className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
                         msg.from === 'operator'
-                          ? 'bg-black text-white rounded-br-none'
+                          ? 'bg-blue-900 text-white rounded-br-none'
                           : 'bg-white text-gray-900 rounded-bl-none'
                       }`}
                     >
                       {msg.text}
                     </div>
                   )}
-                  <div className="text-[10px] text-gray-400 mt-1">
+                  <div className="text-xs text-gray-400 mt-1">
                     {new Date(parseTime(msg.timestamp || msg.createdAt)).toLocaleTimeString('it-IT', {
                       hour: '2-digit',
                       minute: '2-digit',
@@ -759,10 +782,10 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
             {showScrollButtons && (
-              <div className="fixed bottom-28 right-8 z-40 flex flex-col gap-1">
+              <div className="fixed bottom-24 right-6 z-40 flex flex-col gap-1">
                 <Button
                   size="icon"
-                  className="rounded-full shadow bg-gray-200 hover:bg-black hover:text-white"
+                  className="rounded-full shadow bg-gray-200 hover:bg-blue-900 hover:text-white"
                   onClick={scrollToTop}
                   title="Vai all'inizio"
                   aria-label="Scorri all'inizio della conversazione"
@@ -771,7 +794,7 @@ export default function ChatPage() {
                 </Button>
                 <Button
                   size="icon"
-                  className="rounded-full shadow bg-gray-200 hover:bg-black hover:text-white"
+                  className="rounded-full shadow bg-gray-200 hover:bg-blue-900 hover:text-white"
                   onClick={scrollToBottom}
                   title="Vai in fondo"
                   aria-label="Scorri alla fine della conversazione"
@@ -784,7 +807,9 @@ export default function ChatPage() {
 
           {/* Preview media */}
           {selectedMedia && (
-            <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
+            <div className={`flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border ${
+              selectedMedia.type === 'image' ? 'border-blue-200' : 'border-gray-200'
+            } max-w-xs mx-4`}>
               {selectedMedia.type === 'image' ? (
                 <img
                   src={URL.createObjectURL(selectedMedia.file)}
@@ -794,7 +819,7 @@ export default function ChatPage() {
               ) : (
                 <div className="flex items-center gap-2">
                   <Paperclip size={20} className="text-gray-600" />
-                  <span className="text-sm">{selectedMedia.file.name}</span>
+                  <span className="text-sm">{selectedMedia.file.name} ({(selectedMedia.file.size / 1024 / 1024).toFixed(1)} MB)</span>
                 </div>
               )}
               <Button
@@ -813,7 +838,7 @@ export default function ChatPage() {
           {/* Input messaggio */}
           <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0 z-20">
             <label className="flex items-center cursor-pointer">
-              <Camera size={22} className="mr-2 text-gray-500 hover:text-black" aria-hidden="true" />
+              <Camera size={22} className="mr-2 text-gray-500 hover:text-blue-900" aria-hidden="true" />
               <input
                 type="file"
                 accept="image/*"
@@ -824,7 +849,7 @@ export default function ChatPage() {
               />
             </label>
             <label className="flex items-center cursor-pointer">
-              <Paperclip size={22} className="mr-2 text-gray-500 hover:text-black" aria-hidden="true" />
+              <Paperclip size={22} className="mr-2 text-gray-500 hover:text-blue-900" aria-hidden="true" />
               <input
                 type="file"
                 accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
@@ -839,22 +864,23 @@ export default function ChatPage() {
               value={messageText}
               onChange={e => setMessageText(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && sendMessage()}
-              className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800 disabled:opacity-50"
+              className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-blue-900 disabled:opacity-30 disabled:border-gray-400"
               disabled={!canSendMessage}
               aria-label="Scrivi un messaggio"
             />
             <Button
               onClick={sendMessage}
-              disabled={(!messageText.trim() && !selectedMedia) || !canSendMessage}
-              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800 disabled:opacity-50"
+              disabled={(!messageText.trim() && !selectedMedia) || !canSendMessage || isSending}
+              className="rounded-full px-5 py-3 bg-blue-900 text-white hover:bg-blue-800 disabled:opacity-30"
               aria-label="Invia messaggio"
             >
-              <Send size={18} />
+              {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
             </Button>
             <Button
               onClick={() => setShowTemplates(!showTemplates)}
-              className="rounded-full px-3 py-2 bg-gray-200 text-gray-700 ml-2"
+              className="rounded-full px-3 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 ml-2"
               aria-label="Mostra/nascondi template"
+              disabled={isSending}
             >
               Tmpl
             </Button>
@@ -863,11 +889,22 @@ export default function ChatPage() {
           {/* Menu template */}
           {showTemplates && (
             <div
-              className="absolute bottom-16 right-4 z-50 bg-white rounded-lg shadow-lg border w-80 max-w-[90vw] p-4 max-h-60 overflow-y-auto transition-opacity duration-200"
+              className="absolute bottom-[4.5rem] left-4 right-4 z-50 bg-white rounded-lg shadow-lg border max-w-[90vw] p-4 max-h-48 overflow-y-auto transition-all duration-200"
+              style={{ opacity: showTemplates ? 1 : 0, transform: showTemplates ? 'scale(1)' : 'scale(0.95)' }}
               role="menu"
               aria-label="Template WhatsApp"
             >
-              <h3 className="font-semibold mb-2">Template WhatsApp</h3>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="font-semibold">Template WhatsApp</h3>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowTemplates(false)}
+                  aria-label="Chiudi menu template"
+                >
+                  <X size={16} />
+                </Button>
+              </div>
               <ul>
                 {templates.length === 0 ? (
                   <li className="text-sm text-gray-400">Nessun template approvato</li>
@@ -875,7 +912,12 @@ export default function ChatPage() {
                   templates.map((t, idx) => (
                     <li key={idx} className="flex justify-between items-center mb-1" role="menuitem">
                       <span>{t.name}</span>
-                      <Button size="sm" onClick={() => sendTemplate(t.name)} aria-label={`Invia template ${t.name}`}>
+                      <Button
+                        size="sm"
+                        onClick={() => sendTemplate(t.name)}
+                        aria-label={`Invia template ${t.name}`}
+                        disabled={isSending}
+                      >
                         Invia
                       </Button>
                     </li>
@@ -891,8 +933,8 @@ export default function ChatPage() {
               id="menu-contestuale-msg"
               style={{
                 position: 'fixed',
-                top: contextMenu.y,
-                left: contextMenu.x,
+                top: Math.min(contextMenu.y, window.innerHeight - 100),
+                left: Math.min(contextMenu.x, window.innerWidth - 140),
                 zIndex: 9999,
                 background: 'white',
                 border: '1px solid #eee',
@@ -902,8 +944,9 @@ export default function ChatPage() {
                 minWidth: 120,
                 transition: 'opacity 0.2s, transform 0.2s',
                 opacity: contextMenu.visible ? 1 : 0,
-                transform: contextMenu.visible ? 'translateY(0)' : 'translateY(-10px)',
+                transform: contextMenu.visible ? 'scale(1)' : 'scale(0.95)',
               }}
+              className="focus-visible:ring-2 focus-visible:ring-blue-900"
               onClick={e => e.stopPropagation()}
               role="menu"
               aria-label="Menu contestuale messaggio"
@@ -915,6 +958,13 @@ export default function ChatPage() {
               >
                 <Trash2 size={16} /> Elimina messaggio
               </button>
+              <button
+                className="flex items-center gap-2 w-full py-2 px-3 text-gray-600 hover:bg-gray-100 rounded"
+                onClick={() => setContextMenu({ visible: false, x: 0, y: 0, messageId: null })}
+                aria-label="Chiudi menu"
+              >
+                <X size={16} /> Chiudi
+              </button>
             </div>
           )}
 
@@ -924,8 +974,8 @@ export default function ChatPage() {
               id="menu-contestuale-chat"
               style={{
                 position: 'fixed',
-                top: chatMenu.y,
-                left: chatMenu.x,
+                top: Math.min(chatMenu.y, window.innerHeight - 100),
+                left: Math.min(chatMenu.x, window.innerWidth - 140),
                 zIndex: 9999,
                 background: 'white',
                 border: '1px solid #eee',
@@ -935,8 +985,9 @@ export default function ChatPage() {
                 minWidth: 140,
                 transition: 'opacity 0.2s, transform 0.2s',
                 opacity: chatMenu.visible ? 1 : 0,
-                transform: chatMenu.visible ? 'translateY(0)' : 'translateY(-10px)',
+                transform: chatMenu.visible ? 'scale(1)' : 'scale(0.95)',
               }}
+              className="focus-visible:ring-2 focus-visible:ring-blue-900"
               onClick={e => e.stopPropagation()}
               role="menu"
               aria-label="Menu contestuale chat"
@@ -947,6 +998,13 @@ export default function ChatPage() {
                 aria-label="Elimina chat"
               >
                 <Trash2 size={16} /> Elimina chat
+              </button>
+              <button
+                className="flex items-center gap-2 w-full py-2 px-3 text-gray-600 hover:bg-gray-100 rounded"
+                onClick={() => setChatMenu({ visible: false, x: 0, y: 0, phone: null })}
+                aria-label="Chiudi menu"
+              >
+                <X size={16} /> Chiudi
               </button>
             </div>
           )}
@@ -961,14 +1019,14 @@ export default function ChatPage() {
                 <div className="flex gap-2">
                   <Button
                     onClick={showConfirmDelete.type === 'message' ? handleDeleteMessage : handleDeleteChat}
-                    className="flex-1 bg-red-600 text-white"
+                    className="flex-1 bg-red-600 text-white hover:bg-red-700"
                     aria-label="Conferma eliminazione"
                   >
                     Sì
                   </Button>
                   <Button
                     onClick={() => setShowConfirmDelete({ type: null, id: null })}
-                    className="flex-1 bg-gray-200 text-gray-700"
+                    className="flex-1 bg-gray-200 text-gray-700 hover:bg-gray-300"
                     aria-label="Annulla eliminazione"
                   >
                     No
