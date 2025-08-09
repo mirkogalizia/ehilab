@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
 import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu, Zap } from 'lucide-react';
@@ -25,18 +24,35 @@ export default function ChatBoostLayout({ children }) {
     }
   }, [loading, user, router]);
 
+  // 🔔 Listener UNREAD senza indice: togliamo where('from','!=','operator') e filtriamo lato client
   useEffect(() => {
     if (!user?.uid) return;
+
     const q = query(
       collection(db, 'messages'),
       where('user_uid', '==', user.uid),
-      where('read', '==', false),
-      where('from', '!=', 'operator')
+      where('read', '==', false)
+      // <-- rimosso: where('from', '!=', 'operator')
     );
-    const unsub = onSnapshot(q, snap => {
-      console.log('[unread count]', snap.size); // debug
-      setTotalUnread(snap.size);
-    });
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        // filtro in memoria i messaggi non dell'operatore
+        let count = 0;
+        snap.forEach((doc) => {
+          const d = doc.data();
+          if (d?.from !== 'operator') count += 1;
+        });
+        setTotalUnread(count);
+      },
+      (err) => {
+        console.error('Unread listener error:', err);
+        // fallback soft: non bloccare UI
+        setTotalUnread(0);
+      }
+    );
+
     return () => unsub();
   }, [user]);
 
@@ -68,6 +84,7 @@ export default function ChatBoostLayout({ children }) {
     }
   };
 
+  // NAV principali
   const navItems = [
     { label: 'Chat',      icon: MessageSquare, path: '/chatboost/dashboard' },
     { label: 'Template',  icon: FileText,      path: '/chatboost/templates' },
@@ -75,12 +92,14 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Impostaz.', icon: Settings,      path: '/chatboost/impostazioni' },
   ];
 
+  // SUBNAV impostazioni (Automazioni incluso)
   const settingsSubnav = [
     { label: 'Info', path: '/chatboost/impostazioni/info', icon: Info },
     { label: 'Integrazioni', path: '/chatboost/impostazioni/integrations', icon: Plug },
     { label: 'Automazioni', path: '/chatboost/impostazioni/automazioni', icon: Zap },
   ];
 
+  // ----- DRAWER (mobile menu) -----
   function MobileDrawer() {
     return (
       <div className="fixed inset-0 z-[999] flex md:hidden">
@@ -216,7 +235,7 @@ export default function ChatBoostLayout({ children }) {
         </button>
       </aside>
 
-      {/* Mini-sidebar settings - desktop */}
+      {/* Mini-sidebar settings (Apple style) - desktop */}
       {showSettingsMenu && (
         <div
           ref={subnavRef}
@@ -261,7 +280,7 @@ export default function ChatBoostLayout({ children }) {
       {/* Drawer nav mobile */}
       {showDrawer && <MobileDrawer />}
 
-      {/* HEADER mobile */}
+      {/* HEADER mobile - fixed */}
       <header className="md:hidden fixed top-0 left-0 w-full z-30 bg-white shadow-sm flex items-center justify-between px-4 py-3 border-b border-gray-100">
         <button onClick={() => setShowDrawer(true)}>
           <Menu size={28} className="text-gray-800" />
@@ -274,26 +293,6 @@ export default function ChatBoostLayout({ children }) {
       <main className="flex-1 overflow-y-auto pt-14 md:pt-0 bg-[#f7f7f7] z-10">
         {children}
       </main>
-
-      {/* Floating Chat Button (sempre visibile) */}
-      <Link
-        href="/chatboost/dashboard"
-        aria-label="Vai alla chat"
-        className="fixed bottom-5 right-5 z-[1000] rounded-full p-4 bg-emerald-600 text-white shadow-xl hover:bg-emerald-700 transition"
-      >
-        <div className="relative">
-          <MessageSquare size={26} />
-          {totalUnread > 0 && (
-            <span
-              className="absolute -top-2 -right-2 min-w-[22px] h-[22px] px-1.5
-                         rounded-full bg-red-500 text-white text-[11px] font-bold
-                         flex items-center justify-center shadow"
-            >
-              {totalUnread > 99 ? '99+' : totalUnread}
-            </span>
-          )}
-        </div>
-      </Link>
     </div>
   );
 }
