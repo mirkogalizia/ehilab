@@ -85,3 +85,48 @@ body {
     @apply bg-background text-foreground;
   }
 }
+/* ========== Chat mobile helpers ========== */
+
+/* blocca lo scroll del body quando sei nella vista chat */
+body.no-scroll {
+  overflow: hidden;
+  height: 100svh;
+}
+
+/* wrapper a pieno viewport, robusto su iOS/Android */
+.chat-shell {
+  height: 100svh;
+  height: 100dvh; /* fallback moderno */
+}
+
+@supports (-webkit-touch-callout: none) {
+  .chat-shell { height: -webkit-fill-available; }
+}
+
+/* contenitori che DEVONO scrollare (lista chat / messaggi) */
+.chat-scroll {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;  /* momentum iOS */
+  overscroll-behavior: contain;       /* non trascinare il body */
+}
+
+/* area messaggi con spazio per il composer sticky */
+.chat-scroll--with-composer {
+  padding-bottom: calc(max(env(safe-area-inset-bottom), 8px) + 72px); /* ~altezza composer */
+}
+
+/* composer sticky con safe-area iOS */
+.sticky-composer {
+  position: sticky;
+  bottom: 0;
+  padding-bottom: max(env(safe-area-inset-bottom), 8px);
+  background: #fff;
+  z-index: 30;
+  border-top: 1px solid var(--color-border);
+}
+
+/* micro-tweak */
+.chat-scroll, .chat-shell {
+  overscroll-behavior-y: contain;
+}
