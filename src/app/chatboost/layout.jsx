@@ -5,7 +5,8 @@ import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
 import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu, Zap } from 'lucide-react';
 import { signOut } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 export default function ChatBoostLayout({ children }) {
   const { user, loading } = useAuth();
@@ -14,6 +15,7 @@ export default function ChatBoostLayout({ children }) {
 
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showDrawer, setShowDrawer] = useState(false);
+  const [totalUnread, setTotalUnread] = useState(0);
   const subnavRef = useRef(null);
 
   useEffect(() => {
@@ -21,6 +23,20 @@ export default function ChatBoostLayout({ children }) {
       router.push('/wa/login');
     }
   }, [loading, user, router]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const q = query(
+      collection(db, 'messages'),
+      where('user_uid', '==', user.uid),
+      where('read', '==', false),
+      where('from', '!=', 'operator')
+    );
+    const unsub = onSnapshot(q, snap => {
+      setTotalUnread(snap.size);
+    });
+    return () => unsub();
+  }, [user]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -95,6 +111,11 @@ export default function ChatBoostLayout({ children }) {
               >
                 <Icon size={21} />
                 {label}
+                {label === 'Chat' && totalUnread > 0 && (
+                  <span className="ml-2 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-xs font-bold">
+                    {totalUnread}
+                  </span>
+                )}
               </button>
             ))}
             {/* Submenu impostazioni mobile */}
@@ -177,6 +198,11 @@ export default function ChatBoostLayout({ children }) {
                 >
                   <Icon size={22} className={active ? 'scale-110' : ''} />
                   <span className="text-[11px] mt-1">{label}</span>
+                  {label === 'Chat' && totalUnread > 0 && (
+                    <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-xs font-bold">
+                      {totalUnread}
+                    </span>
+                  )}
                   {label === 'Impostaz.' && pathname.startsWith('/chatboost/impostazioni') && (
                     <span className="absolute right-0 top-1 w-2 h-2 bg-blue-600 rounded-full shadow"></span>
                   )}
