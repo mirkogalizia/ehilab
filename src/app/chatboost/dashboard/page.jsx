@@ -194,12 +194,12 @@ export default function ChatPage() {
     }
   }, [selectedPhone, allMessages, user]);
 
+  const chatBoxRef = useRef();
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
   const [showScrollButtons, setShowScrollButtons] = useState(false);
-  const chatBoxRef = useRef();
   const handleScroll = () => {
     if (!chatBoxRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatBoxRef.current;
@@ -243,15 +243,12 @@ export default function ChatPage() {
     setMessageText('');
   };
 
+  const [contextPos, setContextPos] = useState({ x: 0, y: 0 }); // solo UI
   const handleMessageContextMenu = (e, id) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({
-      visible: true,
-      x: e.clientX ?? window.innerWidth/2,
-      y: e.clientY ?? window.innerHeight/2,
-      messageId: id
-    });
+    setContextPos({ x: e.clientX ?? window.innerWidth/2, y: e.clientY ?? window.innerHeight/2 });
+    setContextMenu({ visible: true, x: contextPos.x, y: contextPos.y, messageId: id });
   };
   const handleDeleteMessage = async () => {
     if (contextMenu.messageId) {
@@ -313,7 +310,7 @@ export default function ChatPage() {
     clearTimeout(longPressTimeout.current);
   };
 
-  // FOTO+TESTO = invio doppio: prima la foto, poi il testo
+  // FOTO+TESTO = invio doppio
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
@@ -326,28 +323,17 @@ export default function ChatPage() {
       uploadData.append('file', selectedMedia.file);
       uploadData.append('phone_number_id', userData.phone_number_id);
 
-      const uploadRes = await fetch('/api/send-media', {
-        method: 'POST',
-        body: uploadData,
-      });
+      const uploadRes = await fetch('/api/send-media', { method: 'POST', body: uploadData });
       const uploadJson = await uploadRes.json();
       const media_id = uploadJson.id;
-      if (!media_id) {
-        alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
-        return;
-      }
+      if (!media_id) { alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson)); return; }
 
-      // PRIMA LA FOTO (senza caption)
       const payload = {
         messaging_product: "whatsapp",
         to: selectedPhone,
         type: selectedMedia.type,
-        [selectedMedia.type]: {
-          id: media_id,
-          caption: "",
-        },
+        [selectedMedia.type]: { id: media_id, caption: "" },
       };
-
       const res = await fetch(
         `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
         {
@@ -374,7 +360,6 @@ export default function ChatPage() {
           message_id: data.messages[0].id,
         });
 
-        // POI IL TESTO se presente
         if (messageText.trim()) {
           const payloadText = {
             messaging_product: "whatsapp",
@@ -448,12 +433,14 @@ export default function ChatPage() {
         message_id: data.messages[0].id,
       });
       setMessageText('');
+      // autoscroll in basso quando invii
+      setTimeout(scrollToBottom, 50);
     } else {
       alert("Errore invio: " + JSON.stringify(data.error));
     }
   };
 
-  // --- Invio template WhatsApp ---
+  // --- Template WhatsApp ---
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const template = templates.find(t => t.name === name);
@@ -461,44 +448,22 @@ export default function ChatPage() {
     let components = [];
     if (template.header && template.header.type !== "NONE") {
       if (template.header.type === "TEXT") {
-        components.push({
-          type: "HEADER",
-          parameters: [
-            {
-              type: "text",
-              text: template.header.text || ""
-            }
-          ]
-        });
+        components.push({ type: "HEADER", parameters: [{ type: "text", text: template.header.text || "" }] });
       } else if (["IMAGE", "DOCUMENT", "VIDEO"].includes(template.header.type)) {
         if (!template.header.url) return alert("File header non trovato!");
         components.push({
           type: "HEADER",
-          parameters: [
-            {
-              type: template.header.type.toLowerCase(),
-              [template.header.type.toLowerCase()]: {
-                link: template.header.url
-              }
-            }
-          ]
+          parameters: [{ type: template.header.type.toLowerCase(), [template.header.type.toLowerCase()]: { link: template.header.url } }]
         });
       }
     }
-    components.push({
-      type: "BODY",
-      parameters: []
-    });
+    components.push({ type: "BODY", parameters: [] });
 
     const payload = {
       messaging_product: "whatsapp",
       to: selectedPhone,
       type: "template",
-      template: {
-        name,
-        language: { code: template.language || "it" },
-        components
-      }
+      template: { name, language: { code: template.language || "it" }, components }
     };
 
     const res = await fetch(
@@ -526,6 +491,7 @@ export default function ChatPage() {
         message_id: data.messages[0].id,
       });
       setShowTemplates(false);
+      setTimeout(scrollToBottom, 50);
     } else {
       alert("Errore template: " + JSON.stringify(data.error));
     }
@@ -533,7 +499,7 @@ export default function ChatPage() {
 
   // ------------------ UI ------------------
   return (
-    <div className="h-screen flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
+    <div className="flex flex-col md:flex-row bg-gray-50 font-[Montserrat] h-[100dvh] md:h-screen overflow-hidden">
       {/* Lista chat */}
       <div className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r overflow-y-auto p-4`} ref={listChatRef}>
         <div className="flex justify-between items-center mb-4">
@@ -584,7 +550,7 @@ export default function ChatPage() {
                     {readChats.length > 0 && (
                       <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Conversazioni</li>
                     )}
-                    {readChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
+                    {readChats.map(({ phone, name, lastMsgText }) => (
                       <li
                         key={phone}
                         data-phone={phone}
@@ -595,9 +561,7 @@ export default function ChatPage() {
                           border-b border-gray-100`}
                       >
                         <div>
-                          <span>
-                            {name}
-                          </span>
+                          <span>{name}</span>
                           <span className="block text-xs text-gray-400">
                             {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
                           </span>
@@ -624,7 +588,7 @@ export default function ChatPage() {
             />
             {searchContact && filteredContacts.length > 0 && (
               <div className="max-h-40 overflow-auto mb-2 rounded border bg-white shadow">
-                {filteredContacts.map((c, i) => (
+                {filteredContacts.map((c) => (
                   <div
                     key={c.phone}
                     className="px-3 py-2 cursor-pointer hover:bg-gray-200 flex flex-col"
@@ -667,21 +631,25 @@ export default function ChatPage() {
         <div className="flex flex-col flex-1 bg-gray-100 relative">
           {/* Header */}
           <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
-            <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
+            <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black" aria-label="Indietro">
               <ArrowLeft size={22} />
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
+
           {!canSendMessage && (
             <div className="flex items-center justify-center px-4 py-3 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-sm font-medium">
-              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
-              <span className="block">È possibile inviare solo template WhatsApp.</span>
+              ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.
+              <span className="block ml-1">È possibile inviare solo template WhatsApp.</span>
             </div>
           )}
 
-          {/* Messaggi */}
+          {/* Messaggi (AREA SCROLL) */}
           <div
-            className="flex-1 overflow-y-auto p-4 scroll-smooth relative"
+            className="
+              flex-1 overflow-y-auto p-4 scroll-smooth relative
+              pb-[calc(theme(spacing.24)+env(safe-area-inset-bottom))]
+            "
             ref={chatBoxRef}
             onScroll={handleScroll}
             style={{ scrollBehavior: 'smooth' }}
@@ -696,7 +664,6 @@ export default function ChatPage() {
                   onTouchStart={() => handleTouchStart(msg.id)}
                   onTouchEnd={handleTouchEnd}
                 >
-                  {/* IMMAGINE/FILE */}
                   {msg.type === 'image' && msg.media_id ? (
                     <img
                       src={`/api/media-proxy?media_id=${msg.media_id}`}
@@ -734,8 +701,9 @@ export default function ChatPage() {
               ))}
               <div ref={messagesEndRef} />
             </div>
+
             {showScrollButtons && (
-              <div className="fixed bottom-28 right-8 z-40 flex flex-col gap-1">
+              <div className="fixed bottom-28 right-4 md:right-8 z-40 flex flex-col gap-1">
                 <Button
                   size="icon"
                   className="rounded-full shadow bg-gray-200 hover:bg-black hover:text-white"
@@ -758,6 +726,7 @@ export default function ChatPage() {
             )}
           </div>
 
+          {/* Preview media selezionato (sopra al composer) */}
           {selectedMedia && (
             <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
               {selectedMedia.type === 'image' ? (
@@ -784,63 +753,68 @@ export default function ChatPage() {
             </div>
           )}
 
-          <div className="flex items-center gap-2 p-3 bg-white border-t sticky bottom-0">
-            {/* Foto */}
-            <label className="flex items-center cursor-pointer">
-              <Camera size={22} className="mr-2 text-gray-500 hover:text-black" />
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleMediaInput('image')}
+          {/* COMPOSER (incollato in basso, con safe-area) */}
+          <div className="sticky bottom-0 z-30 bg-white border-t px-3 pt-2 pb-2 pb-[max(theme(spacing.2),env(safe-area-inset-bottom))]">
+            <div className="flex items-center gap-2">
+              {/* Foto */}
+              <label className="flex items-center cursor-pointer">
+                <Camera size={22} className="mr-2 text-gray-500 hover:text-black" />
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleMediaInput('image')}
+                  disabled={!canSendMessage}
+                />
+              </label>
+              {/* Allegati */}
+              <label className="flex items-center cursor-pointer">
+                <Paperclip size={22} className="mr-2 text-gray-500 hover:text-black" />
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+                  className="hidden"
+                  onChange={handleMediaInput('document')}
+                  disabled={!canSendMessage}
+                />
+              </label>
+              {/* Text */}
+              <Input
+                placeholder="Scrivi un messaggio..."
+                value={messageText}
+                onChange={e => setMessageText(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && sendMessage()}
+                onFocus={() => setTimeout(scrollToBottom, 50)}
+                className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
                 disabled={!canSendMessage}
               />
-            </label>
-            {/* Allegati */}
-            <label className="flex items-center cursor-pointer">
-              <Paperclip size={22} className="mr-2 text-gray-500 hover:text-black" />
-              <input
-                type="file"
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
-                className="hidden"
-                onChange={handleMediaInput('document')}
-                disabled={!canSendMessage}
-              />
-            </label>
-            {/* Text */}
-            <Input
-              placeholder="Scrivi un messaggio..."
-              value={messageText}
-              onChange={e => setMessageText(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && sendMessage()}
-              className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
-              disabled={!canSendMessage}
-            />
-            <Button
-              onClick={sendMessage}
-              disabled={(!messageText.trim() && !selectedMedia) || !canSendMessage}
-              className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
-            >
-              <Send size={18} />
-            </Button>
-            {/* Template btn */}
-            <Button
-              onClick={() => setShowTemplates(!showTemplates)}
-              className="rounded-full px-3 py-2 bg-gray-200 text-gray-700 ml-2"
-              type="button"
-            >
-              Tmpl
-            </Button>
+              <Button
+                onClick={sendMessage}
+                disabled={(!messageText.trim() && !selectedMedia) || !canSendMessage}
+                className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
+                aria-label="Invia"
+              >
+                <Send size={18} />
+              </Button>
+              {/* Template btn */}
+              <Button
+                onClick={() => setShowTemplates(!showTemplates)}
+                className="rounded-full px-3 py-2 bg-gray-200 text-gray-700 ml-2"
+                type="button"
+              >
+                Tmpl
+              </Button>
+            </div>
           </div>
 
           {showTemplates && (
-            <div className="absolute bottom-16 right-4 z-50 bg-white rounded-lg shadow-lg border w-80 max-w-full p-4">
+            <div className="absolute bottom-20 right-4 z-50 bg-white rounded-lg shadow-lg border w-80 max-w-[92vw] p-4">
               <h3 className="font-semibold mb-2">Template WhatsApp</h3>
-              <ul>
+              <ul className="max-h-64 overflow-auto">
                 {templates.length === 0 && <li className="text-sm text-gray-400">Nessun template approvato</li>}
                 {templates.map((t, idx) => (
                   <li key={idx} className="flex justify-between items-center mb-1">
-                    <span>{t.name}</span>
+                    <span className="truncate">{t.name}</span>
                     <Button size="sm" onClick={() => sendTemplate(t.name)}>
                       Invia
                     </Button>
