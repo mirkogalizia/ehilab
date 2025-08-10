@@ -16,6 +16,15 @@ function normalizePhone(phoneRaw) {
   return '';
 }
 
+// --- helper giorni tra due ISO date ---
+function daysBetween(aISO, bISO) {
+  if (!aISO || !bISO) return Infinity;
+  const a = new Date(aISO).getTime();
+  const b = new Date(bISO).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return Infinity;
+  return Math.round((b - a) / 86400000);
+}
+
 // --- WEBHOOK Shopify ---
 export async function POST(req, { params }) {
   try {
@@ -37,14 +46,14 @@ export async function POST(req, { params }) {
     const phone = normalizePhone(phoneRaw);
 
     // --- ID ordine ---
-    const orderId = payload.id?.toString() || "";
+    const orderId = payload.id?.toString() || payload.order_id?.toString() || "";
     const orderNumber = payload.order_number?.toString() || "";
     const fulfillment_status = payload.fulfillment_status || "";
     const isNowFulfilled = fulfillment_status === "fulfilled" || fulfillment_status === true;
 
     // 4. Tracking/corriere (prende primo fulfillment, che è la spedizione principale)
     const fulfillments = payload.fulfillments || [];
-    const fulfillment = fulfillments[0] || {};
+    const fulfillment = fulfillments[0] || payload.fulfillment || {};
     const trackingNumber = fulfillment.tracking_number || "";
     const trackingCompany = fulfillment.tracking_company || "";
     const trackingUrl = fulfillment.tracking_url || "";
@@ -55,6 +64,31 @@ export async function POST(req, { params }) {
     const prevOrder = prevSnap.exists() ? prevSnap.data() : {};
     const wasFulfilled = prevOrder.fulfilled === true;
     const wasEvasioneInviata = prevOrder.evasione_inviata === true;
+
+    // ---- NUOVO: determino le date utili se presenti nel payload ---
+    // data ordine (preferenza: created_at, poi processed_at)
+    const order_created_at =
+      prevOrder.order_created_at ||
+      payload.created_at ||
+      payload.processed_at ||
+      null;
+
+    // data fulfilled (dal fulfillment specifico se presente)
+    const fulfilled_at =
+      prevOrder.fulfilled_at ||
+      fulfillment.created_at ||
+      fulfillment.updated_at ||
+      null;
+
+    // possibile delivered contenuto in questo payload (in alcuni setup arriva su fulfillment_event o su delivered_at custom)
+    const fulfillment_event = payload.fulfillment_event || {};
+    const payloadDeliveredStatus = (fulfillment_event.status || payload.delivery_status || "").toString().toLowerCase();
+    const delivered_at =
+      prevOrder.delivered_at ||
+      payload.delivered_at ||
+      fulfillment_event.happened_at ||
+      fulfillment_event.occurred_at ||
+      null;
 
     // 6. Prepara oggetto ordine
     let orderData = {
@@ -78,6 +112,10 @@ export async function POST(req, { params }) {
       trackingNumber,
       trackingCompany,
       trackingUrl,
+      // --- NUOVO: salvo le date se disponibili ---
+      ...(order_created_at ? { order_created_at } : {}),
+      ...(fulfilled_at ? { fulfilled_at } : {}),
+      ...(delivered_at ? { delivered_at } : {}),
       updatedAt: new Date(),
       raw: { ...payload },
     };
@@ -141,6 +179,40 @@ export async function POST(req, { params }) {
         // LOG: errore fetch automazione
         console.error("❌ Errore chiamata automazione:", err);
       });
+    }
+
+    // ---------------------------------------------
+    // 9. ✅ SOLO AGGIUNTA TAG "happy" (non altera altre funzioni)
+    //    Condizioni:
+    //    - esiste order_created_at
+    //    - esiste fulfilled_at
+    //    - diff giorni tra order_created_at e fulfilled_at <= 3
+    //    - consegna rilevata (delivered_at presente o status delivered nel payload)
+    // ---------------------------------------------
+    if (contactDocId && orderData.order_created_at && orderData.fulfilled_at) {
+      const diff = daysBetween(orderData.order_created_at, orderData.fulfilled_at);
+
+      const deliveredDetected =
+        Boolean(orderData.delivered_at) ||
+        payloadDeliveredStatus === 'delivered' ||
+        (payload.fulfillment_status || '').toLowerCase() === 'delivered';
+
+      if (diff <= 3 && deliveredDetected) {
+        // recupera tags esistenti
+        let existingTags2 = [];
+        const contactSnap2 = await getDoc(fireDoc(db, "contacts", contactDocId));
+        if (contactSnap2.exists()) {
+          const data2 = contactSnap2.data();
+          if (Array.isArray(data2.tags)) existingTags2 = data2.tags;
+        }
+        const tagsHappy = Array.from(new Set([...(existingTags2 || []), "happy"]));
+
+        await setDoc(
+          fireDoc(db, "contacts", contactDocId),
+          { tags: tagsHappy, updatedAt: new Date() },
+          { merge: true }
+        );
+      }
     }
 
     return NextResponse.json({ success: true, orderId, phone });
