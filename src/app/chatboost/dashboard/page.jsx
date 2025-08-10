@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 
-// --- helpers (JSX-safe) ---
+// --- helpers (JSX) ---
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim().replace(/^[+]+/, '').replace(/^00/, '').replace(/[\s\-().]/g, '');
@@ -27,7 +27,6 @@ function normalizePhone(phoneRaw) {
   if (phoneRaw.startsWith('+')) return phoneRaw;
   return '';
 }
-
 const parseTime = (val) => {
   if (!val) return 0;
   if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
@@ -61,12 +60,13 @@ export default function ChatPage() {
   const chatBoxRef = useRef(null);
   const longPressTimeout = useRef();
 
+  // blocca body scroll
   useEffect(() => {
     document.body.classList.add('no-scroll');
     return () => document.body.classList.remove('no-scroll');
   }, []);
 
-  // userData (WhatsApp)
+  // userData
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -167,9 +167,7 @@ export default function ChatPage() {
   useEffect(() => {
     if (!selectedPhone || !listChatRef.current) return;
     const activeLi = listChatRef.current.querySelector(`[data-phone="${selectedPhone}"]`);
-    if (activeLi && typeof activeLi.scrollIntoView === 'function') {
-      activeLi.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
+    activeLi?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
   }, [selectedPhone, phonesData.length]);
 
   // finestra 24h
@@ -302,320 +300,159 @@ export default function ChatPage() {
   };
   const handleTouchEnd = () => clearTimeout(longPressTimeout.current);
 
-  // invio messaggi
-  const sendMessage = async () => {
-    if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
-    if (!canSendMessage) { alert("⚠️ La finestra di 24h è chiusa. Puoi inviare solo template."); return; }
-
-    // media (prima media poi eventuale testo)
-    if (selectedMedia) {
-      const uploadData = new FormData();
-      uploadData.append('file', selectedMedia.file);
-      uploadData.append('phone_number_id', userData.phone_number_id);
-      const uploadRes = await fetch('/api/send-media', { method: 'POST', body: uploadData });
-      const uploadJson = await uploadRes.json();
-      const media_id = uploadJson.id;
-      if (!media_id) { alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson)); return; }
-
-      const payload = {
-        messaging_product: "whatsapp",
-        to: selectedPhone,
-        type: selectedMedia.type,
-        [selectedMedia.type]: { id: media_id, caption: "" },
-      };
-      const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-
-      if (data.messages) {
-        await addDoc(collection(db, "messages"), {
-          text: "",
-          to: selectedPhone,
-          from: "operator",
-          timestamp: Date.now(),
-          createdAt: serverTimestamp(),
-          type: selectedMedia.type,
-          media_id,
-          user_uid: user?.uid,
-          read: true,
-          message_id: data.messages[0].id,
-        });
-
-        if (messageText.trim()) {
-          const payloadText = {
-            messaging_product: "whatsapp",
-            to: selectedPhone,
-            type: "text",
-            text: { body: messageText.trim() }
-          };
-          const resText = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payloadText),
-          });
-          const dataText = await resText.json();
-          if (dataText.messages) {
-            await addDoc(collection(db, "messages"), {
-              text: messageText.trim(),
-              to: selectedPhone,
-              from: "operator",
-              timestamp: Date.now(),
-              createdAt: serverTimestamp(),
-              type: "text",
-              user_uid: user?.uid,
-              read: true,
-              message_id: dataText.messages[0].id,
-            });
-          }
-        }
-        setMessageText('');
-        setSelectedMedia(null);
-      } else {
-        alert("Errore invio media: " + JSON.stringify(data.error));
-      }
-      return;
-    }
-
-    // solo testo
-    const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "text", text: { body: messageText } };
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, "messages"), {
-        text: messageText,
-        to: selectedPhone,
-        from: "operator",
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: "text",
-        user_uid: user?.uid,
-        read: true,
-        message_id: data.messages[0].id,
-      });
-      setMessageText('');
-    } else {
-      alert("Errore invio: " + JSON.stringify(data.error));
-    }
-  };
-
-  // invio template
-  const sendTemplate = async (name) => {
-    if (!selectedPhone || !name || !userData) return;
-    const template = templates.find(t => t.name === name);
-    if (!template) return alert("Template non trovato!");
-    const components = [];
-
-    if (template.header && template.header.type !== "NONE") {
-      if (template.header.type === "TEXT") {
-        components.push({ type: "HEADER", parameters: [{ type: "text", text: template.header.text || "" }] });
-      } else if (["IMAGE", "DOCUMENT", "VIDEO"].includes(template.header.type)) {
-        if (!template.header.url) return alert("File header non trovato!");
-        components.push({
-          type: "HEADER",
-          parameters: [{ type: template.header.type.toLowerCase(), [template.header.type.toLowerCase()]: { link: template.header.url } }]
-        });
-      }
-    }
-    components.push({ type: "BODY", parameters: [] });
-
-    const payload = {
-      messaging_product: "whatsapp",
-      to: selectedPhone,
-      type: "template",
-      template: { name, language: { code: template.language || "it" }, components }
-    };
-
-    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, "messages"), {
-        text: `Template inviato: ${name}`,
-        to: selectedPhone,
-        from: "operator",
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: "template",
-        user_uid: user?.uid,
-        read: true,
-        message_id: data.messages[0].id,
-      });
-      setShowTemplates(false);
-    } else {
-      alert("Errore template: " + JSON.stringify(data.error));
-    }
-  };
-
+  // ---------------- UI FULL SCREEN ----------------
   return (
-    <div className="mx-auto max-w-6xl w-full p-4 md:p-6 font-[Montserrat] space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl md:text-3xl font-semibold">Chat</h1>
-        <div className="text-sm text-muted-foreground">UI coerente con shadcn/ui</div>
-      </div>
-
-      <Card className="overflow-hidden rounded-2xl border">
-        <div className="grid grid-cols-1 md:grid-cols-[300px_1fr]">
+    <div className="w-full">
+      <Card className="h-[100vh] rounded-none border-0 overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-[300px_1fr] h-full min-h-0">
           {/* Sidebar */}
-          <aside ref={listChatRef} className="bg-white">
-            <div className="p-3 flex items-center gap-2">
-              <Input
-                placeholder="Cerca contatto o inserisci numero…"
-                value={searchContact}
-                onChange={(e) => setSearchContact(e.target.value)}
-                className="rounded-xl"
-              />
-              <Button onClick={() => setShowNewChat(true)} className="rounded-xl">
-                <Plus className="h-4 w-4 mr-1" /> Nuova
-              </Button>
+          <aside ref={listChatRef} className={`${selectedPhone ? "hidden" : "block"} md:block bg-white border-r h-full min-h-0`}>
+            <div className="flex flex-col h-full min-h-0">
+              {/* top bar ricerca + nuova */}
+              <div className="p-3 flex items-center gap-2">
+                <Input
+                  placeholder="Cerca contatto o inserisci numero…"
+                  value={searchContact}
+                  onChange={(e) => setSearchContact(e.target.value)}
+                  className="rounded-xl"
+                />
+                <Button onClick={() => setShowNewChat(true)} className="rounded-xl">
+                  <Plus className="h-4 w-4 mr-1" /> Nuova
+                </Button>
+              </div>
+              <Separator />
+
+              {/* suggerimenti ricerca */}
+              {searchContact && filteredContacts.length > 0 && (
+                <div className="px-3 pb-2">
+                  <Card className="border rounded-xl overflow-hidden">
+                    <ScrollArea className="max-h-56">
+                      <ul className="p-2 space-y-1">
+                        {filteredContacts.map((c) => (
+                          <li key={c.phone}>
+                            <button
+                              className="w-full text-left px-3 py-2 rounded-lg hover:bg-accent"
+                              onClick={() => {
+                                setSelectedPhone(c.phone);
+                                setSearchContact('');
+                                setShowNewChat(false);
+                              }}
+                            >
+                              <div className="flex items-center gap-3">
+                                <Avatar className="h-8 w-8"><AvatarFallback>{(c.phone || '').slice(-2)}</AvatarFallback></Avatar>
+                                <div className="truncate">
+                                  <div className="text-sm font-medium">{c.name} {c.lastName}</div>
+                                  <div className="text-xs text-muted-foreground">{c.phone}</div>
+                                  {c.email && <div className="text-xs text-muted-foreground">{c.email}</div>}
+                                </div>
+                              </div>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </ScrollArea>
+                  </Card>
+                </div>
+              )}
+
+              {/* elenco chat: occupa tutto lo spazio */}
+              <div className="flex-1 min-h-0">
+                <ScrollArea className="h-full">
+                  <ul className="py-2">
+                    {(() => {
+                      const unreadChats = phonesData.filter(x => x.unread > 0);
+                      const readChats = phonesData.filter(x => x.unread === 0);
+                      return (
+                        <>
+                          {unreadChats.length > 0 && (
+                            <>
+                              <div className="px-4 py-2 text-xs uppercase text-muted-foreground">Non letti</div>
+                              {unreadChats.map(({ phone, name, lastMsgText, unread }) => (
+                                <li key={phone} data-phone={phone} onClick={() => setSelectedPhone(phone)} onContextMenu={(e) => handleChatContextMenu(e, phone)}>
+                                  <div className={['flex items-center justify-between px-4 py-3 cursor-pointer transition', selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'].join(' ')}>
+                                    <div className="flex items-center gap-3 truncate">
+                                      <Avatar className="h-8 w-8"><AvatarFallback>{(name || phone).toString().slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
+                                      <div className="min-w-0">
+                                        <div className="text-sm truncate">{name}</div>
+                                        <div className="text-xs text-muted-foreground truncate">
+                                          {lastMsgText.length > 42 ? lastMsgText.substring(0, 42) + '…' : lastMsgText}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {unread > 0 && (
+                                      <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
+                                    )}
+                                  </div>
+                                </li>
+                              ))}
+                              <Separator className="my-1" />
+                            </>
+                          )}
+                          {readChats.length > 0 && (
+                            <>
+                              <div className="px-4 py-2 text-xs uppercase text-muted-foreground">Conversazioni</div>
+                              {readChats.map(({ phone, name, lastMsgText }) => (
+                                <li key={phone} data-phone={phone} onClick={() => setSelectedPhone(phone)} onContextMenu={(e) => handleChatContextMenu(e, phone)}>
+                                  <div className={['flex items-center justify-between px-4 py-3 cursor-pointer transition', selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'].join(' ')}>
+                                    <div className="flex items-center gap-3 truncate">
+                                      <Avatar className="h-8 w-8"><AvatarFallback>{(name || phone).toString().slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
+                                      <div className="min-w-0">
+                                        <div className="text-sm truncate">{name}</div>
+                                        <div className="text-xs text-muted-foreground truncate">
+                                          {lastMsgText.length > 42 ? lastMsgText.substring(0, 42) + '…' : lastMsgText}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </li>
+                              ))}
+                            </>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </ul>
+                </ScrollArea>
+              </div>
+
+              {/* nuova chat */}
+              {showNewChat && (
+                <div className="p-3">
+                  <Card className="p-3 rounded-xl bg-muted/30">
+                    <div className="mb-2 text-sm font-medium">📞 Avvia nuova chat</div>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Nome, cognome, email o numero…"
+                        value={searchContact}
+                        onChange={(e) => setSearchContact(e.target.value)}
+                        className="rounded-xl"
+                        autoFocus
+                      />
+                      <Button
+                        className="rounded-xl"
+                        onClick={() => {
+                          if (searchContact) {
+                            setSelectedPhone(normalizePhone(searchContact));
+                            setSearchContact('');
+                            setShowNewChat(false);
+                          }
+                        }}
+                      >
+                        Avvia
+                      </Button>
+                      <Button variant="outline" className="rounded-xl" onClick={() => setShowNewChat(false)}>
+                        Annulla
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+              )}
             </div>
-            <Separator />
-
-            {searchContact && filteredContacts.length > 0 && (
-              <div className="px-3 pb-2">
-                <Card className="border rounded-xl overflow-hidden">
-                  <ScrollArea className="max-h-56">
-                    <ul className="p-2 space-y-1">
-                      {filteredContacts.map((c) => (
-                        <li key={c.phone}>
-                          <button
-                            className="w-full text-left px-3 py-2 rounded-lg hover:bg-accent"
-                            onClick={() => {
-                              setSelectedPhone(c.phone);
-                              setSearchContact('');
-                              setShowNewChat(false);
-                            }}
-                          >
-                            <div className="flex items-center gap-3">
-                              <Avatar className="h-8 w-8"><AvatarFallback>{(c.phone || '').slice(-2)}</AvatarFallback></Avatar>
-                              <div className="truncate">
-                                <div className="text-sm font-medium">{c.name} {c.lastName}</div>
-                                <div className="text-xs text-muted-foreground">{c.phone}</div>
-                                {c.email && <div className="text-xs text-muted-foreground">{c.email}</div>}
-                              </div>
-                            </div>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </ScrollArea>
-                </Card>
-              </div>
-            )}
-
-            <ScrollArea className="h-[62vh] md:h-[72vh]">
-              <ul className="py-2">
-                {(() => {
-                  const unreadChats = phonesData.filter(x => x.unread > 0);
-                  const readChats = phonesData.filter(x => x.unread === 0);
-                  return (
-                    <>
-                      {unreadChats.length > 0 && (
-                        <>
-                          <div className="px-4 py-2 text-xs uppercase text-muted-foreground">Non letti</div>
-                          {unreadChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
-                            <li key={phone} data-phone={phone} onClick={() => setSelectedPhone(phone)} onContextMenu={(e) => handleChatContextMenu(e, phone)}>
-                              <div className={['flex items-center justify-between px-4 py-3 cursor-pointer transition', selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'].join(' ')}>
-                                <div className="flex items-center gap-3 truncate">
-                                  <Avatar className="h-8 w-8"><AvatarFallback>{(name || phone).toString().slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
-                                  <div className="min-w-0">
-                                    <div className="text-sm truncate">{name}</div>
-                                    <div className="text-xs text-muted-foreground truncate">
-                                      {lastMsgText.length > 42 ? lastMsgText.substring(0, 42) + '…' : lastMsgText}
-                                    </div>
-                                  </div>
-                                </div>
-                                {unread > 0 && (
-                                  <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
-                                )}
-                              </div>
-                            </li>
-                          ))}
-                          <Separator className="my-1" />
-                        </>
-                      )}
-                      {readChats.length > 0 && (
-                        <>
-                          <div className="px-4 py-2 text-xs uppercase text-muted-foreground">Conversazioni</div>
-                          {readChats.map(({ phone, name, lastMsgText }) => (
-                            <li key={phone} data-phone={phone} onClick={() => setSelectedPhone(phone)} onContextMenu={(e) => handleChatContextMenu(e, phone)}>
-                              <div className={['flex items-center justify-between px-4 py-3 cursor-pointer transition', selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'].join(' ')}>
-                                <div className="flex items-center gap-3 truncate">
-                                  <Avatar className="h-8 w-8"><AvatarFallback>{(name || phone).toString().slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
-                                  <div className="min-w-0">
-                                    <div className="text-sm truncate">{name}</div>
-                                    <div className="text-xs text-muted-foreground truncate">
-                                      {lastMsgText.length > 42 ? lastMsgText.substring(0, 42) + '…' : lastMsgText}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </li>
-                          ))}
-                        </>
-                      )}
-                    </>
-                  );
-                })()}
-              </ul>
-            </ScrollArea>
-
-            {showNewChat && (
-              <div className="p-3">
-                <Card className="p-3 rounded-xl bg-muted/30">
-                  <div className="mb-2 text-sm font-medium">📞 Avvia nuova chat</div>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Nome, cognome, email o numero…"
-                      value={searchContact}
-                      onChange={(e) => setSearchContact(e.target.value)}
-                      className="rounded-xl"
-                      autoFocus
-                    />
-                    <Button
-                      className="rounded-xl"
-                      onClick={() => {
-                        if (searchContact) {
-                          setSelectedPhone(normalizePhone(searchContact));
-                          setSearchContact('');
-                          setShowNewChat(false);
-                        }
-                      }}
-                    >
-                      Avvia
-                    </Button>
-                    <Button variant="outline" className="rounded-xl" onClick={() => setShowNewChat(false)}>
-                      Annulla
-                    </Button>
-                  </div>
-                </Card>
-              </div>
-            )}
           </aside>
 
-          {/* Chat area */}
-          <section className="flex flex-col bg-muted/30">
+          {/* Chat */}
+          <section className="flex flex-col bg-muted/30 h-full min-h-0 relative">
+            {/* header chat (solo info e back su mobile) */}
             <div className="h-14 px-4 bg-white border-b flex items-center gap-3 sticky top-0 z-20">
               <button onClick={() => setSelectedPhone('')} className="md:hidden text-muted-foreground hover:text-foreground">
                 <ArrowLeft size={22} />
@@ -637,7 +474,8 @@ export default function ChatPage() {
               </div>
             )}
 
-            <div ref={chatBoxRef} onScroll={handleScroll} className="flex-1 p-4 relative">
+            {/* messaggi (riempie tutto) */}
+            <div ref={chatBoxRef} onScroll={handleScroll} className="flex-1 min-h-0 p-4 relative">
               <ScrollArea className="h-full">
                 <div ref={messagesTopRef} />
                 <div className="space-y-3">
@@ -650,6 +488,7 @@ export default function ChatPage() {
                       onTouchEnd={handleTouchEnd}
                     >
                       {msg.type === 'image' && msg.media_id ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={`/api/media-proxy?media_id=${msg.media_id}`} alt="Immagine" className="max-w-xs rounded-xl shadow" loading="lazy" />
                       ) : msg.type === 'document' && msg.media_id ? (
                         <a href={`/api/media-proxy?media_id=${msg.media_id}`} target="_blank" rel="noopener noreferrer" className="underline px-4 py-2 rounded-xl text-sm shadow bg-white">
@@ -669,6 +508,7 @@ export default function ChatPage() {
                 </div>
               </ScrollArea>
 
+              {/* scroll quick buttons */}
               {showScrollButtons && (
                 <div className="absolute right-4 bottom-24 md:bottom-28 flex flex-col gap-1">
                   <Button size="icon" className="rounded-full shadow bg-muted hover:bg-foreground hover:text-background" onClick={scrollToTop} title="Vai all'inizio" type="button">
@@ -681,10 +521,12 @@ export default function ChatPage() {
               )}
             </div>
 
+            {/* anteprima media */}
             {selectedMedia && (
               <div className="px-4">
                 <Card className="flex items-center gap-4 mb-2 p-2 rounded-xl border">
                   {selectedMedia.type === 'image' ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={URL.createObjectURL(selectedMedia.file)} alt="preview" className="h-16 w-16 object-cover rounded-lg" />
                   ) : (
                     <div className="flex items-center gap-2 text-sm">
@@ -699,6 +541,7 @@ export default function ChatPage() {
               </div>
             )}
 
+            {/* composer */}
             <div className="p-3 bg-background border-t">
               <div className="flex items-end gap-2">
                 <label className="flex items-center cursor-pointer">
@@ -733,6 +576,7 @@ export default function ChatPage() {
               </div>
             </div>
 
+            {/* pannello template */}
             {showTemplates && (
               <Card className="absolute bottom-20 right-4 z-50 bg-background rounded-xl shadow-lg border w-80 max-w-[92vw] p-4">
                 <div className="font-semibold mb-2">Template WhatsApp</div>
@@ -750,6 +594,7 @@ export default function ChatPage() {
               </Card>
             )}
 
+            {/* context menu msg */}
             {contextMenu.visible && (
               <div
                 id="menu-contestuale-msg"
@@ -766,6 +611,7 @@ export default function ChatPage() {
               </div>
             )}
 
+            {/* context menu chat */}
             {chatMenu.visible && (
               <div
                 id="menu-contestuale-chat"
