@@ -7,7 +7,6 @@ import {
   getDocs, where, writeBatch, doc, deleteDoc
 } from 'firebase/firestore';
 
-// shadcn/ui
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -15,14 +14,11 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
-// icone
 import { Send, Plus, ArrowLeft, Camera, Paperclip, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
-
-// auth
 import { useAuth } from '@/lib/useAuth';
 
-// -------------------- helpers --------------------
-function normalizePhone(phoneRaw: string) {
+// --- helpers (JSX-safe) ---
+function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim().replace(/^[+]+/, '').replace(/^00/, '').replace(/[\s\-().]/g, '');
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
@@ -32,81 +28,79 @@ function normalizePhone(phoneRaw: string) {
   return '';
 }
 
-const parseTime = (val: any) => {
+const parseTime = (val) => {
   if (!val) return 0;
   if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
   if (typeof val === 'string') return parseInt(val) * 1000;
   return val.seconds * 1000;
 };
 
-// -------------------- page --------------------
 export default function ChatPage() {
   const { user } = useAuth();
 
-  const [allMessages, setAllMessages] = useState<any[]>([]);
-  const [contactNames, setContactNames] = useState<Record<string, string>>({});
+  const [allMessages, setAllMessages] = useState([]);
+  const [contactNames, setContactNames] = useState({});
   const [selectedPhone, setSelectedPhone] = useState('');
   const [messageText, setMessageText] = useState('');
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [templates, setTemplates] = useState([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewChat, setShowNewChat] = useState(false);
-  const [userData, setUserData] = useState<any>(null);
+  const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(false);
 
   const [searchContact, setSearchContact] = useState('');
-  const [filteredContacts, setFilteredContacts] = useState<any[]>([]);
-  const [allContacts, setAllContacts] = useState<any[]>([]);
+  const [filteredContacts, setFilteredContacts] = useState([]);
+  const [allContacts, setAllContacts] = useState([]);
 
-  const [contextMenu, setContextMenu] = useState<{visible:boolean,x:number,y:number,messageId:string|null}>({ visible: false, x: 0, y: 0, messageId: null });
-  const [chatMenu, setChatMenu] = useState<{visible:boolean,x:number,y:number,phone:string|null}>({ visible: false, x: 0, y: 0, phone: null });
+  const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
+  const [chatMenu, setChatMenu] = useState({ visible: false, x: 0, y: 0, phone: null });
 
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const messagesTopRef = useRef<HTMLDivElement | null>(null);
-  const listChatRef = useRef<HTMLDivElement | null>(null);
-  const chatBoxRef = useRef<HTMLDivElement | null>(null);
-  const longPressTimeout = useRef<any>();
+  const messagesEndRef = useRef(null);
+  const messagesTopRef = useRef(null);
+  const listChatRef = useRef(null);
+  const chatBoxRef = useRef(null);
+  const longPressTimeout = useRef();
 
-  // blocca scroll body quando la pagina chat è aperta (coerente con full-app shell)
   useEffect(() => {
     document.body.classList.add('no-scroll');
     return () => document.body.classList.remove('no-scroll');
   }, []);
 
-  // userData (dati WhatsApp)
+  // userData (WhatsApp)
   useEffect(() => {
     if (!user) return;
     (async () => {
       const usersRef = collection(db, 'users');
       const snap = await getDocs(usersRef);
-      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find((u: any) => u.email === user.email);
+      const me = snap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
       if (me) setUserData(me);
     })();
   }, [user]);
 
-  // contatti dell'utente
+  // contatti
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
       const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
-      const contactsArr: any[] = [];
-      const map: Record<string, string> = {};
+      const contactsArr = [];
+      const map = {};
       cs.forEach(d => {
-        const c = d.data() as any;
-        const phoneNorm = normalizePhone((c as any).phone || d.id);
+        const c = d.data();
+        const phoneNorm = normalizePhone(c.phone || d.id);
         contactsArr.push({
           phone: phoneNorm,
-          name: (c as any).firstName || (c as any).name || '',
-          lastName: (c as any).lastName || '',
-          email: (c as any).email || '',
+          name: c.firstName || c.name || '',
+          lastName: c.lastName || '',
+          email: c.email || '',
         });
-        map[phoneNorm] = (c as any).firstName || (c as any).name || phoneNorm;
+        map[phoneNorm] = c.firstName || c.name || phoneNorm;
       });
       setAllContacts(contactsArr);
       setContactNames(map);
     })();
   }, [user]);
 
-  // ricerca contatti
+  // ricerca
   useEffect(() => {
     if (!searchContact.trim()) {
       setFilteredContacts([]);
@@ -115,7 +109,7 @@ export default function ChatPage() {
     const search = searchContact.trim().toLowerCase();
     const tokens = search.split(/\s+/).filter(Boolean);
 
-    const found = allContacts.filter((c) => {
+    const found = allContacts.filter(c => {
       const fields = [
         (c.name || '').toLowerCase(),
         (c.lastName || '').toLowerCase(),
@@ -128,36 +122,32 @@ export default function ChatPage() {
     setFilteredContacts(found);
   }, [searchContact, allContacts]);
 
-  // messaggi realtime
+  // messages realtime
   useEffect(() => {
     if (!user?.uid) return;
-    const qy = query(
-      collection(db, 'messages'),
-      where('user_uid', '==', user.uid),
-      orderBy('timestamp', 'asc')
-    );
+    const qy = query(collection(db, 'messages'), where('user_uid', '==', user.uid), orderBy('timestamp', 'asc'));
     const unsub = onSnapshot(qy, snap => {
       const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setAllMessages(msgs as any[]);
+      setAllMessages(msgs);
     });
     return () => unsub();
   }, [user]);
 
-  // lista conversazioni derivata
+  // lista conversazioni
   const phonesData = useMemo(() => {
-    const chatMap: Record<string, any[]> = {};
+    const chatMap = {};
     allMessages.forEach((m) => {
       const rawPhone = m.from !== 'operator' ? m.from : m.to;
-      const phone = normalizePhone(rawPhone as string);
+      const phone = normalizePhone(rawPhone);
       if (!phone) return;
       if (!chatMap[phone]) chatMap[phone] = [];
       chatMap[phone].push(m);
     });
     return Object.entries(chatMap)
       .map(([phone, msgs]) => {
-        msgs.sort((a, b) => parseTime((a as any).timestamp || (a as any).createdAt) - parseTime((b as any).timestamp || (b as any).createdAt));
-        const lastMsg: any = msgs[msgs.length - 1] || {};
-        const unread = msgs.filter((m: any) => normalizePhone(m.from) === phone && !m.read).length;
+        msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
+        const lastMsg = msgs[msgs.length - 1] || {};
+        const unread = msgs.filter(m => normalizePhone(m.from) === phone && !m.read).length;
         return {
           phone,
           name: contactNames[phone] || phone,
@@ -167,42 +157,39 @@ export default function ChatPage() {
           lastMsgFrom: lastMsg.from
         };
       })
-      .sort((a: any, b: any) => {
+      .sort((a, b) => {
         if ((b.unread > 0) !== (a.unread > 0)) return b.unread - a.unread;
         return b.lastMsgTime - a.lastMsgTime;
       });
   }, [allMessages, contactNames]);
 
-  // autoscroll lista chat al selected
+  // autoscroll lista chat
   useEffect(() => {
     if (!selectedPhone || !listChatRef.current) return;
-    const activeLi = listChatRef.current.querySelector(`[data-phone="${selectedPhone}"]`) as HTMLElement | null;
-    activeLi?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    const activeLi = listChatRef.current.querySelector(`[data-phone="${selectedPhone}"]`);
+    if (activeLi && typeof activeLi.scrollIntoView === 'function') {
+      activeLi.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
   }, [selectedPhone, phonesData.length]);
 
   // finestra 24h
   useEffect(() => {
-    if (!user?.uid || !selectedPhone) {
-      setCanSendMessage(false);
-      return;
-    }
-    const msgs = allMessages.filter(m =>
-      normalizePhone(m.from as string) === selectedPhone || normalizePhone(m.to as string) === selectedPhone
-    );
+    if (!user?.uid || !selectedPhone) { setCanSendMessage(false); return; }
+    const msgs = allMessages.filter(m => normalizePhone(m.from) === selectedPhone || normalizePhone(m.to) === selectedPhone);
     const lastInbound = msgs
-      .filter(m => normalizePhone(m.from as string) === selectedPhone)
-      .sort((a, b) => parseTime((b as any).timestamp || (b as any).createdAt) - parseTime((a as any).timestamp || (a as any).createdAt))[0] as any;
+      .filter(m => normalizePhone(m.from) === selectedPhone)
+      .sort((a, b) => parseTime(b.timestamp || b.createdAt) - parseTime(a.timestamp || a.createdAt))[0];
     if (!lastInbound) { setCanSendMessage(false); return; }
     const lastTimestamp = parseTime(lastInbound.timestamp || lastInbound.createdAt);
     setCanSendMessage(Date.now() - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone]);
 
-  // segna letti i messaggi in chat aperta
+  // segna letti
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
     const unreadMsgIds = allMessages
-      .filter(m => normalizePhone(m.from as string) === selectedPhone && (m as any).read === false)
-      .map(m => (m as any).id as string);
+      .filter(m => normalizePhone(m.from) === selectedPhone && m.read === false)
+      .map(m => m.id);
     if (unreadMsgIds.length > 0) {
       const batch = writeBatch(db);
       unreadMsgIds.forEach(id => batch.update(doc(collection(db, 'messages'), id), { read: true }));
@@ -210,12 +197,12 @@ export default function ChatPage() {
     }
   }, [selectedPhone, allMessages, user]);
 
-  // scroll in fondo ai messaggi
+  // autoscroll messaggi
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
-  // gestione scroll + btn up/down
+  // scroll btns
   const [showScrollButtons, setShowScrollButtons] = useState(false);
   const handleScroll = () => {
     if (!chatBoxRef.current) return;
@@ -226,7 +213,7 @@ export default function ChatPage() {
   const scrollToTop = () => chatBoxRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   const scrollToBottom = () => chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight, behavior: 'smooth' });
 
-  // carica templates
+  // templates
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -236,21 +223,21 @@ export default function ChatPage() {
         body: JSON.stringify({ user_uid: user.uid }),
       });
       const data = await res.json();
-      if (Array.isArray(data)) setTemplates(data.filter((t: any) => t.status === 'APPROVED'));
+      if (Array.isArray(data)) setTemplates(data.filter(t => t.status === 'APPROVED'));
     })();
   }, [user]);
 
-  // messaggi filtrati per chat
+  // messaggi filtrati
   const filtered = useMemo(
     () => allMessages
-      .filter(m => normalizePhone(m.from as string) === selectedPhone || normalizePhone(m.to as string) === selectedPhone)
-      .sort((a, b) => parseTime((a as any).timestamp || (a as any).createdAt) - parseTime((b as any).timestamp || (b as any).createdAt)),
+      .filter(m => normalizePhone(m.from) === selectedPhone || normalizePhone(m.to) === selectedPhone)
+      .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt)),
     [allMessages, selectedPhone]
   );
 
   // media
-  const [selectedMedia, setSelectedMedia] = useState<{file: File, type: 'image'|'document'} | null>(null);
-  const handleMediaInput = (type: 'image'|'document') => (e: any) => {
+  const [selectedMedia, setSelectedMedia] = useState(null);
+  const handleMediaInput = (type) => (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setSelectedMedia({ file, type });
@@ -258,11 +245,11 @@ export default function ChatPage() {
     setMessageText('');
   };
 
-  // context menu gestione
-  const handleMessageContextMenu = (e: React.MouseEvent, id: string) => {
+  // context menu
+  const handleMessageContextMenu = (e, id) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ visible: true, x: (e as any).clientX ?? window.innerWidth/2, y: (e as any).clientY ?? window.innerHeight/2, messageId: id });
+    setContextMenu({ visible: true, x: e.clientX ?? window.innerWidth/2, y: e.clientY ?? window.innerHeight/2, messageId: id });
   };
   const handleDeleteMessage = async () => {
     if (contextMenu.messageId) {
@@ -270,25 +257,25 @@ export default function ChatPage() {
       setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
     }
   };
-  const handleChatContextMenu = (e: React.MouseEvent, phone: string) => {
+  const handleChatContextMenu = (e, phone) => {
     e.preventDefault();
     e.stopPropagation();
-    setChatMenu({ visible: true, x: (e as any).clientX ?? window.innerWidth/2, y: (e as any).clientY ?? window.innerHeight/2, phone });
+    setChatMenu({ visible: true, x: e.clientX ?? window.innerWidth/2, y: e.clientY ?? window.innerHeight/2, phone });
   };
   const handleDeleteChat = async () => {
     if (chatMenu.phone) {
       const msgs = allMessages.filter(
-        m => normalizePhone(m.from as string) === chatMenu.phone || normalizePhone(m.to as string) === chatMenu.phone
+        m => normalizePhone(m.from) === chatMenu.phone || normalizePhone(m.to) === chatMenu.phone
       );
       const batch = writeBatch(db);
-      msgs.forEach(m => batch.delete(doc(db, 'messages', (m as any).id)));
+      msgs.forEach(m => batch.delete(doc(db, 'messages', m.id)));
       await batch.commit();
       setChatMenu({ visible: false, x: 0, y: 0, phone: null });
       if (selectedPhone === chatMenu.phone) setSelectedPhone('');
     }
   };
   useEffect(() => {
-    function close(e: any) {
+    function close(e) {
       const menu = document.getElementById("menu-contestuale-msg");
       if (menu && menu.contains(e?.target)) return;
       const chatMenuEl = document.getElementById("menu-contestuale-chat");
@@ -299,55 +286,47 @@ export default function ChatPage() {
     if (contextMenu.visible || chatMenu.visible) {
       window.addEventListener('mousedown', close);
       window.addEventListener('scroll', close);
-      window.addEventListener('keydown', (e) => { if ((e as any).key === 'Escape') close(e); });
+      window.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(e); });
     }
     return () => {
       window.removeEventListener('mousedown', close);
       window.removeEventListener('scroll', close);
-      window.removeEventListener('keydown', (e) => { /* noop */ });
+      window.removeEventListener('keydown', () => {});
     };
   }, [contextMenu.visible, chatMenu.visible]);
 
-  const handleTouchStart = (id: string) => {
+  const handleTouchStart = (id) => {
     longPressTimeout.current = setTimeout(() => {
       setContextMenu({ visible: true, x: window.innerWidth / 2, y: window.innerHeight / 2, messageId: id });
     }, 600);
   };
   const handleTouchEnd = () => clearTimeout(longPressTimeout.current);
 
-  // invio messaggio (testo + media)
+  // invio messaggi
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
-    if (!canSendMessage) {
-      alert("⚠️ La finestra di 24h per l'invio di messaggi è chiusa. Puoi inviare solo template.");
-      return;
-    }
+    if (!canSendMessage) { alert("⚠️ La finestra di 24h è chiusa. Puoi inviare solo template."); return; }
 
-    // MEDIA (prima media, poi eventuale testo)
+    // media (prima media poi eventuale testo)
     if (selectedMedia) {
       const uploadData = new FormData();
       uploadData.append('file', selectedMedia.file);
       uploadData.append('phone_number_id', userData.phone_number_id);
-
       const uploadRes = await fetch('/api/send-media', { method: 'POST', body: uploadData });
       const uploadJson = await uploadRes.json();
       const media_id = uploadJson.id;
-      if (!media_id) {
-        alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
-        return;
-      }
+      if (!media_id) { alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson)); return; }
 
-      const payload: any = {
+      const payload = {
         messaging_product: "whatsapp",
         to: selectedPhone,
         type: selectedMedia.type,
         [selectedMedia.type]: { id: media_id, caption: "" },
       };
-
       const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN as string}`,
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify(payload),
@@ -378,7 +357,7 @@ export default function ChatPage() {
           const resText = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN as string}`,
+              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
               "Content-Type": "application/json"
             },
             body: JSON.stringify(payloadText),
@@ -406,17 +385,12 @@ export default function ChatPage() {
       return;
     }
 
-    // SOLO TESTO
-    const payload = {
-      messaging_product: "whatsapp",
-      to: selectedPhone,
-      type: "text",
-      text: { body: messageText }
-    };
+    // solo testo
+    const payload = { messaging_product: "whatsapp", to: selectedPhone, type: "text", text: { body: messageText } };
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN as string}`,
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload),
@@ -441,11 +415,11 @@ export default function ChatPage() {
   };
 
   // invio template
-  const sendTemplate = async (name: string) => {
+  const sendTemplate = async (name) => {
     if (!selectedPhone || !name || !userData) return;
-    const template = templates.find((t: any) => t.name === name);
+    const template = templates.find(t => t.name === name);
     if (!template) return alert("Template non trovato!");
-    const components: any[] = [];
+    const components = [];
 
     if (template.header && template.header.type !== "NONE") {
       if (template.header.type === "TEXT") {
@@ -464,17 +438,13 @@ export default function ChatPage() {
       messaging_product: "whatsapp",
       to: selectedPhone,
       type: "template",
-      template: {
-        name,
-        language: { code: template.language || "it" },
-        components
-      }
+      template: { name, language: { code: template.language || "it" }, components }
     };
 
     const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN as string}`,
+        Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload),
@@ -498,10 +468,8 @@ export default function ChatPage() {
     }
   };
 
-  // -------------------- UI --------------------
   return (
     <div className="mx-auto max-w-6xl w-full p-4 md:p-6 font-[Montserrat] space-y-4">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl md:text-3xl font-semibold">Chat</h1>
         <div className="text-sm text-muted-foreground">UI coerente con shadcn/ui</div>
@@ -509,7 +477,7 @@ export default function ChatPage() {
 
       <Card className="overflow-hidden rounded-2xl border">
         <div className="grid grid-cols-1 md:grid-cols-[300px_1fr]">
-          {/* Sidebar conversazioni */}
+          {/* Sidebar */}
           <aside ref={listChatRef} className="bg-white">
             <div className="p-3 flex items-center gap-2">
               <Input
@@ -523,7 +491,7 @@ export default function ChatPage() {
               </Button>
             </div>
             <Separator />
-            {/* suggerimenti ricerca */}
+
             {searchContact && filteredContacts.length > 0 && (
               <div className="px-3 pb-2">
                 <Card className="border rounded-xl overflow-hidden">
@@ -555,29 +523,20 @@ export default function ChatPage() {
                 </Card>
               </div>
             )}
+
             <ScrollArea className="h-[62vh] md:h-[72vh]">
               <ul className="py-2">
                 {(() => {
-                  const unreadChats = phonesData.filter((x: any) => x.unread > 0);
-                  const readChats = phonesData.filter((x: any) => x.unread === 0);
+                  const unreadChats = phonesData.filter(x => x.unread > 0);
+                  const readChats = phonesData.filter(x => x.unread === 0);
                   return (
                     <>
                       {unreadChats.length > 0 && (
                         <>
                           <div className="px-4 py-2 text-xs uppercase text-muted-foreground">Non letti</div>
-                          {unreadChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }: any) => (
-                            <li
-                              key={phone}
-                              data-phone={phone}
-                              onClick={() => setSelectedPhone(phone)}
-                              onContextMenu={(e) => handleChatContextMenu(e as any, phone)}
-                            >
-                              <div
-                                className={[
-                                  'flex items-center justify-between px-4 py-3 cursor-pointer transition',
-                                  selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'
-                                ].join(' ')}
-                              >
+                          {unreadChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
+                            <li key={phone} data-phone={phone} onClick={() => setSelectedPhone(phone)} onContextMenu={(e) => handleChatContextMenu(e, phone)}>
+                              <div className={['flex items-center justify-between px-4 py-3 cursor-pointer transition', selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'].join(' ')}>
                                 <div className="flex items-center gap-3 truncate">
                                   <Avatar className="h-8 w-8"><AvatarFallback>{(name || phone).toString().slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
                                   <div className="min-w-0">
@@ -599,19 +558,9 @@ export default function ChatPage() {
                       {readChats.length > 0 && (
                         <>
                           <div className="px-4 py-2 text-xs uppercase text-muted-foreground">Conversazioni</div>
-                          {readChats.map(({ phone, name, lastMsgText }: any) => (
-                            <li
-                              key={phone}
-                              data-phone={phone}
-                              onClick={() => setSelectedPhone(phone)}
-                              onContextMenu={(e) => handleChatContextMenu(e as any, phone)}
-                            >
-                              <div
-                                className={[
-                                  'flex items-center justify-between px-4 py-3 cursor-pointer transition',
-                                  selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'
-                                ].join(' ')}
-                              >
+                          {readChats.map(({ phone, name, lastMsgText }) => (
+                            <li key={phone} data-phone={phone} onClick={() => setSelectedPhone(phone)} onContextMenu={(e) => handleChatContextMenu(e, phone)}>
+                              <div className={['flex items-center justify-between px-4 py-3 cursor-pointer transition', selectedPhone === phone ? 'bg-accent/80 font-semibold' : 'hover:bg-accent/50'].join(' ')}>
                                 <div className="flex items-center gap-3 truncate">
                                   <Avatar className="h-8 w-8"><AvatarFallback>{(name || phone).toString().slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
                                   <div className="min-w-0">
@@ -632,7 +581,6 @@ export default function ChatPage() {
               </ul>
             </ScrollArea>
 
-            {/* avvio nuova chat “rapido” */}
             {showNewChat && (
               <div className="p-3">
                 <Card className="p-3 rounded-xl bg-muted/30">
@@ -668,7 +616,6 @@ export default function ChatPage() {
 
           {/* Chat area */}
           <section className="flex flex-col bg-muted/30">
-            {/* header chat */}
             <div className="h-14 px-4 bg-white border-b flex items-center gap-3 sticky top-0 z-20">
               <button onClick={() => setSelectedPhone('')} className="md:hidden text-muted-foreground hover:text-foreground">
                 <ArrowLeft size={22} />
@@ -690,49 +637,26 @@ export default function ChatPage() {
               </div>
             )}
 
-            {/* messaggi */}
-            <div
-              ref={chatBoxRef}
-              onScroll={handleScroll}
-              className="flex-1 p-4 relative"
-            >
+            <div ref={chatBoxRef} onScroll={handleScroll} className="flex-1 p-4 relative">
               <ScrollArea className="h-full">
                 <div ref={messagesTopRef} />
                 <div className="space-y-3">
-                  {filtered.map((msg: any, idx: number) => (
+                  {filtered.map((msg, idx) => (
                     <div
                       key={idx}
                       className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
-                      onContextMenu={(e) => handleMessageContextMenu(e as any, msg.id)}
+                      onContextMenu={(e) => handleMessageContextMenu(e, msg.id)}
                       onTouchStart={() => handleTouchStart(msg.id)}
                       onTouchEnd={handleTouchEnd}
                     >
                       {msg.type === 'image' && msg.media_id ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={`/api/media-proxy?media_id=${msg.media_id}`}
-                          alt="Immagine"
-                          className="max-w-xs rounded-xl shadow"
-                          loading="lazy"
-                        />
+                        <img src={`/api/media-proxy?media_id=${msg.media_id}`} alt="Immagine" className="max-w-xs rounded-xl shadow" loading="lazy" />
                       ) : msg.type === 'document' && msg.media_id ? (
-                        <a
-                          href={`/api/media-proxy?media_id=${msg.media_id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`underline px-4 py-2 rounded-xl text-sm shadow bg-white text-foreground`}
-                        >
+                        <a href={`/api/media-proxy?media_id=${msg.media_id}`} target="_blank" rel="noopener noreferrer" className="underline px-4 py-2 rounded-xl text-sm shadow bg-white">
                           Documento allegato
                         </a>
                       ) : (
-                        <div
-                          className={[
-                            'px-4 py-2 rounded-2xl text-sm shadow max-w-[72%]',
-                            msg.from === 'operator'
-                              ? 'bg-primary text-primary-foreground rounded-br-none'
-                              : 'bg-white text-foreground rounded-bl-none',
-                          ].join(' ')}
-                        >
+                        <div className={['px-4 py-2 rounded-2xl text-sm shadow max-w-[72%]', msg.from === 'operator' ? 'bg-primary text-primary-foreground rounded-br-none' : 'bg-white text-foreground rounded-bl-none'].join(' ')}>
                           {msg.text}
                         </div>
                       )}
@@ -745,7 +669,6 @@ export default function ChatPage() {
                 </div>
               </ScrollArea>
 
-              {/* quick scroll btns */}
               {showScrollButtons && (
                 <div className="absolute right-4 bottom-24 md:bottom-28 flex flex-col gap-1">
                   <Button size="icon" className="rounded-full shadow bg-muted hover:bg-foreground hover:text-background" onClick={scrollToTop} title="Vai all'inizio" type="button">
@@ -758,12 +681,10 @@ export default function ChatPage() {
               )}
             </div>
 
-            {/* anteprima media */}
             {selectedMedia && (
               <div className="px-4">
                 <Card className="flex items-center gap-4 mb-2 p-2 rounded-xl border">
                   {selectedMedia.type === 'image' ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={URL.createObjectURL(selectedMedia.file)} alt="preview" className="h-16 w-16 object-cover rounded-lg" />
                   ) : (
                     <div className="flex items-center gap-2 text-sm">
@@ -778,7 +699,6 @@ export default function ChatPage() {
               </div>
             )}
 
-            {/* composer */}
             <div className="p-3 bg-background border-t">
               <div className="flex items-end gap-2">
                 <label className="flex items-center cursor-pointer">
@@ -813,14 +733,13 @@ export default function ChatPage() {
               </div>
             </div>
 
-            {/* pannello template */}
             {showTemplates && (
               <Card className="absolute bottom-20 right-4 z-50 bg-background rounded-xl shadow-lg border w-80 max-w-[92vw] p-4">
                 <div className="font-semibold mb-2">Template WhatsApp</div>
                 <ScrollArea className="max-h-64 pr-2">
                   <ul className="space-y-1">
                     {templates.length === 0 && <li className="text-sm text-muted-foreground">Nessun template approvato</li>}
-                    {templates.map((t: any, idx: number) => (
+                    {templates.map((t, idx) => (
                       <li key={idx} className="flex justify-between items-center">
                         <span className="text-sm">{t.name}</span>
                         <Button size="sm" onClick={() => sendTemplate(t.name)}>Invia</Button>
@@ -831,7 +750,6 @@ export default function ChatPage() {
               </Card>
             )}
 
-            {/* context menu messaggio */}
             {contextMenu.visible && (
               <div
                 id="menu-contestuale-msg"
@@ -842,16 +760,12 @@ export default function ChatPage() {
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <button
-                  className="flex items-center gap-2 w-full py-2 px-3 text-red-600 hover:bg-gray-100 rounded"
-                  onClick={handleDeleteMessage}
-                >
+                <button className="flex items-center gap-2 w-full py-2 px-3 text-red-600 hover:bg-gray-100 rounded" onClick={handleDeleteMessage}>
                   <Trash2 size={16} /> Elimina messaggio
                 </button>
               </div>
             )}
 
-            {/* context menu chat */}
             {chatMenu.visible && (
               <div
                 id="menu-contestuale-chat"
@@ -862,10 +776,7 @@ export default function ChatPage() {
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <button
-                  className="flex items-center gap-2 w-full py-2 px-3 text-red-600 hover:bg-gray-100 rounded"
-                  onClick={handleDeleteChat}
-                >
+                <button className="flex items-center gap-2 w-full py-2 px-3 text-red-600 hover:bg-gray-100 rounded" onClick={handleDeleteChat}>
                   <Trash2 size={16} /> Elimina chat
                 </button>
               </div>
