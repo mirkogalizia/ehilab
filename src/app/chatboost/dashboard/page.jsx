@@ -21,6 +21,24 @@ function normalizePhone(phoneRaw) {
   return '';
 }
 
+// parseTime più robusta
+const parseTime = (val) => {
+  if (!val) return 0;
+  if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
+  if (typeof val === 'string') {
+    const n = parseInt(val, 10);
+    if (isNaN(n)) return 0;
+    return n > 1e12 ? n : n * 1000;
+  }
+  if (val && typeof val === 'object') {
+    // Firestore Timestamp
+    if (val.seconds != null) return val.seconds * 1000 + Math.floor((val.nanoseconds || 0) / 1e6);
+    // Date
+    if (typeof val.getTime === 'function') return val.getTime();
+  }
+  return 0;
+};
+
 export default function ChatPage() {
   const { user } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
@@ -43,21 +61,18 @@ export default function ChatPage() {
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, messageId: null });
   const [chatMenu, setChatMenu] = useState({ visible: false, x: 0, y: 0, phone: null });
 
+  // anti doppio invio
+  const [sending, setSending] = useState(false);
+
   let longPressTimeout = useRef();
 
-  // ✅ blocca lo scroll del body quando si apre la chat
+  // blocca lo scroll del body
   useEffect(() => {
     document.body.classList.add('no-scroll');
     return () => document.body.classList.remove('no-scroll');
   }, []);
 
-  const parseTime = val => {
-    if (!val) return 0;
-    if (typeof val === 'number') return val > 1e12 ? val : val * 1000;
-    if (typeof val === 'string') return parseInt(val) * 1000;
-    return val.seconds * 1000;
-  };
-
+  // userData
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -68,6 +83,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // contatti
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -90,6 +106,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // ricerca
   useEffect(() => {
     if (!searchContact.trim()) {
       setFilteredContacts([]);
@@ -114,6 +131,7 @@ export default function ChatPage() {
     setFilteredContacts(found);
   }, [searchContact, allContacts]);
 
+  // messages realtime
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -128,6 +146,7 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
+  // conversazioni
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -157,6 +176,7 @@ export default function ChatPage() {
       });
   }, [allMessages, contactNames]);
 
+  // autoscroll lista
   useEffect(() => {
     if (!selectedPhone || !listChatRef.current) return;
     const activeLi = listChatRef.current.querySelector(`[data-phone="${selectedPhone}"]`);
@@ -165,6 +185,7 @@ export default function ChatPage() {
     }
   }, [selectedPhone, phonesData.length]);
 
+  // finestra 24h
   useEffect(() => {
     if (!user?.uid || !selectedPhone) {
       setCanSendMessage(false);
@@ -185,6 +206,7 @@ export default function ChatPage() {
     setCanSendMessage(now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone]);
 
+  // segna letti
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
     const unreadMsgIds = allMessages
@@ -200,10 +222,12 @@ export default function ChatPage() {
     }
   }, [selectedPhone, allMessages, user]);
 
+  // autoscroll messaggi
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
+  // gestione scroll + btn
   const [showScrollButtons, setShowScrollButtons] = useState(false);
   const chatBoxRef = useRef();
   const handleScroll = () => {
@@ -219,6 +243,7 @@ export default function ChatPage() {
     chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight, behavior: 'smooth' });
   };
 
+  // templates
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -232,6 +257,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // messaggi filtrati
   const filtered = useMemo(() => (
     allMessages
       .filter(m =>
@@ -240,6 +266,7 @@ export default function ChatPage() {
       .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
   ), [allMessages, selectedPhone]);
 
+  // media
   const [selectedMedia, setSelectedMedia] = useState(null);
   const handleMediaInput = type => e => {
     const file = e.target.files[0];
@@ -291,24 +318,26 @@ export default function ChatPage() {
     }
   };
 
+  // listener stabili
   useEffect(() => {
-    function close(e) {
+    if (!contextMenu.visible && !chatMenu.visible) return;
+    const close = (e) => {
       const menu = document.getElementById("menu-contestuale-msg");
       if (menu && menu.contains(e?.target)) return;
       const chatMenuEl = document.getElementById("menu-contestuale-chat");
       if (chatMenuEl && chatMenuEl.contains(e?.target)) return;
       setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
       setChatMenu({ visible: false, x: 0, y: 0, phone: null });
-    }
-    if (contextMenu.visible || chatMenu.visible) {
-      window.addEventListener('mousedown', close);
-      window.addEventListener('scroll', close);
-      window.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(e); });
-    }
+    };
+    const esc = (e) => { if (e.key === 'Escape') close(e); };
+
+    window.addEventListener('mousedown', close);
+    window.addEventListener('scroll', close, { passive: true });
+    window.addEventListener('keydown', esc);
     return () => {
       window.removeEventListener('mousedown', close);
       window.removeEventListener('scroll', close);
-      window.removeEventListener('keydown', (e) => { if (e.key === 'Escape') close(e); });
+      window.removeEventListener('keydown', esc);
     };
   }, [contextMenu.visible, chatMenu.visible]);
 
@@ -321,147 +350,130 @@ export default function ChatPage() {
     clearTimeout(longPressTimeout.current);
   };
 
-  // FOTO+TESTO = invio doppio: prima la foto, poi il testo
+  // invio messaggi (con anti doppio invio + /api/send-text)
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
       alert("⚠️ La finestra di 24h per l'invio di messaggi è chiusa. Puoi inviare solo template.");
       return;
     }
+    if (sending) return;
+    setSending(true);
+    try {
+      if (selectedMedia) {
+        // upload file al tuo endpoint (già server-side ok)
+        const uploadData = new FormData();
+        uploadData.append('file', selectedMedia.file);
+        uploadData.append('phone_number_id', userData.phone_number_id);
 
-    if (selectedMedia) {
-      const uploadData = new FormData();
-      uploadData.append('file', selectedMedia.file);
-      uploadData.append('phone_number_id', userData.phone_number_id);
+        const uploadRes = await fetch('/api/send-media', { method: 'POST', body: uploadData });
+        const uploadJson = await uploadRes.json();
+        const media_id = uploadJson.id;
+        if (!media_id) {
+          alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
+          return;
+        }
 
-      const uploadRes = await fetch('/api/send-media', {
-        method: 'POST',
-        body: uploadData,
-      });
-      const uploadJson = await uploadRes.json();
-      const media_id = uploadJson.id;
-      if (!media_id) {
-        alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
+        // invia il messaggio media su WhatsApp (rimane com'era)
+        const payload = {
+          messaging_product: "whatsapp",
+          to: selectedPhone,
+          type: selectedMedia.type,
+          [selectedMedia.type]: { id: media_id, caption: "" },
+        };
+        const res = await fetch(
+          `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+        const data = await res.json();
+        if (data.messages) {
+          await addDoc(collection(db, "messages"), {
+            text: "",
+            to: selectedPhone,
+            from: "operator",
+            timestamp: Date.now(),
+            createdAt: serverTimestamp(),
+            type: selectedMedia.type,
+            media_id,
+            user_uid: user.uid,
+            read: true,
+            message_id: data.messages[0].id,
+          });
+
+          // eventuale testo dopo la media
+          if (messageText.trim()) {
+            const resText = await fetch('/api/send-text', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                to: selectedPhone,
+                text: messageText.trim(),
+                phone_number_id: userData.phone_number_id
+              })
+            });
+            const dataText = await resText.json();
+            if (resText.ok && dataText?.messages) {
+              await addDoc(collection(db, "messages"), {
+                text: messageText.trim(),
+                to: selectedPhone,
+                from: "operator",
+                timestamp: Date.now(),
+                createdAt: serverTimestamp(),
+                type: "text",
+                user_uid: user.uid,
+                read: true,
+                message_id: dataText.messages[0].id,
+              });
+            }
+          }
+          setMessageText('');
+          setSelectedMedia(null);
+        } else {
+          alert("Errore invio media: " + JSON.stringify(data.error));
+        }
         return;
       }
 
-      // PRIMA LA FOTO (senza caption)
-      const payload = {
-        messaging_product: "whatsapp",
-        to: selectedPhone,
-        type: selectedMedia.type,
-        [selectedMedia.type]: {
-          id: media_id,
-          caption: "",
-        },
-      };
-
-      const res = await fetch(
-        `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(payload),
-        }
-      );
+      // SOLO TESTO via /api/send-text (token lato server)
+      const res = await fetch('/api/send-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: selectedPhone,
+          text: messageText,
+          phone_number_id: userData.phone_number_id
+        })
+      });
       const data = await res.json();
-      if (data.messages) {
+      if (res.ok && data.messages) {
         await addDoc(collection(db, "messages"), {
-          text: "",
+          text: messageText,
           to: selectedPhone,
           from: "operator",
           timestamp: Date.now(),
           createdAt: serverTimestamp(),
-          type: selectedMedia.type,
-          media_id,
+          type: "text",
           user_uid: user.uid,
           read: true,
           message_id: data.messages[0].id,
         });
-
-        // POI IL TESTO se presente
-        if (messageText.trim()) {
-          const payloadText = {
-            messaging_product: "whatsapp",
-            to: selectedPhone,
-            type: "text",
-            text: { body: messageText.trim() }
-          };
-          const resText = await fetch(
-            `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify(payloadText),
-            }
-          );
-          const dataText = await resText.json();
-          if (dataText.messages) {
-            await addDoc(collection(db, "messages"), {
-              text: messageText.trim(),
-              to: selectedPhone,
-              from: "operator",
-              timestamp: Date.now(),
-              createdAt: serverTimestamp(),
-              type: "text",
-              user_uid: user.uid,
-              read: true,
-              message_id: dataText.messages[0].id,
-            });
-          }
-        }
         setMessageText('');
-        setSelectedMedia(null);
       } else {
-        alert("Errore invio media: " + JSON.stringify(data.error));
+        alert("Errore invio: " + JSON.stringify(data.error || data));
       }
-      return;
-    }
-
-    // SOLO TESTO
-    const payload = {
-      messaging_product: "whatsapp",
-      to: selectedPhone,
-      type: "text",
-      text: { body: messageText }
-    };
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, "messages"), {
-        text: messageText,
-        to: selectedPhone,
-        from: "operator",
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: "text",
-        user_uid: user.uid,
-        read: true,
-        message_id: data.messages[0].id,
-      });
-      setMessageText('');
-    } else {
-      alert("Errore invio: " + JSON.stringify(data.error));
+    } finally {
+      setSending(false);
     }
   };
 
-  // --- Invio template WhatsApp ---
+  // template
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const template = templates.find(t => t.name === name);
@@ -469,20 +481,12 @@ export default function ChatPage() {
     let components = [];
     if (template.header && template.header.type !== "NONE") {
       if (template.header.type === "TEXT") {
-        components.push({
-          type: "HEADER",
-          parameters: [{ type: "text", text: template.header.text || "" }]
-        });
+        components.push({ type: "HEADER", parameters: [{ type: "text", text: template.header.text || "" }] });
       } else if (["IMAGE", "DOCUMENT", "VIDEO"].includes(template.header.type)) {
         if (!template.header.url) return alert("File header non trovato!");
         components.push({
           type: "HEADER",
-          parameters: [
-            {
-              type: template.header.type.toLowerCase(),
-              [template.header.type.toLowerCase()]: { link: template.header.url }
-            }
-          ]
+          parameters: [{ type: template.header.type.toLowerCase(), [template.header.type.toLowerCase()]: { link: template.header.url } }]
         });
       }
     }
@@ -492,11 +496,7 @@ export default function ChatPage() {
       messaging_product: "whatsapp",
       to: selectedPhone,
       type: "template",
-      template: {
-        name,
-        language: { code: template.language || "it" },
-        components
-      }
+      template: { name, language: { code: template.language || "it" }, components }
     };
 
     const res = await fetch(
@@ -678,7 +678,7 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Messaggi (scroll interno + spazio per composer) */}
+          {/* Messaggi */}
           <div
             className="flex-1 p-4 scroll-smooth relative chat-scroll chat-scroll--with-composer"
             ref={chatBoxRef}
@@ -695,6 +695,7 @@ export default function ChatPage() {
                   onTouchEnd={handleTouchEnd}
                 >
                   {msg.type === 'image' && msg.media_id ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={`/api/media-proxy?media_id=${msg.media_id}`}
                       alt="Immagine"
@@ -756,33 +757,15 @@ export default function ChatPage() {
             )}
           </div>
 
+          {/* Anteprima media (no memory leak) */}
           {selectedMedia && (
-            <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
-              {selectedMedia.type === 'image' ? (
-                <img
-                  src={URL.createObjectURL(selectedMedia.file)}
-                  alt="preview"
-                  className="h-16 w-16 object-cover rounded"
-                />
-              ) : (
-                <div className="flex items-center gap-2">
-                  <Paperclip size={20} className="text-gray-600" />
-                  <span className="text-sm">{selectedMedia.file.name}</span>
-                </div>
-              )}
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setSelectedMedia(null)}
-                className="text-red-500 hover:bg-red-50"
-                title="Rimuovi"
-              >
-                ✕
-              </Button>
-            </div>
+            <MediaPreview
+              selectedMedia={selectedMedia}
+              onClear={() => setSelectedMedia(null)}
+            />
           )}
 
-          {/* Composer sticky con safe-area */}
+          {/* Composer */}
           <div className="flex items-center gap-2 p-3 sticky-composer">
             <label className="flex items-center cursor-pointer">
               <Camera size={22} className="mr-2 text-gray-500 hover:text-black" />
@@ -791,7 +774,7 @@ export default function ChatPage() {
                 accept="image/*"
                 className="hidden"
                 onChange={handleMediaInput('image')}
-                disabled={!canSendMessage}
+                disabled={!canSendMessage || sending}
               />
             </label>
             <label className="flex items-center cursor-pointer">
@@ -801,20 +784,20 @@ export default function ChatPage() {
                 accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
                 className="hidden"
                 onChange={handleMediaInput('document')}
-                disabled={!canSendMessage}
+                disabled={!canSendMessage || sending}
               />
             </label>
             <Input
               placeholder="Scrivi un messaggio..."
               value={messageText}
               onChange={e => setMessageText(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && sendMessage()}
+              onKeyDown={e => e.key === 'Enter' && !sending && sendMessage()}
               className="flex-1 rounded-full px-4 py-3 text-base border border-gray-300 focus:ring-2 focus:ring-gray-800"
-              disabled={!canSendMessage}
+              disabled={!canSendMessage || sending}
             />
             <Button
               onClick={sendMessage}
-              disabled={(!messageText.trim() && !selectedMedia) || !canSendMessage}
+              disabled={sending || (!messageText.trim() && !selectedMedia) || !canSendMessage}
               className="rounded-full px-5 py-3 bg-black text-white hover:bg-gray-800"
             >
               <Send size={18} />
@@ -823,6 +806,7 @@ export default function ChatPage() {
               onClick={() => setShowTemplates(!showTemplates)}
               className="rounded-full px-3 py-2 bg-gray-200 text-gray-700 ml-2"
               type="button"
+              disabled={sending}
             >
               Tmpl
             </Button>
@@ -836,7 +820,7 @@ export default function ChatPage() {
                 {templates.map((t, idx) => (
                   <li key={idx} className="flex justify-between items-center mb-1">
                     <span>{t.name}</span>
-                    <Button size="sm" onClick={() => sendTemplate(t.name)}>
+                    <Button size="sm" onClick={() => sendTemplate(t.name)} disabled={sending}>
                       Invia
                     </Button>
                   </li>
@@ -845,6 +829,7 @@ export default function ChatPage() {
             </div>
           )}
 
+          {/* context menu msg */}
           {contextMenu.visible && (
             <div
               id="menu-contestuale-msg"
@@ -870,6 +855,7 @@ export default function ChatPage() {
               </button>
             </div>
           )}
+          {/* context menu chat */}
           {chatMenu.visible && (
             <div
               id="menu-contestuale-chat"
@@ -897,6 +883,40 @@ export default function ChatPage() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- Preview media senza leak ----
+function MediaPreview({ selectedMedia, onClear }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (selectedMedia?.type === 'image' && selectedMedia.file) {
+      const u = URL.createObjectURL(selectedMedia.file);
+      setUrl(u);
+      return () => URL.revokeObjectURL(u);
+    }
+  }, [selectedMedia]);
+  return (
+    <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
+      {selectedMedia.type === 'image' ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url || ''} alt="preview" className="h-16 w-16 object-cover rounded" />
+      ) : (
+        <div className="flex items-center gap-2">
+          <Paperclip size={20} className="text-gray-600" />
+          <span className="text-sm">{selectedMedia.file?.name}</span>
+        </div>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={onClear}
+        className="text-red-500 hover:bg-red-50"
+        title="Rimuovi"
+      >
+        ✕
+      </Button>
     </div>
   );
 }
