@@ -45,7 +45,7 @@ export default function ChatPage() {
 
   let longPressTimeout = useRef();
 
-  // ✅ blocca lo scroll del body quando si apre la chat
+  // blocca lo scroll del body
   useEffect(() => {
     document.body.classList.add('no-scroll');
     return () => document.body.classList.remove('no-scroll');
@@ -58,6 +58,7 @@ export default function ChatPage() {
     return val.seconds * 1000;
   };
 
+  // user data
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -68,6 +69,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // contatti
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -90,6 +92,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // ricerca contatti
   useEffect(() => {
     if (!searchContact.trim()) {
       setFilteredContacts([]);
@@ -114,6 +117,7 @@ export default function ChatPage() {
     setFilteredContacts(found);
   }, [searchContact, allContacts]);
 
+  // messages realtime
   useEffect(() => {
     if (!user?.uid) return;
     const q = query(
@@ -128,6 +132,7 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
+  // conversazioni derivate
   const phonesData = useMemo(() => {
     const chatMap = {};
     allMessages.forEach(m => {
@@ -157,6 +162,7 @@ export default function ChatPage() {
       });
   }, [allMessages, contactNames]);
 
+  // autoscroll lista
   useEffect(() => {
     if (!selectedPhone || !listChatRef.current) return;
     const activeLi = listChatRef.current.querySelector(`[data-phone="${selectedPhone}"]`);
@@ -165,6 +171,7 @@ export default function ChatPage() {
     }
   }, [selectedPhone, phonesData.length]);
 
+  // finestra 24h
   useEffect(() => {
     if (!user?.uid || !selectedPhone) {
       setCanSendMessage(false);
@@ -185,6 +192,7 @@ export default function ChatPage() {
     setCanSendMessage(now - lastTimestamp < 86400000);
   }, [user, allMessages, selectedPhone]);
 
+  // segna letti
   useEffect(() => {
     if (!selectedPhone || !user?.uid || allMessages.length === 0) return;
     const unreadMsgIds = allMessages
@@ -200,16 +208,18 @@ export default function ChatPage() {
     }
   }, [selectedPhone, allMessages, user]);
 
+  // autoscroll messaggi
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [allMessages, selectedPhone]);
 
+  // gestione scroll + btn
   const [showScrollButtons, setShowScrollButtons] = useState(false);
   const chatBoxRef = useRef();
   const handleScroll = () => {
     if (!chatBoxRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatBoxRef.current;
-    setShowScrollButtons(scrollHeight - clientHeight > 600);
+    setShowScrollButtons(scrollHeight - clientHeight > 600 && !(scrollHeight - clientHeight - scrollTop < 80));
   };
 
   const scrollToTop = () => {
@@ -219,6 +229,7 @@ export default function ChatPage() {
     chatBoxRef.current?.scrollTo({ top: chatBoxRef.current.scrollHeight, behavior: 'smooth' });
   };
 
+  // templates
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -232,6 +243,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
+  // messaggi filtrati
   const filtered = useMemo(() => (
     allMessages
       .filter(m =>
@@ -240,6 +252,7 @@ export default function ChatPage() {
       .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
   ), [allMessages, selectedPhone]);
 
+  // media
   const [selectedMedia, setSelectedMedia] = useState(null);
   const handleMediaInput = type => e => {
     const file = e.target.files[0];
@@ -321,7 +334,7 @@ export default function ChatPage() {
     clearTimeout(longPressTimeout.current);
   };
 
-  // FOTO+TESTO = invio doppio: prima la foto, poi il testo
+  // invio messaggi
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
@@ -345,7 +358,7 @@ export default function ChatPage() {
         return;
       }
 
-      // PRIMA LA FOTO (senza caption)
+      // prima la foto/documento
       const payload = {
         messaging_product: "whatsapp",
         to: selectedPhone,
@@ -382,7 +395,7 @@ export default function ChatPage() {
           message_id: data.messages[0].id,
         });
 
-        // POI IL TESTO se presente
+        // poi il testo se presente
         if (messageText.trim()) {
           const payloadText = {
             messaging_product: "whatsapp",
@@ -424,7 +437,7 @@ export default function ChatPage() {
       return;
     }
 
-    // SOLO TESTO
+    // solo testo
     const payload = {
       messaging_product: "whatsapp",
       to: selectedPhone,
@@ -461,7 +474,7 @@ export default function ChatPage() {
     }
   };
 
-  // --- Invio template WhatsApp ---
+  // invio template
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const template = templates.find(t => t.name === name);
@@ -529,12 +542,12 @@ export default function ChatPage() {
     }
   };
 
-  // ------------------ UI ------------------
+  // ------------------ UI (full screen + robusta) ------------------
   return (
-    <div className="chat-shell flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
+    <div className="chat-shell flex flex-col md:flex-row bg-gray-50 overflow-hidden h-[100dvh] md:h-[100dvh]">
       {/* Lista chat */}
       <div
-        className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r p-4 chat-scroll`}
+        className={`${selectedPhone ? "hidden" : "block"} md:block md:w-[320px] bg-white border-r p-4`}
         ref={listChatRef}
       >
         <div className="flex justify-between items-center mb-4">
@@ -569,7 +582,7 @@ export default function ChatPage() {
                             {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
                           </span>
                           <span className="block text-xs text-gray-400">
-                            {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
+                            {lastMsgText.length > 42 ? lastMsgText.substring(0, 42) + '…' : lastMsgText}
                           </span>
                         </div>
                         {unread > 0 && (
@@ -582,9 +595,7 @@ export default function ChatPage() {
                 )}
                 {readChats.length > 0 && (
                   <>
-                    {readChats.length > 0 && (
-                      <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Conversazioni</li>
-                    )}
+                    <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Conversazioni</li>
                     {readChats.map(({ phone, name, lastMsgText }) => (
                       <li
                         key={phone}
@@ -598,7 +609,7 @@ export default function ChatPage() {
                         <div>
                           <span>{name}</span>
                           <span className="block text-xs text-gray-400">
-                            {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
+                            {lastMsgText.length > 42 ? lastMsgText.substring(0, 42) + '…' : lastMsgText}
                           </span>
                         </div>
                       </li>
@@ -663,14 +674,15 @@ export default function ChatPage() {
 
       {/* Chat */}
       {selectedPhone && (
-        <div className="flex flex-col flex-1 bg-gray-100 relative">
-          {/* Header */}
+        <div className="flex flex-col flex-1 min-h-0 bg-gray-100 relative">
+          {/* Header chat */}
           <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
             <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
+
           {!canSendMessage && (
             <div className="flex items-center justify-center px-4 py-3 bg-yellow-100 border-b border-yellow-300 text-yellow-900 text-sm font-medium">
               ⚠️ La finestra di 24h per l'invio di messaggi è chiusa.<br />
@@ -678,9 +690,9 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Messaggi (scroll interno + spazio per composer) */}
+          {/* Messaggi */}
           <div
-            className="flex-1 p-4 scroll-smooth relative chat-scroll chat-scroll--with-composer"
+            className="flex-1 min-h-0 p-4 scroll-smooth relative"
             ref={chatBoxRef}
             onScroll={handleScroll}
           >
@@ -695,10 +707,11 @@ export default function ChatPage() {
                   onTouchEnd={handleTouchEnd}
                 >
                   {msg.type === 'image' && msg.media_id ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={`/api/media-proxy?media_id=${msg.media_id}`}
                       alt="Immagine"
-                      className="max-w-xs rounded-lg shadow-md"
+                      className="max-w-xs rounded-2xl shadow-md"
                       loading="lazy"
                     />
                   ) : msg.type === 'document' && msg.media_id ? (
@@ -706,13 +719,13 @@ export default function ChatPage() {
                       href={`/api/media-proxy?media_id=${msg.media_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-blue-600 underline"
+                      className="text-blue-600 underline px-4 py-2 rounded-2xl text-sm shadow-md bg-white"
                     >
                       Documento allegato
                     </a>
                   ) : (
                     <div
-                      className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
+                      className={`px-4 py-2 rounded-2xl text-sm shadow-md max-w-[72%] ${
                         msg.from === 'operator'
                           ? 'bg-black text-white rounded-br-none'
                           : 'bg-white text-gray-900 rounded-bl-none'
@@ -733,7 +746,7 @@ export default function ChatPage() {
             </div>
 
             {showScrollButtons && (
-              <div className="fixed bottom-28 right-8 z-40 flex flex-col gap-1">
+              <div className="absolute bottom-6 right-6 z-40 flex flex-col gap-1">
                 <Button
                   size="icon"
                   className="rounded-full shadow bg-gray-200 hover:bg-black hover:text-white"
@@ -759,6 +772,7 @@ export default function ChatPage() {
           {selectedMedia && (
             <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
               {selectedMedia.type === 'image' ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={URL.createObjectURL(selectedMedia.file)}
                   alt="preview"
@@ -782,7 +796,7 @@ export default function ChatPage() {
             </div>
           )}
 
-          {/* Composer sticky con safe-area */}
+          {/* Composer */}
           <div className="flex items-center gap-2 p-3 sticky-composer">
             <label className="flex items-center cursor-pointer">
               <Camera size={22} className="mr-2 text-gray-500 hover:text-black" />
@@ -845,6 +859,7 @@ export default function ChatPage() {
             </div>
           )}
 
+          {/* context menu messaggio */}
           {contextMenu.visible && (
             <div
               id="menu-contestuale-msg"
@@ -870,6 +885,8 @@ export default function ChatPage() {
               </button>
             </div>
           )}
+
+          {/* context menu chat */}
           {chatMenu.visible && (
             <div
               id="menu-contestuale-chat"
