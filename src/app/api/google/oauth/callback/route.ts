@@ -1,89 +1,68 @@
-// /app/api/google/oauth/callback/route.ts
+// src/app/api/google/oauth/callback/route.ts
 export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDB } from '@/lib/firebase-admin';
 
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-
 export async function GET(req: NextRequest) {
-  const sp = new URL(req.url).searchParams;
+  const sp = req.nextUrl.searchParams;
   const code = sp.get('code');
-  const state = sp.get('state');
+  const stateStr = sp.get('state');
+  if (!code || !stateStr) return NextResponse.json({ error: 'Missing code/state' }, { status: 400 });
 
-  if (!code || !state) {
-    return NextResponse.json({ error: 'Missing code/state' }, { status: 400 });
-  }
-
-  // Decodifica state → { uid, nonce }
-  let uid = '';
-  let nonce = '';
+  let uid = '', nonce = '';
   try {
-    ({ uid, nonce } = JSON.parse(Buffer.from(state, 'base64url').toString('utf8')));
+    ({ uid, nonce } = JSON.parse(Buffer.from(stateStr, 'base64url').toString('utf8')));
   } catch {
     return NextResponse.json({ error: 'Invalid state' }, { status: 400 });
   }
 
-  // Verifica ed elimina lo state (anti-CSRF)
   const stateRef = adminDB.doc(`users/${uid}/oauth_states/${nonce}`);
   const stateSnap = await stateRef.get();
-  if (!stateSnap.exists) {
-    return NextResponse.json({ error: 'State not found/expired' }, { status: 400 });
-  }
+  if (!stateSnap.exists) return NextResponse.json({ error: 'State not found/expired' }, { status: 400 });
+
+  const { redirect_uri } = (stateSnap.data() || {}) as { redirect_uri?: string };
   await stateRef.delete();
 
-  // Leggi eventuali credenziali BYOG dell'utente
+  // prendo app creds BYOG dallo user
   const appSnap = await adminDB.doc(`users/${uid}/google/app`).get();
-  const appCfg = appSnap.exists ? (appSnap.data() as any) : null;
-
-  const redirectUri =
-    appCfg?.redirect_uri ||
-    `${process.env.NEXT_PUBLIC_BASE_URL}/api/google/oauth/callback`;
-
-  const clientId = appCfg?.client_id || process.env.GOOGLE_CLIENT_ID || '';
-  const clientSecret = appCfg?.client_secret || process.env.GOOGLE_CLIENT_SECRET || '';
-
-  if (!clientId || !clientSecret) {
-    return NextResponse.json({ error: 'Missing OAuth client credentials' }, { status: 500 });
+  if (!appSnap.exists) return NextResponse.json({ error: 'Mancano le credenziali BYOG dello user' }, { status: 400 });
+  const app = appSnap.data() as { client_id?: string; client_secret?: string; redirect_uri?: string };
+  if (!app.client_id || !app.client_secret) {
+    return NextResponse.json({ error: 'client_id/client_secret mancanti' }, { status: 400 });
   }
 
-  // Scambio code → tokens
+  const ru = redirect_uri || app.redirect_uri || `${req.nextUrl.origin}/api/google/oauth/callback`;
+
   const params = new URLSearchParams({
     code,
-    client_id: clientId,
-    client_secret: clientSecret,
-    redirect_uri: redirectUri,
+    client_id: app.client_id,
+    client_secret: app.client_secret,
+    redirect_uri: ru,
     grant_type: 'authorization_code',
   });
 
-  const tokenRes = await fetch(TOKEN_URL, {
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
   });
 
+  const json = await tokenRes.json();
   if (!tokenRes.ok) {
-    const text = await tokenRes.text();
-    return NextResponse.json({ error: 'Token exchange failed', details: text }, { status: 400 });
+    return NextResponse.json({ error: 'Token exchange failed', details: json }, { status: 400 });
   }
 
-  const json = await tokenRes.json();
+  await adminDB.doc(`users/${uid}/google/oauth`).set({
+    access_token: json.access_token,
+    refresh_token: json.refresh_token || null,
+    expiry_date: Date.now() + (json.expires_in || 3600) * 1000,
+    scope: json.scope,
+    token_type: json.token_type,
+    updatedAt: new Date(),
+  }, { merge: true });
 
-  // Salva token per-utente
-  await adminDB.doc(`users/${uid}/google/oauth`).set(
-    {
-      access_token: json.access_token,
-      refresh_token: json.refresh_token || null, // può mancare se già concesso in passato
-      expiry_date: Date.now() + (json.expires_in || 3600) * 1000,
-      scope: json.scope,
-      token_type: json.token_type,
-      updatedAt: new Date(),
-    },
-    { merge: true }
-  );
-
-  // Redirect alla pagina impostazioni/automazioni della tua app
-  const okUrl = new URL('/chatboost/impostazioni/automazioni', process.env.NEXT_PUBLIC_BASE_URL);
+  const okUrl = new URL('/chatboost/impostazioni/automazioni', req.nextUrl.origin);
   okUrl.searchParams.set('google', 'connected');
   return NextResponse.redirect(okUrl.toString(), { status: 302 });
 }
