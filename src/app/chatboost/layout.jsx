@@ -3,7 +3,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
-import { MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu, Zap } from 'lucide-react';
+import {
+  MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu, Zap, CalendarDays
+} from 'lucide-react'; // ⬅️ aggiunto CalendarDays
 import { signOut } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -24,21 +26,17 @@ export default function ChatBoostLayout({ children }) {
     }
   }, [loading, user, router]);
 
-  // 🔔 Listener UNREAD senza indice: togliamo where('from','!=','operator') e filtriamo lato client
+  // 🔔 Listener UNREAD
   useEffect(() => {
     if (!user?.uid) return;
-
     const q = query(
       collection(db, 'messages'),
       where('user_uid', '==', user.uid),
       where('read', '==', false)
-      // <-- rimosso: where('from', '!=', 'operator')
     );
-
     const unsub = onSnapshot(
       q,
       (snap) => {
-        // filtro in memoria i messaggi non dell'operatore
         let count = 0;
         snap.forEach((doc) => {
           const d = doc.data();
@@ -48,11 +46,9 @@ export default function ChatBoostLayout({ children }) {
       },
       (err) => {
         console.error('Unread listener error:', err);
-        // fallback soft: non bloccare UI
         setTotalUnread(0);
       }
     );
-
     return () => unsub();
   }, [user]);
 
@@ -84,15 +80,16 @@ export default function ChatBoostLayout({ children }) {
     }
   };
 
-  // NAV principali
+  // NAV principali (⬇️ aggiunta voce Calendario)
   const navItems = [
-    { label: 'Chat',      icon: MessageSquare, path: '/chatboost/dashboard' },
-    { label: 'Template',  icon: FileText,      path: '/chatboost/templates' },
-    { label: 'Contatti',  icon: Users,         path: '/chatboost/contacts' },
-    { label: 'Impostaz.', icon: Settings,      path: '/chatboost/impostazioni' },
+    { label: 'Chat',       icon: MessageSquare, path: '/chatboost/dashboard' },
+    { label: 'Template',   icon: FileText,      path: '/chatboost/templates' },
+    { label: 'Contatti',   icon: Users,         path: '/chatboost/contacts' },
+    { label: 'Calendario', icon: CalendarDays,  path: '/calendario' },     // ⬅️ NEW
+    { label: 'Impostaz.',  icon: Settings,      path: '/chatboost/impostazioni' },
   ];
 
-  // SUBNAV impostazioni (Automazioni incluso)
+  // SUBNAV impostazioni
   const settingsSubnav = [
     { label: 'Info', path: '/chatboost/impostazioni/info', icon: Info },
     { label: 'Integrazioni', path: '/chatboost/impostazioni/integrations', icon: Plug },
