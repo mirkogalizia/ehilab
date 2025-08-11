@@ -1,11 +1,21 @@
+// src/app/chatboost/layouts/ChatBoostLayout.jsx
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useRouter, usePathname } from 'next/navigation';
 import {
-  MessageSquare, FileText, Settings, LogOut, Users, Plug, Info, Menu, Zap, CalendarDays
-} from 'lucide-react'; // ⬅️ aggiunto CalendarDays
+  MessageSquare,
+  FileText,
+  Settings,
+  LogOut,
+  Users,
+  Plug,
+  Info,
+  Menu,
+  Zap,
+  CalendarDays,
+} from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
@@ -20,27 +30,30 @@ export default function ChatBoostLayout({ children }) {
   const [totalUnread, setTotalUnread] = useState(0);
   const subnavRef = useRef(null);
 
+  // Redirect se non loggato
   useEffect(() => {
     if (!loading && !user) {
       router.push('/wa/login');
     }
   }, [loading, user, router]);
 
-  // 🔔 Listener UNREAD
+  // 🔔 Listener UNREAD (solo messaggi non-operator)
   useEffect(() => {
     if (!user?.uid) return;
+
     const q = query(
       collection(db, 'messages'),
       where('user_uid', '==', user.uid),
       where('read', '==', false)
     );
+
     const unsub = onSnapshot(
       q,
       (snap) => {
         let count = 0;
-        snap.forEach((doc) => {
-          const d = doc.data();
-          if (d?.from !== 'operator') count += 1;
+        snap.forEach((d) => {
+          const msg = d.data();
+          if (msg?.from !== 'operator') count += 1;
         });
         setTotalUnread(count);
       },
@@ -49,9 +62,11 @@ export default function ChatBoostLayout({ children }) {
         setTotalUnread(0);
       }
     );
+
     return () => unsub();
   }, [user]);
 
+  // Chiudi sottomenu Impostazioni cliccando fuori
   useEffect(() => {
     function handleClickOutside(e) {
       if (subnavRef.current && !subnavRef.current.contains(e.target)) {
@@ -59,11 +74,12 @@ export default function ChatBoostLayout({ children }) {
       }
     }
     if (showSettingsMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener('mousedown', handleClickOutside);
     }
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showSettingsMenu]);
 
+  // Mostra subnav impostazioni quando sei su /chatboost/impostazioni/*
   useEffect(() => {
     setShowSettingsMenu(pathname.startsWith('/chatboost/impostazioni'));
   }, [pathname]);
@@ -80,13 +96,13 @@ export default function ChatBoostLayout({ children }) {
     }
   };
 
-  // NAV principali (⬇️ aggiunta voce Calendario)
+  // NAV principali
   const navItems = [
-    { label: 'Chat',       icon: MessageSquare, path: '/chatboost/dashboard' },
-    { label: 'Template',   icon: FileText,      path: '/chatboost/templates' },
-    { label: 'Contatti',   icon: Users,         path: '/chatboost/contacts' },
-    { label: 'Calendario', icon: CalendarDays,  path: '/calendario' },     // ⬅️ NEW
-    { label: 'Impostaz.',  icon: Settings,      path: '/chatboost/impostazioni' },
+    { label: 'Chat', icon: MessageSquare, path: '/chatboost/dashboard' },
+    { label: 'Template', icon: FileText, path: '/chatboost/templates' },
+    { label: 'Contatti', icon: Users, path: '/chatboost/contacts' },
+    { label: 'Calendario', icon: CalendarDays, path: '/chatboost/calendario' }, // ✅ calendario
+    { label: 'Impostaz.', icon: Settings, path: '/chatboost/impostazioni' },
   ];
 
   // SUBNAV impostazioni
@@ -96,19 +112,22 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Automazioni', path: '/chatboost/impostazioni/automazioni', icon: Zap },
   ];
 
-  // ----- DRAWER (mobile menu) -----
+  // ----- DRAWER (mobile) -----
   function MobileDrawer() {
     return (
       <div className="fixed inset-0 z-[999] flex md:hidden">
         <div
           className="bg-white w-72 max-w-full h-full p-6 flex flex-col shadow-2xl"
           style={{ animation: 'slideDrawer 0.32s cubic-bezier(.6,0,.3,1)' }}
-          onClick={e => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
           <div className="mb-8 flex items-center gap-2">
             <span className="text-2xl font-black text-gray-900 tracking-tight">EHI!</span>
-            <span className="text-sm font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-lg ml-1">Chat Boost</span>
+            <span className="text-sm font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-lg ml-1">
+              Chat Boost
+            </span>
           </div>
+
           <nav className="flex flex-col gap-3 flex-1">
             {navItems.map(({ label, icon: Icon, path }) => (
               <button
@@ -132,6 +151,7 @@ export default function ChatBoostLayout({ children }) {
                 )}
               </button>
             ))}
+
             {pathname.startsWith('/chatboost/impostazioni') && (
               <div className="ml-4 mt-2 flex flex-col gap-1">
                 {settingsSubnav.map(({ label, path, icon: SubIcon }) => (
@@ -142,9 +162,7 @@ export default function ChatBoostLayout({ children }) {
                       router.push(path);
                     }}
                     className={`flex items-center gap-2 px-2 py-1 rounded text-[15px] transition-all ${
-                      pathname === path
-                        ? 'bg-gray-900 text-white'
-                        : 'hover:bg-gray-200 text-gray-700'
+                      pathname === path ? 'bg-gray-900 text-white' : 'hover:bg-gray-200 text-gray-700'
                     }`}
                   >
                     <SubIcon size={17} /> {label}
@@ -153,6 +171,7 @@ export default function ChatBoostLayout({ children }) {
               </div>
             )}
           </nav>
+
           <button
             onClick={handleLogout}
             className="mt-8 flex items-center gap-2 text-base text-gray-500 hover:text-red-600 transition"
@@ -160,11 +179,17 @@ export default function ChatBoostLayout({ children }) {
             <LogOut size={20} /> Logout
           </button>
         </div>
+
         <div className="flex-1 bg-black/30" onClick={() => setShowDrawer(false)} />
+
         <style jsx global>{`
           @keyframes slideDrawer {
-            from { transform: translateX(-100%);}
-            to { transform: translateX(0);}
+            from {
+              transform: translateX(-100%);
+            }
+            to {
+              transform: translateX(0);
+            }
           }
         `}</style>
       </div>
@@ -190,6 +215,7 @@ export default function ChatBoostLayout({ children }) {
         >
           EHI!
         </div>
+
         <nav className="flex flex-col gap-10 items-center flex-1">
           {navItems.map(({ label, icon: Icon, path }) => {
             const active = pathname.startsWith(path);
@@ -210,11 +236,13 @@ export default function ChatBoostLayout({ children }) {
                 >
                   <Icon size={22} className={active ? 'scale-110' : ''} />
                   <span className="text-[11px] mt-1">{label}</span>
+
                   {label === 'Chat' && totalUnread > 0 && (
                     <span className="absolute -top-1 -right-1 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-xs font-bold">
                       {totalUnread}
                     </span>
                   )}
+
                   {label === 'Impostaz.' && pathname.startsWith('/chatboost/impostazioni') && (
                     <span className="absolute right-0 top-1 w-2 h-2 bg-blue-600 rounded-full shadow"></span>
                   )}
@@ -223,6 +251,7 @@ export default function ChatBoostLayout({ children }) {
             );
           })}
         </nav>
+
         <button
           onClick={handleLogout}
           className="text-gray-500 hover:text-red-500 transition flex flex-col items-center"
@@ -238,11 +267,11 @@ export default function ChatBoostLayout({ children }) {
           ref={subnavRef}
           className="hidden md:block fixed left-24 top-0 h-full w-64 z-30"
           style={{
-            backdropFilter: "blur(10px)",
-            background: "rgba(255,255,255,0.78)",
-            boxShadow: "8px 0 24px -4px rgba(0,0,0,0.11)",
-            borderRight: "1px solid #e5e7eb",
-            transition: "all 0.28s cubic-bezier(.4,0,.2,1)"
+            backdropFilter: 'blur(10px)',
+            background: 'rgba(255,255,255,0.78)',
+            boxShadow: '8px 0 24px -4px rgba(0,0,0,0.11)',
+            borderRight: '1px solid #e5e7eb',
+            transition: 'all 0.28s cubic-bezier(.4,0,.2,1)',
           }}
         >
           <div className="flex flex-col gap-4 pt-16 pl-6 pr-3">
@@ -254,10 +283,9 @@ export default function ChatBoostLayout({ children }) {
                   router.push(path);
                   setShowSettingsMenu(false);
                 }}
-                className={`flex items-center gap-3 py-2 px-3 rounded-xl text-base transition-all mb-1 font-medium
-                  ${pathname === path
-                    ? 'bg-gray-900 text-white shadow-sm'
-                    : 'hover:bg-gray-200 text-gray-700'}`}
+                className={`flex items-center gap-3 py-2 px-3 rounded-xl text-base transition-all mb-1 font-medium ${
+                  pathname === path ? 'bg-gray-900 text-white shadow-sm' : 'hover:bg-gray-200 text-gray-700'
+                }`}
               >
                 <SubIcon size={18} />
                 {label}
@@ -266,13 +294,8 @@ export default function ChatBoostLayout({ children }) {
           </div>
         </div>
       )}
-      {showSettingsMenu && (
-        <div
-          className="hidden md:block fixed inset-0 z-10"
-          style={{ background: "transparent" }}
-          onClick={() => setShowSettingsMenu(false)}
-        />
-      )}
+
+      {/* ❌ RIMOSSO overlay che bloccava i click (era qui) */}
 
       {/* Drawer nav mobile */}
       {showDrawer && <MobileDrawer />}
@@ -282,14 +305,14 @@ export default function ChatBoostLayout({ children }) {
         <button onClick={() => setShowDrawer(true)}>
           <Menu size={28} className="text-gray-800" />
         </button>
-        <span className="text-lg font-extrabold tracking-tight text-emerald-700 select-none">EHI! Chat Boost</span>
+        <span className="text-lg font-extrabold tracking-tight text-emerald-700 select-none">
+          EHI! Chat Boost
+        </span>
         <span className="w-8" />
       </header>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-y-auto pt-14 md:pt-0 bg-[#f7f7f7] z-10">
-        {children}
-      </main>
+      {/* Contenuto principale */}
+      <main className="flex-1 overflow-y-auto pt-14 md:pt-0 bg-[#f7f7f7] z-10">{children}</main>
     </div>
   );
 }

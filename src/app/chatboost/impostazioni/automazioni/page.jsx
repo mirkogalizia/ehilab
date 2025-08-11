@@ -15,13 +15,13 @@ import {
 export default function AutomazioniPage() {
   const { user } = useAuth();
 
-  /** ------- SHOPIFY: stato ------- */
+  // ------- SHOPIFY -------
   const [enabled, setEnabled] = useState(false);
   const [templateList, setTemplateList] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [loadingShopify, setLoadingShopify] = useState(false);
 
-  /** ------- CALENDARIO: stato ------- */
+  // ------- CALENDARIO -------
   const [googleConnected, setGoogleConnected] = useState(false);
   const [calendars, setCalendars] = useState([]);
   const [calendarId, setCalendarId] = useState('');
@@ -35,15 +35,12 @@ export default function AutomazioniPage() {
     to: toIsoDate(new Date(today.getTime() + 7*24*3600*1000))
   });
 
-  /* =========================================
-   * SHOPIFY – carica impostazioni + template
-   * ========================================= */
+  // Shopify: carica impostazioni + template
   useEffect(() => {
     if (!user) return;
     (async () => {
       setLoadingShopify(true);
       try {
-        // 1) Impostazioni automazione dal merchant
         const merchantRef = doc(db, "shopify_merchants", user.uid);
         const snap = await getDoc(merchantRef);
         const data = snap.data();
@@ -51,7 +48,6 @@ export default function AutomazioniPage() {
         setEnabled(!!automation.enabled);
         setSelectedTemplate(automation.template_id || '');
 
-        // 2) Lista template APPROVED
         const res = await fetch('/api/list-templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -65,17 +61,13 @@ export default function AutomazioniPage() {
     })();
   }, [user]);
 
-  // Salva modifiche automazione Shopify
   async function saveAutomazione() {
     if (!user) return;
     setLoadingShopify(true);
     try {
       const merchantRef = doc(db, "shopify_merchants", user.uid);
       await updateDoc(merchantRef, {
-        "automation.order_fulfilled": {
-          enabled,
-          template_id: selectedTemplate // è il name del template
-        }
+        "automation.order_fulfilled": { enabled, template_id: selectedTemplate }
       });
       alert("Automazione Shopify aggiornata!");
     } finally {
@@ -83,9 +75,7 @@ export default function AutomazioniPage() {
     }
   }
 
-  /* =========================================
-   * CALENDARIO – helper
-   * ========================================= */
+  // Calendario: helper
   const fmtDT = (dt) => {
     const d = new Date(dt);
     const hasTime = /\d{2}:\d{2}/.test(d.toTimeString());
@@ -105,9 +95,7 @@ export default function AutomazioniPage() {
     const idt = await user.getIdToken();
     await fetch('/api/google/oauth/disconnect', { method:'DELETE', headers:{ Authorization:`Bearer ${idt}` }});
     setGoogleConnected(false);
-    setCalendars([]);
-    setCalendarId('');
-    setEvents([]);
+    setCalendars([]); setCalendarId(''); setEvents([]);
   };
 
   const saveDefaultCalendar = async (id) => {
@@ -130,7 +118,6 @@ export default function AutomazioniPage() {
       if (r.ok){
         setGoogleConnected(true);
         setCalendars(j.items || []);
-        // pre-selezione
         const primary = (j.items || []).find(c => c.primary) || (j.items || [])[0];
         const id = primary?.id || 'primary';
         setCalendarId(prev => prev || id);
@@ -163,25 +150,10 @@ export default function AutomazioniPage() {
     }
   };
 
-  // Carica calendari al mount
   useEffect(() => { if (user) loadCalendars(); }, [user]);
+  useEffect(() => { if (user && calendarId) { saveDefaultCalendar(calendarId); loadEvents(calendarId); }}, [calendarId]);
+  useEffect(() => { if (user && calendarId) loadEvents(calendarId); }, [range.from, range.to]);
 
-  // Quando scelgo un calendario → salvo come default + carico eventi
-  useEffect(() => {
-    if (!user || !calendarId) return;
-    saveDefaultCalendar(calendarId);
-    loadEvents(calendarId);
-  }, [calendarId]);
-
-  // Cambio range → ricarica eventi
-  useEffect(() => {
-    if (!user || !calendarId) return;
-    loadEvents(calendarId);
-  }, [range.from, range.to]);
-
-  /* =======================
-   * RENDER
-   * =======================*/
   return (
     <div className="max-w-5xl mx-auto p-8 font-[Montserrat] space-y-10">
       <header className="space-y-1">
@@ -189,7 +161,7 @@ export default function AutomazioniPage() {
         <p className="text-gray-500">Configura le automazioni per Shopify e collega il tuo Google Calendar.</p>
       </header>
 
-      {/* ===================== BLOCCO: SHOPIFY ===================== */}
+      {/* Shopify */}
       <section className="bg-white border rounded-2xl p-6 shadow-sm">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-xl bg-blue-50 text-blue-700"><Store size={18} /></div>
@@ -227,14 +199,13 @@ export default function AutomazioniPage() {
         </div>
       </section>
 
-      {/* ===================== BLOCCO: CALENDARIO ===================== */}
+      {/* Calendario */}
       <section className="bg-white border rounded-2xl p-6 shadow-sm">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700"><CalendarDays size={18} /></div>
           <h2 className="text-xl font-semibold">Calendario</h2>
         </div>
 
-        {/* Stato connessione */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <div className={`px-2 py-1 rounded text-sm ${googleConnected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
             {googleConnected ? 'Google Calendar connesso' : 'Non connesso'}
@@ -252,7 +223,8 @@ export default function AutomazioniPage() {
               <Button variant="destructive" onClick={disconnectGoogle} className="flex items-center gap-2">
                 <LogOut size={16}/> Disconnetti
               </Button>
-              <Link href="/calendario" className="ml-auto">
+              {/* 👇 link corretto */}
+              <Link href="/chatboost/calendario" className="ml-auto">
                 <Button variant="outline" className="flex items-center gap-2">
                   Vai al Calendario <ArrowRight size={16}/>
                 </Button>
@@ -261,7 +233,6 @@ export default function AutomazioniPage() {
           )}
         </div>
 
-        {/* Se connesso: selezione calendario + range + eventi */}
         {googleConnected && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center gap-3">
