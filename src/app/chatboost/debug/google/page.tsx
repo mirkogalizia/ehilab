@@ -1,43 +1,56 @@
 'use client';
 
 import { useState } from 'react';
-import { useAuth } from '@/lib/useAuth';
+import { auth } from '@/lib/firebase'; // 👈 usiamo direttamente Firebase Auth client
 
 export default function GoogleOAuthDebugPage() {
-  const { user } = useAuth();
   const [log, setLog] = useState<string>('');
   const [lastUrl, setLastUrl] = useState<string>('');
 
   const append = (msg: any) =>
     setLog((p) => p + (typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2)) + '\n');
 
-  const clear = () => { setLog(''); setLastUrl(''); };
+  const clear = () => {
+    setLog('');
+    setLastUrl('');
+  };
+
+  const getIdTokenSafe = async (): Promise<string | null> => {
+    const u = auth.currentUser;
+    if (!u) return null;
+    try {
+      return await u.getIdToken();
+    } catch (e: any) {
+      append({ step: 'getIdToken', error: e?.message || String(e) });
+      return null;
+    }
+  };
 
   const checkAppCreds = async () => {
+    const idt = await getIdTokenSafe();
+    if (!idt) return append('⚠️ Nessun utente loggato o ID token non disponibile');
     try {
-      if (!user) return append('⚠️ Nessun utente loggato');
-      const idt = await user.getIdToken();
       const r = await fetch('/api/google/app-credentials', {
         headers: { Authorization: `Bearer ${idt}` },
       });
       const j = await r.json();
       append({ step: 'GET /api/google/app-credentials', status: r.status, body: j });
-    } catch (e:any) {
+    } catch (e: any) {
       append({ step: 'GET app-credentials', error: e?.message || String(e) });
     }
   };
 
   const startOAuth = async () => {
+    const idt = await getIdTokenSafe();
+    if (!idt) return append('⚠️ Nessun utente loggato o ID token non disponibile');
     try {
-      if (!user) return append('⚠️ Nessun utente loggato');
-      const idt = await user.getIdToken();
       const r = await fetch('/api/google/oauth/start', {
         headers: { Authorization: `Bearer ${idt}` },
       });
       const j = await r.json();
       append({ step: 'GET /api/google/oauth/start', status: r.status, body: j });
       if (r.ok && j.url) setLastUrl(j.url);
-    } catch (e:any) {
+    } catch (e: any) {
       append({ step: 'GET oauth/start', error: e?.message || String(e) });
     }
   };
