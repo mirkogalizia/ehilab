@@ -40,19 +40,34 @@ const parseTime = (val) => {
 };
 
 /**
- * Rende cliccabili http/https e preserva gli "a capo", senza usare dangerouslySetInnerHTML.
- * Restituisce un array di nodi React pronto da inserire nel JSX.
+ * Rende cliccabili http/https e preserva gli "a capo", senza dangerouslySetInnerHTML.
+ * Gestisce anche i casi in cui i newline arrivano come "\\n" (escape) o non arrivano affatto.
  */
 function renderTextWithLinks(text) {
   if (!text) return null;
 
-  // Normalizza CRLF -> LF
-  const safe = String(text).replace(/\r\n/g, '\n');
+  // 1) Normalizza i newline in modo aggressivo:
+  //    - CRLF/CR -> LF
+  //    - "\n" letterale (escape) -> newline reale
+  let s = String(text)
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\\n/g, '\n');
 
-  // Regex semplice per URL (http/https) fino al prossimo spazio
+  // 2) Se ancora NON ci sono newline, prova ad aggiungere ritorni a capo
+  //    davanti a marker noti (Corriere/Tracking/Link/Disclaimer).
+  if (!s.includes('\n')) {
+    s = s
+      .replace(/\s+(Corriere:)/, '\n$1')
+      .replace(/\s+(Tracking:)/, '\n$1')
+      .replace(/\s+(Puoi tracciare|Traccia la spedizione)/, '\n$1')
+      .replace(/\s+(Questo numero WhatsApp)/, '\n\n$1');
+  }
+
+  // 3) Linkifica http/https
   const urlRe = /\bhttps?:\/\/[^\s]+/gi;
 
-  return safe.split('\n').map((line, iLine, lines) => {
+  return s.split('\n').map((line, iLine, lines) => {
     const nodes = [];
     let lastIndex = 0;
     let match;
@@ -166,10 +181,10 @@ export default function ChatPage() {
         (c.email || '').toLowerCase(),
         (c.phone || '').toLowerCase(),
       ];
-        if (tokens.length === 1) {
-          return fields.some(f => f.includes(tokens[0]));
-        }
-        return tokens.every(tok => fields.some(f => f.includes(tok)));
+      if (tokens.length === 1) {
+        return fields.some(f => f.includes(tokens[0]));
+      }
+      return tokens.every(tok => fields.some(f => f.includes(tok)));
     });
 
     setFilteredContacts(found);
