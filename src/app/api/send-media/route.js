@@ -6,7 +6,7 @@ export async function POST(req) {
     const formData = await req.formData();
     const file = formData.get('file');
     const phone_number_id = formData.get('phone_number_id');
-    const token = process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN; // o usa WA_ACCESS_TOKEN se NON deve essere public
+    const token = process.env.WA_ACCESS_TOKEN; // o usa WA_ACCESS_TOKEN se NON deve essere public
 
     if (!file || !phone_number_id || !token) {
       return NextResponse.json({ error: 'Dati mancanti' }, { status: 400 });

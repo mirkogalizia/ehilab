@@ -39,6 +39,50 @@ const parseTime = (val) => {
   return 0;
 };
 
+/**
+ * Rende cliccabili http/https e preserva gli "a capo", senza usare dangerouslySetInnerHTML.
+ * Restituisce un array di nodi React pronto da inserire nel JSX.
+ */
+function renderTextWithLinks(text) {
+  if (!text) return null;
+
+  // Normalizza CRLF -> LF
+  const safe = String(text).replace(/\r\n/g, '\n');
+
+  // Regex semplice per URL (http/https) fino al prossimo spazio
+  const urlRe = /\bhttps?:\/\/[^\s]+/gi;
+
+  return safe.split('\n').map((line, iLine, lines) => {
+    const nodes = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = urlRe.exec(line)) !== null) {
+      const url = match[0];
+      const offset = match.index;
+      if (offset > lastIndex) nodes.push(line.slice(lastIndex, offset));
+      nodes.push(
+        <a
+          key={`ln-${iLine}-ofs-${offset}`}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 underline break-words"
+        >
+          {url}
+        </a>
+      );
+      lastIndex = offset + url.length;
+    }
+    if (lastIndex < line.length) nodes.push(line.slice(lastIndex));
+    return (
+      <span key={`ln-${iLine}`}>
+        {nodes}
+        {iLine < lines.length - 1 ? <br /> : null}
+      </span>
+    );
+  });
+}
+
 export default function ChatPage() {
   const { user } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
@@ -122,10 +166,10 @@ export default function ChatPage() {
         (c.email || '').toLowerCase(),
         (c.phone || '').toLowerCase(),
       ];
-      if (tokens.length === 1) {
-        return fields.some(f => f.includes(tokens[0]));
-      }
-      return tokens.every(tok => fields.some(f => f.includes(tok)));
+        if (tokens.length === 1) {
+          return fields.some(f => f.includes(tokens[0]));
+        }
+        return tokens.every(tok => fields.some(f => f.includes(tok)));
     });
 
     setFilteredContacts(found);
@@ -713,13 +757,13 @@ export default function ChatPage() {
                     </a>
                   ) : (
                     <div
-                      className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] ${
+                      className={`px-4 py-2 rounded-xl text-sm shadow-md max-w-[70%] whitespace-pre-wrap break-words ${
                         msg.from === 'operator'
                           ? 'bg-black text-white rounded-br-none'
                           : 'bg-white text-gray-900 rounded-bl-none'
                       }`}
                     >
-                      {msg.text}
+                      {renderTextWithLinks(msg.text)}
                     </div>
                   )}
                   <div className="text-[10px] text-gray-400 mt-1">
