@@ -13,11 +13,15 @@ import { useAuth } from '@/lib/useAuth';
 
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
-  let phone = phoneRaw.trim().replace(/^[+]+/, '').replace(/^00/, '').replace(/[\s\-().]/g, '');
-  if (phone.startsWith('39') && phone.length >= 11) return '+'+phone;
-  if (phone.startsWith('3') && phone.length === 10) return '+39'+phone;
-  if (/^\d+$/.test(phone) && phone.length > 10) return '+'+phone;
-  if (phone.startsWith('+')) return phone;
+  let phone = String(phoneRaw)
+    .trim()
+    .replace(/^[+]+/, '')
+    .replace(/^00/, '')
+    .replace(/[\s\-().]/g, '');
+  if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
+  if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
+  if (/^\d+$/.test(phone) && phone.length > 10) return '+' + phone;
+  if (String(phoneRaw).startsWith('+')) return String(phoneRaw).trim();
   return '';
 }
 
@@ -46,16 +50,13 @@ const parseTime = (val) => {
 function renderTextWithLinks(text) {
   if (!text) return null;
 
-  // 1) Normalizza i newline in modo aggressivo:
-  //    - CRLF/CR -> LF
-  //    - "\n" letterale (escape) -> newline reale
+  // 1) Normalizza newline (CRLF/CR -> LF) + converte "\n" letterali in newline reali
   let s = String(text)
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/\\n/g, '\n');
 
-  // 2) Se ancora NON ci sono newline, prova ad aggiungere ritorni a capo
-  //    davanti a marker noti (Corriere/Tracking/Link/Disclaimer).
+  // 2) Se ancora è tutto in una riga, prova ad abbellire i casi tipici (Corriere/Tracking/Link/Disclaimer)
   if (!s.includes('\n')) {
     s = s
       .replace(/\s+(Corriere:)/, '\n$1')
@@ -142,30 +143,56 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // contatti
+  // =========================
+  // CONTATTI (DEDUP SICURA)
+  // =========================
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
       const cs = await getDocs(query(collection(db, 'contacts'), where('createdBy', '==', user.uid)));
-      const contactsArr = [];
-      const map = {};
+
+      // key = phone normalizzato → scegliamo il record "migliore"
+      const byPhone = new Map();
+
       cs.forEach(d => {
         const c = d.data();
         const phoneNorm = normalizePhone(c.phone || d.id);
-        contactsArr.push({
+        if (!phoneNorm) return;
+
+        const candidate = {
           phone: phoneNorm,
           name: c.firstName || c.name || '',
           lastName: c.lastName || '',
           email: c.email || '',
-        });
-        map[phoneNorm] = c.firstName || c.name || phoneNorm;
+          source: c.source || '', // 'manual' o 'wa-auto' (se lo usi)
+        };
+
+        // punteggio per preferire la scheda più completa / manuale
+        const score =
+          (candidate.source === 'manual' ? 100 : 0) +
+          (candidate.lastName ? 3 : 0) +
+          (candidate.name ? 2 : 0) +
+          (candidate.email ? 1 : 0);
+
+        const prev = byPhone.get(phoneNorm);
+        const prevScore = prev?.__score ?? -1;
+
+        if (!prev || score > prevScore) {
+          byPhone.set(phoneNorm, { ...candidate, __score: score });
+        }
       });
-      setAllContacts(contactsArr);
+
+      const arr = Array.from(byPhone.values()).map(({ __score, ...rest }) => rest);
+
+      setAllContacts(arr);
+
+      const map = {};
+      arr.forEach(c => { map[c.phone] = c.name || c.phone; });
       setContactNames(map);
     })();
   }, [user]);
 
-  // ricerca
+  // ricerca contatti
   useEffect(() => {
     if (!searchContact.trim()) {
       setFilteredContacts([]);
@@ -205,35 +232,76 @@ export default function ChatPage() {
     return () => unsub();
   }, [user]);
 
-  // conversazioni
+  // ==========================================
+  // CONVERSAZIONI (DEDUP a livello di messaggi)
+  // ==========================================
   const phonesData = useMemo(() => {
-    const chatMap = {};
-    allMessages.forEach(m => {
-      const rawPhone = m.from !== 'operator' ? m.from : m.to;
-      const phone = normalizePhone(rawPhone);
-      if (!phone) return;
-      if (!chatMap[phone]) chatMap[phone] = [];
-      chatMap[phone].push(m);
-    });
-    return Object.entries(chatMap)
-      .map(([phone, msgs]) => {
-        msgs.sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt));
-        const lastMsg = msgs[msgs.length - 1] || {};
-        const unread = msgs.filter(m => normalizePhone(m.from) === phone && !m.read).length;
-        return {
+    // Map phone -> aggregate
+    const map = new Map();
+
+    for (const m of allMessages) {
+      // scegliamo la chiave telefono della chat:
+      // - se è un tuo messaggio (from === 'operator') usiamo m.to
+      // - altrimenti usiamo m.from (il cliente)
+      const fromNorm = normalizePhone(m.from);
+      const toNorm = normalizePhone(m.to);
+      const phone = m.from === 'operator' ? toNorm : fromNorm;
+      if (!phone) continue;
+
+      const time = parseTime(m.timestamp || m.createdAt);
+      const lastText =
+        m.text ||
+        (m.type === 'image' ? '[Immagine]' :
+         m.type === 'document' ? '[Documento]' :
+         m.type === 'audio' ? '[Audio]' :
+         m.type === 'video' ? '[Video]' :
+         m.type === 'sticker' ? '[Sticker]' :
+         '');
+
+      const unreadInc = (fromNorm === phone && m.read === false) ? 1 : 0;
+
+      const prev = map.get(phone);
+      if (!prev) {
+        map.set(phone, {
           phone,
           name: contactNames[phone] || phone,
-          lastMsgTime: parseTime(lastMsg.timestamp || lastMsg.createdAt),
-          lastMsgText: lastMsg.text || (lastMsg.type === 'image' ? '[Immagine]' : lastMsg.type === 'document' ? '[Documento]' : ''),
-          unread,
-          lastMsgFrom: lastMsg.from
-        };
-      })
+          lastMsgTime: time,
+          lastMsgText: lastText,
+          lastMsgFrom: m.from,
+          unread: unreadInc,
+        });
+      } else {
+        // aggiorna "last" se questo messaggio è più recente
+        if (time >= prev.lastMsgTime) {
+          prev.lastMsgTime = time;
+          prev.lastMsgText = lastText;
+          prev.lastMsgFrom = m.from;
+        }
+        // accumula non letti inbound
+        prev.unread += unreadInc;
+      }
+    }
+
+    const list = Array.from(map.values())
       .sort((a, b) => {
+        // prima le chat con non letti
         if ((b.unread > 0) !== (a.unread > 0)) return b.unread - a.unread;
+        // poi per data
         return b.lastMsgTime - a.lastMsgTime;
       });
+
+    return list;
   }, [allMessages, contactNames]);
+
+  // split non letti/letti (senza duplicazioni)
+  const unreadThreads = useMemo(
+    () => phonesData.filter(x => x.unread > 0),
+    [phonesData]
+  );
+  const readThreads = useMemo(
+    () => phonesData.filter(x => x.unread === 0),
+    [phonesData]
+  );
 
   // autoscroll lista
   useEffect(() => {
@@ -316,7 +384,7 @@ export default function ChatPage() {
     })();
   }, [user]);
 
-  // messaggi filtrati
+  // messaggi filtrati (solo della chat selezionata)
   const filtered = useMemo(() => (
     allMessages
       .filter(m =>
@@ -349,7 +417,7 @@ export default function ChatPage() {
   };
   const handleDeleteMessage = async () => {
     if (contextMenu.messageId) {
-      await deleteDoc(doc(db, 'messages', contextMenu.messageId));
+      await deleteDoc(doc(db, 'messages'), contextMenu.messageId);
       setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
     }
   };
@@ -603,70 +671,61 @@ export default function ChatPage() {
           </button>
         </div>
         <ul className="space-y-0">
-          {(() => {
-            const unreadChats = phonesData.filter(x => x.unread > 0);
-            const readChats = phonesData.filter(x => x.unread === 0);
-            return (
-              <>
-                {unreadChats.length > 0 && (
-                  <>
-                    <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Non letti</li>
-                    {unreadChats.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
-                      <li
-                        key={phone}
-                        data-phone={phone}
-                        onClick={() => setSelectedPhone(phone)}
-                        onContextMenu={e => handleChatContextMenu(e, phone)}
-                        className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
-                          ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
-                          border-b border-gray-100`}
-                        style={{ boxShadow: selectedPhone === phone ? "0 4px 16px #0001" : "" }}
-                      >
-                        <div>
-                          <span className={`${unread > 0 ? 'font-bold text-black' : ''}`}>
-                            {name}
-                            {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
-                          </span>
-                          <span className="block text-xs text-gray-400">
-                            {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
-                          </span>
-                        </div>
-                        {unread > 0 && (
-                          <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
-                        )}
-                      </li>
-                    ))}
-                    <li className="my-2 border-t border-gray-200"></li>
-                  </>
-                )}
-                {readChats.length > 0 && (
-                  <>
-                    {readChats.length > 0 && (
-                      <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Conversazioni</li>
-                    )}
-                    {readChats.map(({ phone, name, lastMsgText }) => (
-                      <li
-                        key={phone}
-                        data-phone={phone}
-                        onClick={() => setSelectedPhone(phone)}
-                        onContextMenu={e => handleChatContextMenu(e, phone)}
-                        className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
-                          ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
-                          border-b border-gray-100`}
-                      >
-                        <div>
-                          <span>{name}</span>
-                          <span className="block text-xs text-gray-400">
-                            {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
-                          </span>
-                        </div>
-                      </li>
-                    ))}
-                  </>
-                )}
-              </>
-            );
-          })()}
+          {/* NON LETTI */}
+          {unreadThreads.length > 0 && (
+            <>
+              <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Non letti</li>
+              {unreadThreads.map(({ phone, name, lastMsgText, unread, lastMsgFrom }) => (
+                <li
+                  key={`unread-${phone}`}
+                  data-phone={phone}
+                  onClick={() => setSelectedPhone(phone)}
+                  onContextMenu={e => handleChatContextMenu(e, phone)}
+                  className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
+                    ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
+                    border-b border-gray-100`}
+                  style={{ boxShadow: selectedPhone === phone ? "0 4px 16px #0001" : "" }}
+                >
+                  <div>
+                    <span className="font-bold text-black">
+                      {name}
+                      {lastMsgFrom !== 'operator' && unread > 0 ? <span className="ml-1 text-green-600">●</span> : ''}
+                    </span>
+                    <span className="block text-xs text-gray-400">
+                      {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
+                    </span>
+                  </div>
+                  <span className="ml-2 px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">{unread}</span>
+                </li>
+              ))}
+              <li className="my-2 border-t border-gray-200"></li>
+            </>
+          )}
+
+          {/* LETTI */}
+          {readThreads.length > 0 && (
+            <>
+              <li className="text-xs uppercase text-gray-400 px-2 py-1 tracking-wide">Conversazioni</li>
+              {readThreads.map(({ phone, name, lastMsgText }) => (
+                <li
+                  key={`read-${phone}`}
+                  data-phone={phone}
+                  onClick={() => setSelectedPhone(phone)}
+                  onContextMenu={e => handleChatContextMenu(e, phone)}
+                  className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
+                    ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
+                    border-b border-gray-100`}
+                >
+                  <div>
+                    <span>{name}</span>
+                    <span className="block text-xs text-gray-400">
+                      {lastMsgText.length > 32 ? lastMsgText.substring(0, 32) + '…' : lastMsgText}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </>
+          )}
         </ul>
 
         {/* Modal nuova chat */}
@@ -793,7 +852,7 @@ export default function ChatPage() {
             </div>
 
             {showScrollButtons && (
-              <div className="fixed bottom-28 right-8 z-40 flex flex-col gap-1">
+              <div className="fixed bottom-28 right-8 z-40 flex col gap-1">
                 <Button
                   size="icon"
                   className="rounded-full shadow bg-gray-200 hover:bg-black hover:text-white"
