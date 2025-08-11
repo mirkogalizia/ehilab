@@ -26,6 +26,108 @@ function normalizePhone(phoneRaw) {
   return '';
 }
 
+/* =========================
+   Helpers ricerca avanzata
+   ========================= */
+function normalizeText(s) {
+  return (s || '')
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')                 // separa accenti
+    .replace(/[\u0300-\u036f]/g, '') // rimuove accenti
+    .replace(/\s+/g, ' ')            // spazi multipli -> singolo
+    .trim();
+}
+
+// Estrae token supportando virgolette: es.  name:"mario rossi"  tag:vip  rossi
+function parseSearch(query) {
+  const q = normalizeText(query);
+  const tokens = [];
+  const re = /"([^"]+)"|(\S+)/g;
+  let m;
+  while ((m = re.exec(q)) !== null) {
+    const piece = m[1] || m[2] || '';
+    tokens.push(piece);
+  }
+  // Trasforma key:value in {key, value}
+  return tokens.map(t => {
+    const idx = t.indexOf(':');
+    if (idx > 0) {
+      const key = t.slice(0, idx).trim();
+      const value = t.slice(idx + 1).trim();
+      if (key && value) return { key, value };
+    }
+    return { value: t };
+  });
+}
+
+function contactFields(c) {
+  const first = normalizeText(c.firstName || c.name || '');
+  const last  = normalizeText(c.lastName  || c.surname || '');
+  const nameCombos = `${first} ${last} ${last} ${first}`.trim(); // entrambe le combinazioni
+  const phone  = normalizeText(c.phone || c.id || '');
+  const email  = normalizeText(c.email || '');
+  const tags   = Array.isArray(c.tags) ? normalizeText(c.tags.join(' ')) : '';
+  const city = normalizeText(c.city || '');
+  const province = normalizeText(c.province || '');
+  const country = normalizeText(c.country || '');
+  const zip = normalizeText(c.zip || '');
+  const addressLine = normalizeText(c.address || '');
+  const address = normalizeText([c.address, c.city, c.province, c.country, c.zip].filter(Boolean).join(' '));
+
+  return {
+    first, last, name: nameCombos,
+    phone, email,
+    tag: tags, tags, // alias
+    city, province, country, zip,
+    addressLine, address
+  };
+}
+
+function contactGlobalIndex(c) {
+  const f = contactFields(c);
+  return [
+    f.name, f.phone, f.email, f.tag, f.address
+  ].join(' ');
+}
+
+function matchesQuery(contact, specs) {
+  if (!specs.length) return true;
+  const idx = contactGlobalIndex(contact);
+  const f = contactFields(contact);
+
+  return specs.every(spec => {
+    const val = normalizeText(spec.value);
+    if (!val) return true;
+
+    if (spec.key) {
+      const key = spec.key.toLowerCase();
+      // mappa dei campi supportati
+      const fieldMap = {
+        name: f.name,
+        first: f.first,
+        last: f.last,
+        phone: f.phone,
+        email: f.email,
+        tag: f.tag,
+        tags: f.tag,
+        city: f.city,
+        province: f.province,
+        country: f.country,
+        zip: f.zip,
+        address: f.address,
+        addressline: f.addressLine
+      };
+      const fieldVal = fieldMap[key];
+      if (typeof fieldVal !== 'string') return false;
+      return fieldVal.includes(val);
+    } else {
+      // token generico → cerca nel global index
+      return idx.includes(val);
+    }
+  });
+}
+
 export default function ContactsPage() {
   const { user } = useAuth();
   const [categories, setCategories] = useState([]);
@@ -79,34 +181,28 @@ export default function ContactsPage() {
     return () => unsub();
   }, [user]);
 
-  // Carica contatti realtime (RICERCA GLOBALE, non filtrata dalla categoria)
+  // Carica contatti realtime (RICERCA combinata e intelligente)
   useEffect(() => {
     if (!user?.uid) return;
     const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
     const unsub = onSnapshot(qContacts, snap => {
-      let arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      // RICERCA GLOBALE SEMPRE ATTIVA
-      let filtered = arr;
-      if (search) {
-        const s = search.toLowerCase();
-        filtered = arr.filter(c =>
-          (c.firstName || c.name || '').toLowerCase().includes(s) ||
-          (c.lastName || c.surname || '').toLowerCase().includes(s) ||
-          (c.phone || c.id || '').toLowerCase().includes(s) ||
-          (c.email || '').toLowerCase().includes(s) ||
-          (c.tags || []).some(tag => tag.toLowerCase().includes(s))
-        );
-      } else {
-        if (showUnassigned) {
-          filtered = arr.filter(c => !c.categories || c.categories.length === 0);
-        } else if (currentCat) {
-          filtered = arr.filter(c => c.categories?.includes(currentCat));
-        }
-        if (tagFilter) {
-          filtered = filtered.filter(c => (c.tags || []).includes(tagFilter));
-        }
+      // 1) Applica prima filtri di contesto (categoria / senza categoria / tag filter)
+      let base = arr;
+      if (showUnassigned) {
+        base = base.filter(c => !c.categories || c.categories.length === 0);
+      } else if (currentCat) {
+        base = base.filter(c => c.categories?.includes(currentCat));
       }
+      if (tagFilter) {
+        const tf = normalizeText(tagFilter);
+        base = base.filter(c => (c.tags || []).some(tag => normalizeText(tag) === tf));
+      }
+
+      // 2) Applica ricerca avanzata (multi-token, key:value, accenti, ecc.)
+      const specs = parseSearch(search);
+      const filtered = specs.length ? base.filter(c => matchesQuery(c, specs)) : base;
 
       setContacts(filtered);
       setSelected(new Set());
@@ -427,7 +523,7 @@ export default function ContactsPage() {
             {/* Barra ricerca, + e importa */}
             <div className="mb-4 flex flex-wrap gap-4 items-center">
               <Input
-                placeholder="Cerca nome, cognome, telefono..."
+                placeholder='Cerca (es. "mario rossi", tag:vip, phone:39123, city:modena)...'
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="w-64"
@@ -494,7 +590,6 @@ export default function ContactsPage() {
                         type="checkbox"
                         onChange={e => toggleSelectAll(e.target.checked)}
                         checked={selected.size === contacts.length && contacts.length > 0}
-                        indeterminate={selected.size > 0 && selected.size < contacts.length}
                       />
                     </th>
                     <th className="p-2 text-left">Nome</th>
