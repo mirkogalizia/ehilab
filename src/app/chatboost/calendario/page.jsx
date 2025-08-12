@@ -8,19 +8,11 @@ import { Input } from '@/components/ui/input';
 /* -------------------- Helpers date (JS) -------------------- */
 function ymd(d) {
   const z = new Date(d);
-  const off = new Date(z.getTime() - z.getTimezoneOffset() * 60000); // local->UTC safe
+  const off = new Date(z.getTime() - z.getTimezoneOffset() * 60000);
   return off.toISOString().slice(0, 10);
 }
-function startOfDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function endOfDay(d) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-}
+function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
+function endOfDay(d)   { const x = new Date(d); x.setHours(23,59,59,999); return x; }
 function fmtDateTime(dt) {
   const d = typeof dt === 'string' ? new Date(dt) : dt;
   return d.toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
@@ -37,11 +29,9 @@ function monthGrid(current, weekStartsOnMonday = true) {
   const month = current.getMonth();
   const first = new Date(year, month, 1);
   const last = new Date(year, month + 1, 0);
-
   const startIdx = weekStartsOnMonday ? (first.getDay() + 6) % 7 : first.getDay();
   const gridStart = new Date(first);
   gridStart.setDate(first.getDate() - startIdx);
-
   const cells = [];
   for (let i = 0; i < 42; i++) {
     const d = new Date(gridStart);
@@ -60,11 +50,14 @@ export default function CalendarioPage() {
   const [serviceId, setServiceId] = useState('');
   const [monthRef, setMonthRef] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(new Date());
-  const [appts, setAppts] = useState([]);
+  const [appts, setAppts] = useState([]);          // interni
+  const [gEvents, setGEvents] = useState([]);      // google
   const [loading, setLoading] = useState(false);
 
   /* -------------------- Google block -------------------- */
   const [googleCalendars, setGoogleCalendars] = useState([]);
+  const [googleCalId, setGoogleCalId] = useState(''); // scelto per la lettura
+
   const connectGoogle = async () => {
     if (!user) return;
     const idt = await user.getIdToken();
@@ -72,22 +65,42 @@ export default function CalendarioPage() {
     const j = await r.json();
     if (j.url) window.location.href = j.url;
   };
+
   const loadGoogleCalendars = async () => {
     if (!user) return;
     const idt = await user.getIdToken();
     const r = await fetch('/api/google/calendar/list', { headers: { Authorization: `Bearer ${idt}` } });
     const j = await r.json();
-    setGoogleCalendars(j.items || []);
+    const items = j.items || [];
+    setGoogleCalendars(items);
+    // Preseleziona: cfg.defaultGoogleCalendarId → primary → primo
+    const preferred = cfg?.defaultGoogleCalendarId
+      || (items.find(c => c.primary)?.id)
+      || (items[0]?.id);
+    if (preferred && !googleCalId) setGoogleCalId(preferred);
   };
+
   const saveDefaultCalendar = async (calendarId) => {
-    if (!user) return;
+    if (!user || !calendarId) return;
     const idt = await user.getIdToken();
     await fetch('/api/calendar/config', {
       method: 'POST',
       headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ defaultGoogleCalendarId: calendarId, syncToGoogle: true }),
     });
-    alert('Calendario di default salvato');
+  };
+
+  const loadGoogleMonth = async (calendarId) => {
+    if (!user || !calendarId) { setGEvents([]); return; }
+    const idt = await user.getIdToken();
+    const from = startOfDay(new Date(monthRef.getFullYear(), monthRef.getMonth(), 1)).toISOString();
+    const to   = endOfDay(new Date(monthRef.getFullYear(), monthRef.getMonth() + 1, 0)).toISOString();
+    const qs = new URLSearchParams({ calendarId, from, to });
+    const r = await fetch(`/api/google/calendar/events?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${idt}` }
+    });
+    const j = await r.json();
+    setGEvents(r.ok ? (j.items || []) : []);
   };
 
   /* -------------------- Carica config -------------------- */
@@ -98,12 +111,12 @@ export default function CalendarioPage() {
       const res = await fetch('/api/calendar/config', { headers: { Authorization: `Bearer ${idt}` } });
       const json = await res.json();
       setCfg(json || {});
-      if (json?.staff?.length) setStaffId((s) => s || json.staff[0].id);
-      if (json?.services?.length) setServiceId((s) => s || json.services[0].id);
+      if (json?.staff?.length) setStaffId(s => s || json.staff[0].id);
+      if (json?.services?.length) setServiceId(s => s || json.services[0].id);
     })();
   }, [user]);
 
-  /* -------------------- Fetch appuntamenti mese -------------------- */
+  /* -------------------- Appuntamenti interni: mese -------------------- */
   const { cells, first, last } = useMemo(() => monthGrid(monthRef), [monthRef]);
   useEffect(() => {
     if (!user) return;
@@ -126,20 +139,52 @@ export default function CalendarioPage() {
     })();
   }, [user, first, last, staffId]);
 
-  /* -------------------- Mappa per giorno -------------------- */
+  /* -------------------- Eventi Google: mese -------------------- */
+  // Carica lista calendari quando ho cfg
+  useEffect(() => { if (user && cfg) loadGoogleCalendars(); /* eslint-disable-next-line */ }, [user, cfg]);
+  // Carica eventi Google quando cambia mese o calendario scelto
+  useEffect(() => { if (user && googleCalId) loadGoogleMonth(googleCalId); /* eslint-disable-next-line */ }, [user, monthRef, googleCalId]);
+
+  /* -------------------- Mappe per giorno -------------------- */
   const apptsByDay = useMemo(() => {
     const map = {};
     for (const a of appts) {
-      const start = toDate(a.start);
-      const key = ymd(start);
+      const key = ymd(toDate(a.start));
       if (!map[key]) map[key] = [];
-      map[key].push(a);
+      map[key].push({ ...a, __type: 'internal' });
     }
-    for (const k of Object.keys(map)) {
-      map[k].sort((x, y) => +toDate(x.start) - +toDate(y.start));
-    }
+    for (const k of Object.keys(map)) map[k].sort((x, y) => +toDate(x.start) - +toDate(y.start));
     return map;
   }, [appts]);
+
+  const gByDay = useMemo(() => {
+    const map = {};
+    for (const ev of gEvents) {
+      // Google: all-day -> start.date / timed -> start.dateTime
+      const startIso = ev.start?.dateTime || (ev.start?.date ? ev.start.date + 'T00:00:00' : null);
+      if (!startIso) continue;
+      const key = ymd(startIso);
+      if (!map[key]) map[key] = [];
+      map[key].push({ ...ev, __type: 'google' });
+    }
+    for (const k of Object.keys(map)) {
+      map[k].sort((x, y) => new Date(x.start?.dateTime || x.start?.date).getTime() - new Date(y.start?.dateTime || y.start?.date).getTime());
+    }
+    return map;
+  }, [gEvents]);
+
+  // Merge per giorno (interni poi google)
+  const mergedByDay = useMemo(() => {
+    const keys = new Set([...Object.keys(apptsByDay), ...Object.keys(gByDay)]);
+    const out = {};
+    keys.forEach(k => {
+      out[k] = [
+        ...(apptsByDay[k] || []),
+        ...(gByDay[k] || []),
+      ];
+    });
+    return out;
+  }, [apptsByDay, gByDay]);
 
   /* -------------------- Modal Nuovo appuntamento -------------------- */
   const [modalOpen, setModalOpen] = useState(false);
@@ -149,10 +194,7 @@ export default function CalendarioPage() {
   const [customer, setCustomer] = useState({ name: '', phone: '', notes: '' });
 
   const openNewForDay = async (day) => {
-    if (!user || !serviceId) {
-      alert('Seleziona un servizio (e opzionalmente staff) prima di creare.');
-      return;
-    }
+    if (!user || !serviceId) { alert('Seleziona un servizio (e opzionalmente staff) prima di creare.'); return; }
     setModalDay(day);
     setModalOpen(true);
     try {
@@ -164,17 +206,12 @@ export default function CalendarioPage() {
       });
       const j = await r.json();
       setSlots(j.slots || []);
-    } catch {
-      setSlots([]);
-    }
+    } catch { setSlots([]); }
   };
 
   const createFromSlot = async (slot) => {
     if (!user) return;
-    if (!customer.name || !customer.phone || !serviceId || !staffId) {
-      alert('Compila nome, telefono, servizio e staff');
-      return;
-    }
+    if (!customer.name || !customer.phone || !serviceId || !staffId) { alert('Compila nome, telefono, servizio e staff'); return; }
     setCreating(true);
     try {
       const idt = await user.getIdToken();
@@ -182,11 +219,7 @@ export default function CalendarioPage() {
         method: 'POST',
         headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customer,
-          service_id: serviceId,
-          staff_id: staffId,
-          start: slot.start,
-          notes: customer.notes || '',
+          customer, service_id: serviceId, staff_id: staffId, start: slot.start, notes: customer.notes || '',
         }),
       });
       const j = await r.json();
@@ -195,19 +228,17 @@ export default function CalendarioPage() {
       } else {
         setModalOpen(false);
         setCustomer({ name: '', phone: '', notes: '' });
-        // ricarico mese
+        // refresh interni + google
+        const idt2 = await user.getIdToken();
         const from = startOfDay(new Date(first)).toISOString();
-        const to = endOfDay(new Date(last)).toISOString();
+        const to   = endOfDay(new Date(last)).toISOString();
         const qs = new URLSearchParams({ from, to });
         if (staffId) qs.set('staff_id', staffId);
-        const r2 = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
-          headers: { Authorization: `Bearer ${idt}` },
-        });
+        const r2 = await fetch(`/api/calendar/appointments?${qs.toString()}`, { headers: { Authorization: `Bearer ${idt2}` } });
         setAppts(await r2.json());
+        if (googleCalId) await loadGoogleMonth(googleCalId);
       }
-    } finally {
-      setCreating(false);
-    }
+    } finally { setCreating(false); }
   };
 
   /* -------------------- UI -------------------- */
@@ -226,19 +257,29 @@ export default function CalendarioPage() {
       <div className="rounded-xl border p-4 bg-white flex flex-wrap items-center gap-3">
         <Button onClick={connectGoogle} variant="outline">Collega Google Calendar</Button>
         <Button onClick={loadGoogleCalendars} variant="outline">Lista calendari Google</Button>
+
+        {/* Selettore calendario + salvataggio default */}
         {googleCalendars.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">Calendari:</span>
-            <select
-              className="border rounded px-2 py-1"
-              onChange={(e) => saveDefaultCalendar(e.target.value)}
-            >
-              <option value="">-- Seleziona calendario --</option>
-              {googleCalendars.map((c) => (
-                <option key={c.id} value={c.id}>{c.summary}</option>
-              ))}
-            </select>
-          </div>
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Calendario Google:</span>
+              <select
+                className="border rounded px-2 py-1"
+                value={googleCalId}
+                onChange={async (e) => {
+                  const id = e.target.value;
+                  setGoogleCalId(id);
+                  await saveDefaultCalendar(id);
+                  await loadGoogleMonth(id);
+                }}
+              >
+                {googleCalendars.map(c => <option key={c.id} value={c.id}>{c.summary}</option>)}
+              </select>
+            </div>
+            <div className="text-xs text-gray-500">
+              (Gli eventi Google compaiono in grigio)
+            </div>
+          </>
         )}
       </div>
 
@@ -258,9 +299,9 @@ export default function CalendarioPage() {
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="outline" onClick={() => setMonthRef(new Date())} title="Vai ad oggi">Oggi</Button>
-          <Button variant="outline" onClick={() => setMonthRef((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>←</Button>
+          <Button variant="outline" onClick={() => setMonthRef(d => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>←</Button>
           <div className="min-w-[180px] text-center font-semibold capitalize">{monthLabel}</div>
-          <Button variant="outline" onClick={() => setMonthRef((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>→</Button>
+          <Button variant="outline" onClick={() => setMonthRef(d => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>→</Button>
         </div>
       </div>
 
@@ -276,9 +317,13 @@ export default function CalendarioPage() {
             const key = ymd(d);
             const inMonth = d.getMonth() === firstMonth;
             const isToday = key === todayKey;
-            const dayAppts = apptsByDay[key] || [];
-            const show = dayAppts.slice(0, 3);
-            const rest = dayAppts.length - show.length;
+            const dayItems = (mergedByDay[key] || []);
+            // mostro max 4 chip (interni prioritari)
+            const show = [
+              ...dayItems.filter(x => x.__type === 'internal'),
+              ...dayItems.filter(x => x.__type === 'google'),
+            ].slice(0, 4);
+            const rest = dayItems.length - show.length;
 
             return (
               <div
@@ -289,36 +334,39 @@ export default function CalendarioPage() {
                 onClick={() => { setSelectedDay(d); }}
               >
                 <div className="flex items-center justify-between">
-                  <div className={`text-sm ${inMonth ? 'text-gray-800' : 'text-gray-400'}`}>
-                    {d.getDate()}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs"
-                    onClick={(e) => { e.stopPropagation(); openNewForDay(d); }}
-                  >
+                  <div className={`text-sm ${inMonth ? 'text-gray-800' : 'text-gray-400'}`}>{d.getDate()}</div>
+                  <Button size="sm" variant="outline" className="h-7 text-xs"
+                    onClick={(e) => { e.stopPropagation(); openNewForDay(d); }}>
                     + Nuovo
                   </Button>
                 </div>
 
                 <div className="flex flex-col gap-1 mt-1">
-                  {show.map((a, idx) => {
-                    const s = toDate(a.start);
-                    const label = `${s.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })} • ${a.customer?.name || 'Senza nome'}`;
-                    return (
-                      <div
-                        key={idx}
-                        className="truncate text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
-                        title={`${label}\n${a.service_id || ''}`}
-                      >
-                        {label}
-                      </div>
-                    );
+                  {show.map((item, idx) => {
+                    if (item.__type === 'internal') {
+                      const s = toDate(item.start);
+                      const label = `${s.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })} • ${item.customer?.name || 'Senza nome'}`;
+                      return (
+                        <div key={`i-${idx}`}
+                          className="truncate text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          title={`${label}\n${item.service_id || ''}`}>
+                          {label}
+                        </div>
+                      );
+                    } else {
+                      const sIso = item.start?.dateTime || (item.start?.date ? item.start.date + 'T00:00' : null);
+                      const s = sIso ? new Date(sIso) : null;
+                      const label = `${s ? s.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})+' • ' : ''}${item.summary || '(Google, senza titolo)'}`;
+                      return (
+                        <div key={`g-${idx}`}
+                          className="truncate text-xs px-2 py-1 rounded bg-violet-50 text-violet-700 border border-violet-200"
+                          title={`${label}\n[Google]`}>
+                          {label}
+                        </div>
+                      );
+                    }
                   })}
-                  {rest > 0 && (
-                    <div className="text-[11px] text-gray-500">+{rest} altri…</div>
-                  )}
+                  {rest > 0 && <div className="text-[11px] text-gray-500">+{rest} altri…</div>}
                 </div>
               </div>
             );
@@ -326,78 +374,80 @@ export default function CalendarioPage() {
         </div>
       </div>
 
-      {/* Pannello “Appuntamenti del giorno” */}
+      {/* Pannello “Appuntamenti del giorno” (solo interni per azioni) */}
       <div className="rounded-xl border p-4 bg-white">
         <h3 className="font-semibold mb-3">
           Appuntamenti del {selectedDay.toLocaleDateString('it-IT')}
         </h3>
         <div className="space-y-2">
-          {(apptsByDay[ymd(selectedDay)] || []).length === 0 ? (
-            <div className="text-gray-500 text-sm">Nessun appuntamento</div>
+          {(appts.filter(a => ymd(toDate(a.start)) === ymd(selectedDay))).length === 0 ? (
+            <div className="text-gray-500 text-sm">Nessun appuntamento interno</div>
           ) : (
-            (apptsByDay[ymd(selectedDay)] || []).map((a) => (
-              <div key={a.id} className="border rounded-lg p-3 flex items-center justify-between">
-                <div>
-                  <div className="font-semibold">
-                    {a.customer?.name || '—'} • {a.service_id}
+            appts
+              .filter(a => ymd(toDate(a.start)) === ymd(selectedDay))
+              .sort((a,b) => +toDate(a.start) - +toDate(b.start))
+              .map((a) => (
+                <div key={a.id} className="border rounded-lg p-3 flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold">{a.customer?.name || '—'} • {a.service_id}</div>
+                    <div className="text-sm text-gray-600">
+                      {fmtDateTime(toDate(a.start))} → {fmtDateTime(toDate(a.end))}
+                    </div>
+                    <div className="text-xs text-gray-500">Staff: {a.staff_id} • Stato: {a.status}</div>
                   </div>
-                  <div className="text-sm text-gray-600">
-                    {fmtDateTime(toDate(a.start))} → {fmtDateTime(toDate(a.end))}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        const idt = await user.getIdToken();
+                        await fetch('/api/calendar/appointments', {
+                          method: 'PATCH',
+                          headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ id: a.id, patch: { status: a.status === 'confirmed' ? 'done' : 'confirmed' } }),
+                        });
+                        // refresh interni
+                        const idt2 = await user.getIdToken();
+                        const from = startOfDay(new Date(first)).toISOString();
+                        const to   = endOfDay(new Date(last)).toISOString();
+                        const qs = new URLSearchParams({ from, to });
+                        if (staffId) qs.set('staff_id', staffId);
+                        const r2 = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
+                          headers: { Authorization: `Bearer ${idt2}` },
+                        });
+                        setAppts(await r2.json());
+                      }}
+                    >
+                      {a.status === 'confirmed' ? 'Chiudi' : 'Conferma'}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={async () => {
+                        if (!confirm('Eliminare appuntamento?')) return;
+                        const idt = await user.getIdToken();
+                        const qs = new URLSearchParams({ id: a.id });
+                        await fetch(`/api/calendar/appointments?${qs.toString()}`, {
+                          method: 'DELETE',
+                          headers: { Authorization: `Bearer ${idt}` },
+                        });
+                        // refresh interni
+                        const idt2 = await user.getIdToken();
+                        const from = startOfDay(new Date(first)).toISOString();
+                        const to   = endOfDay(new Date(last)).toISOString();
+                        const qs2 = new URLSearchParams({ from, to });
+                        if (staffId) qs2.set('staff_id', staffId);
+                        const r2 = await fetch(`/api/calendar/appointments?${qs2.toString()}`, {
+                          headers: { Authorization: `Bearer ${idt2}` },
+                        });
+                        setAppts(await r2.json());
+                      }}
+                    >
+                      Cancella
+                    </Button>
                   </div>
-                  <div className="text-xs text-gray-500">Staff: {a.staff_id} • Stato: {a.status}</div>
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={async () => {
-                      const idt = await user.getIdToken();
-                      await fetch('/api/calendar/appointments', {
-                        method: 'PATCH',
-                        headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ id: a.id, patch: { status: a.status === 'confirmed' ? 'done' : 'confirmed' } }),
-                      });
-                      // refresh mese
-                      const idt2 = await user.getIdToken();
-                      const from = startOfDay(new Date(first)).toISOString();
-                      const to = endOfDay(new Date(last)).toISOString();
-                      const qs = new URLSearchParams({ from, to });
-                      if (staffId) qs.set('staff_id', staffId);
-                      const r2 = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
-                        headers: { Authorization: `Bearer ${idt2}` },
-                      });
-                      setAppts(await r2.json());
-                    }}
-                  >
-                    {a.status === 'confirmed' ? 'Chiudi' : 'Conferma'}
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={async () => {
-                      if (!confirm('Eliminare appuntamento?')) return;
-                      const idt = await user.getIdToken();
-                      const qs = new URLSearchParams({ id: a.id });
-                      await fetch(`/api/calendar/appointments?${qs.toString()}`, {
-                        method: 'DELETE',
-                        headers: { Authorization: `Bearer ${idt}` },
-                      });
-                      // refresh mese
-                      const idt2 = await user.getIdToken();
-                      const from = startOfDay(new Date(first)).toISOString();
-                      const to = endOfDay(new Date(last)).toISOString();
-                      const qs2 = new URLSearchParams({ from, to });
-                      if (staffId) qs2.set('staff_id', staffId);
-                      const r2 = await fetch(`/api/calendar/appointments?${qs2.toString()}`, {
-                        headers: { Authorization: `Bearer ${idt2}` },
-                      });
-                      setAppts(await r2.json());
-                    }}
-                  >
-                    Cancella
-                  </Button>
-                </div>
-              </div>
-            ))
+              ))
           )}
+          <div className="text-xs text-gray-500 mt-2">Gli eventi **Google** sono visibili nella griglia (chip viola) ma non modificabili qui.</div>
         </div>
       </div>
 
@@ -406,28 +456,14 @@ export default function CalendarioPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setModalOpen(false)}>
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">
-                Nuovo appuntamento – {modalDay.toLocaleDateString('it-IT')}
-              </h3>
+              <h3 className="text-lg font-semibold">Nuovo appuntamento – {modalDay.toLocaleDateString('it-IT')}</h3>
               <button onClick={() => setModalOpen(false)} className="text-2xl leading-none">×</button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-              <Input
-                placeholder="Nome cliente"
-                value={customer.name}
-                onChange={(e) => setCustomer((c) => ({ ...c, name: e.target.value }))}
-              />
-              <Input
-                placeholder="Telefono"
-                value={customer.phone}
-                onChange={(e) => setCustomer((c) => ({ ...c, phone: e.target.value }))}
-              />
-              <Input
-                placeholder="Note (opzionale)"
-                value={customer.notes}
-                onChange={(e) => setCustomer((c) => ({ ...c, notes: e.target.value }))}
-              />
+              <Input placeholder="Nome cliente" value={customer.name} onChange={(e) => setCustomer(c => ({ ...c, name: e.target.value }))}/>
+              <Input placeholder="Telefono" value={customer.phone} onChange={(e) => setCustomer(c => ({ ...c, phone: e.target.value }))}/>
+              <Input placeholder="Note (opzionale)" value={customer.notes} onChange={(e) => setCustomer(c => ({ ...c, notes: e.target.value }))}/>
             </div>
 
             <div className="text-sm text-gray-600 mb-2">Slot disponibili:</div>
