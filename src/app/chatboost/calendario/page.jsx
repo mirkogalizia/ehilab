@@ -5,34 +5,34 @@ import { useAuth } from '@/lib/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-/* -------------------- Helpers date -------------------- */
-function ymd(d: Date | string | number) {
+/* -------------------- Helpers date (JS) -------------------- */
+function ymd(d) {
   const z = new Date(d);
   const off = new Date(z.getTime() - z.getTimezoneOffset() * 60000); // local->UTC safe
   return off.toISOString().slice(0, 10);
 }
-function startOfDay(d: Date) {
+function startOfDay(d) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
   return x;
 }
-function endOfDay(d: Date) {
+function endOfDay(d) {
   const x = new Date(d);
   x.setHours(23, 59, 59, 999);
   return x;
 }
-function fmtDateTime(dt: Date | string) {
+function fmtDateTime(dt) {
   const d = typeof dt === 'string' ? new Date(dt) : dt;
   return d.toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
 }
-function toDate(v: any): Date {
+function toDate(v) {
   if (!v) return new Date();
-  if (v?.toDate) return v.toDate();
+  if (v && typeof v.toDate === 'function') return v.toDate();
   if (typeof v === 'string') return new Date(v);
-  if (v?.seconds) return new Date(v.seconds * 1000);
+  if (v && typeof v === 'object' && 'seconds' in v) return new Date(v.seconds * 1000);
   return new Date(v);
 }
-function monthGrid(current: Date, weekStartsOnMonday = true) {
+function monthGrid(current, weekStartsOnMonday = true) {
   const year = current.getFullYear();
   const month = current.getMonth();
   const first = new Date(year, month, 1);
@@ -42,7 +42,7 @@ function monthGrid(current: Date, weekStartsOnMonday = true) {
   const gridStart = new Date(first);
   gridStart.setDate(first.getDate() - startIdx);
 
-  const cells: Date[] = [];
+  const cells = [];
   for (let i = 0; i < 42; i++) {
     const d = new Date(gridStart);
     d.setDate(gridStart.getDate() + i);
@@ -55,16 +55,16 @@ export default function CalendarioPage() {
   const { user } = useAuth();
 
   /* -------------------- Stato base -------------------- */
-  const [cfg, setCfg] = useState<any>(null);
-  const [staffId, setStaffId] = useState<string>('');
-  const [serviceId, setServiceId] = useState<string>('');
-  const [monthRef, setMonthRef] = useState<Date>(new Date());
-  const [selectedDay, setSelectedDay] = useState<Date>(new Date());
-  const [appts, setAppts] = useState<any[]>([]);
+  const [cfg, setCfg] = useState(null);
+  const [staffId, setStaffId] = useState('');
+  const [serviceId, setServiceId] = useState('');
+  const [monthRef, setMonthRef] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState(new Date());
+  const [appts, setAppts] = useState([]);
   const [loading, setLoading] = useState(false);
 
   /* -------------------- Google block -------------------- */
-  const [googleCalendars, setGoogleCalendars] = useState<any[]>([]);
+  const [googleCalendars, setGoogleCalendars] = useState([]);
   const connectGoogle = async () => {
     if (!user) return;
     const idt = await user.getIdToken();
@@ -79,7 +79,7 @@ export default function CalendarioPage() {
     const j = await r.json();
     setGoogleCalendars(j.items || []);
   };
-  const saveDefaultCalendar = async (calendarId: string) => {
+  const saveDefaultCalendar = async (calendarId) => {
     if (!user) return;
     const idt = await user.getIdToken();
     await fetch('/api/calendar/config', {
@@ -128,14 +128,13 @@ export default function CalendarioPage() {
 
   /* -------------------- Mappa per giorno -------------------- */
   const apptsByDay = useMemo(() => {
-    const map: Record<string, any[]> = {};
+    const map = {};
     for (const a of appts) {
       const start = toDate(a.start);
       const key = ymd(start);
       if (!map[key]) map[key] = [];
       map[key].push(a);
     }
-    // ordina per ora
     for (const k of Object.keys(map)) {
       map[k].sort((x, y) => +toDate(x.start) - +toDate(y.start));
     }
@@ -144,19 +143,18 @@ export default function CalendarioPage() {
 
   /* -------------------- Modal Nuovo appuntamento -------------------- */
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalDay, setModalDay] = useState<Date | null>(null);
-  const [slots, setSlots] = useState<any[]>([]);
+  const [modalDay, setModalDay] = useState(null);
+  const [slots, setSlots] = useState([]);
   const [creating, setCreating] = useState(false);
   const [customer, setCustomer] = useState({ name: '', phone: '', notes: '' });
 
-  const openNewForDay = async (day: Date) => {
+  const openNewForDay = async (day) => {
     if (!user || !serviceId) {
       alert('Seleziona un servizio (e opzionalmente staff) prima di creare.');
       return;
     }
     setModalDay(day);
     setModalOpen(true);
-    // carico slot disponibili del giorno
     try {
       const idt = await user.getIdToken();
       const qs = new URLSearchParams({ date: ymd(day), service_id: serviceId });
@@ -171,7 +169,7 @@ export default function CalendarioPage() {
     }
   };
 
-  const createFromSlot = async (slot: any) => {
+  const createFromSlot = async (slot) => {
     if (!user) return;
     if (!customer.name || !customer.phone || !serviceId || !staffId) {
       alert('Compila nome, telefono, servizio e staff');
@@ -187,7 +185,7 @@ export default function CalendarioPage() {
           customer,
           service_id: serviceId,
           staff_id: staffId,
-          start: slot.start, // il backend calcola la fine in base alla durata servizio (come fai già)
+          start: slot.start,
           notes: customer.notes || '',
         }),
       });
@@ -195,7 +193,6 @@ export default function CalendarioPage() {
       if (!r.ok) {
         alert(j.error || 'Errore creazione');
       } else {
-        // aggiorno lista mese (push ottimistico opzionale)
         setModalOpen(false);
         setCustomer({ name: '', phone: '', notes: '' });
         // ricarico mese
@@ -250,42 +247,25 @@ export default function CalendarioPage() {
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-600">Staff</label>
           <select className="border rounded px-2 py-1" value={staffId} onChange={(e) => setStaffId(e.target.value)}>
-            {(cfg.staff || []).map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {(cfg?.staff || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-600">Servizio</label>
           <select className="border rounded px-2 py-1" value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
-            {(cfg.services || []).map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.duration}’)</option>)}
+            {(cfg?.services || []).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.duration}’)</option>)}
           </select>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setMonthRef(new Date())}
-            title="Vai ad oggi"
-          >
-            Oggi
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setMonthRef((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
-          >
-            ←
-          </Button>
+          <Button variant="outline" onClick={() => setMonthRef(new Date())} title="Vai ad oggi">Oggi</Button>
+          <Button variant="outline" onClick={() => setMonthRef((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}>←</Button>
           <div className="min-w-[180px] text-center font-semibold capitalize">{monthLabel}</div>
-          <Button
-            variant="outline"
-            onClick={() => setMonthRef((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
-          >
-            →
-          </Button>
+          <Button variant="outline" onClick={() => setMonthRef((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}>→</Button>
         </div>
       </div>
 
       {/* Griglia mese */}
       <div className="rounded-xl border bg-white p-3">
-        {/* header giorni settimana */}
         <div className="grid grid-cols-7 text-xs font-semibold text-gray-500 px-2">
           {['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom'].map((d) => (
             <div key={d} className="px-2 py-1">{d}</div>
@@ -322,7 +302,6 @@ export default function CalendarioPage() {
                   </Button>
                 </div>
 
-                {/* chip appuntamenti */}
                 <div className="flex flex-col gap-1 mt-1">
                   {show.map((a, idx) => {
                     const s = toDate(a.start);
@@ -377,13 +356,14 @@ export default function CalendarioPage() {
                         headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
                         body: JSON.stringify({ id: a.id, patch: { status: a.status === 'confirmed' ? 'done' : 'confirmed' } }),
                       });
-                      // refresh locale
+                      // refresh mese
+                      const idt2 = await user.getIdToken();
                       const from = startOfDay(new Date(first)).toISOString();
                       const to = endOfDay(new Date(last)).toISOString();
                       const qs = new URLSearchParams({ from, to });
                       if (staffId) qs.set('staff_id', staffId);
                       const r2 = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
-                        headers: { Authorization: `Bearer ${idt}` },
+                        headers: { Authorization: `Bearer ${idt2}` },
                       });
                       setAppts(await r2.json());
                     }}
@@ -400,13 +380,14 @@ export default function CalendarioPage() {
                         method: 'DELETE',
                         headers: { Authorization: `Bearer ${idt}` },
                       });
-                      // refresh locale
+                      // refresh mese
+                      const idt2 = await user.getIdToken();
                       const from = startOfDay(new Date(first)).toISOString();
                       const to = endOfDay(new Date(last)).toISOString();
                       const qs2 = new URLSearchParams({ from, to });
                       if (staffId) qs2.set('staff_id', staffId);
                       const r2 = await fetch(`/api/calendar/appointments?${qs2.toString()}`, {
-                        headers: { Authorization: `Bearer ${idt}` },
+                        headers: { Authorization: `Bearer ${idt2}` },
                       });
                       setAppts(await r2.json());
                     }}
@@ -420,7 +401,7 @@ export default function CalendarioPage() {
         </div>
       </div>
 
-      {/* Modal Nuovo appuntamento (slot del giorno) */}
+      {/* Modal Nuovo appuntamento */}
       {modalOpen && modalDay && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setModalOpen(false)}>
           <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
@@ -454,7 +435,7 @@ export default function CalendarioPage() {
               <div className="text-sm text-gray-500">Nessuno slot libero per servizio/staff in questa data.</div>
             ) : (
               <div className="grid grid-cols-3 md:grid-cols-4 gap-2 max-h-56 overflow-y-auto pr-1">
-                {slots.map((s: any, i: number) => (
+                {slots.map((s, i) => (
                   <button
                     key={i}
                     onClick={() => createFromSlot(s)}
