@@ -1,61 +1,56 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { PlusIcon, ExternalLink } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Calendar } from '@/components/ui/calendar'; // <-- il tuo shadcn calendar
+import { Calendar } from '@/components/ui/calendar';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
 
 /* -------------------- Helpers -------------------- */
-function ymd(d) {
+const ymd = (d) => {
   const z = new Date(d);
   const off = new Date(z.getTime() - z.getTimezoneOffset() * 60000);
   return off.toISOString().slice(0, 10);
-}
-function startOfDay(d) { const x = new Date(d); x.setHours(0,0,0,0); return x; }
-function endOfDay(d)   { const x = new Date(d); x.setHours(23,59,59,999); return x; }
-function fmtDateTime(dt) {
-  const d = typeof dt === 'string' ? new Date(dt) : dt;
-  return d.toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
-}
-function toDate(v) {
+};
+const startOfDay = (d) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+const endOfDay   = (d) => { const x = new Date(d); x.setHours(23,59,59,999); return x; };
+const toDate = (v) => {
   if (!v) return new Date();
   if (v && typeof v.toDate === 'function') return v.toDate();
   if (typeof v === 'string') return new Date(v);
   if (v && typeof v === 'object' && 'seconds' in v) return new Date(v.seconds * 1000);
   return new Date(v);
-}
-
-/* Costruisce la griglia mensile di riferimento per i fetch (primo/ultimo giorno) */
-function monthWindow(current) {
-  const year = current.getFullYear();
-  const month = current.getMonth();
-  const first = new Date(year, month, 1);
-  const last  = new Date(year, month + 1, 0);
-  return { first, last };
-}
+};
+const fmtTime = (d) => new Date(d).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+const fmtRange = (from, to) => `${fmtTime(from)} – ${fmtTime(to)}`;
+const monthWindow = (current) => {
+  const y = current.getFullYear();
+  const m = current.getMonth();
+  return { first: new Date(y, m, 1), last: new Date(y, m + 1, 0) };
+};
 
 export default function CalendarioPage() {
   const { user } = useAuth();
 
-  // config “interna” (staff/servizi) + selezioni
+  // selezione calendario e mese
+  const [date, setDate] = useState(new Date());
+  const [monthRef, setMonthRef] = useState(new Date());
+
+  // configurazione interna (staff/servizi opzionale)
   const [cfg, setCfg] = useState(null);
   const [staffId, setStaffId] = useState('');
   const [serviceId, setServiceId] = useState('');
 
-  // calendario selezione
-  const [monthRef, setMonthRef] = useState(new Date());
-  const [selectedDay, setSelectedDay] = useState(new Date());
-
-  // dati: interni + google
-  const [appts, setAppts] = useState([]);     // appuntamenti interni
-  const [gEvents, setGEvents] = useState([]); // eventi google
+  // dati: interni (Firestore) + Google
+  const [appts, setAppts] = useState([]);     // interni
+  const [gEvents, setGEvents] = useState([]); // google
 
   // google calendars
   const [googleCalendars, setGoogleCalendars] = useState([]);
   const [googleCalId, setGoogleCalId] = useState('');
 
-  /* ───────────── Google OAuth e liste ───────────── */
+  /* -------------------- Google OAuth & liste -------------------- */
   const connectGoogle = async () => {
     if (!user) return;
     const idt = await user.getIdToken();
@@ -71,6 +66,7 @@ export default function CalendarioPage() {
     const j = await r.json();
     const items = j.items || [];
     setGoogleCalendars(items);
+
     const preferred =
       (cfg?.defaultGoogleCalendarId) ||
       (items.find(c => c.primary)?.id) ||
@@ -92,9 +88,11 @@ export default function CalendarioPage() {
     if (!user || !calendarId) { setGEvents([]); return; }
     const idt = await user.getIdToken();
     const { first, last } = monthWindow(monthRef);
-    const from = startOfDay(first).toISOString();
-    const to   = endOfDay(last).toISOString();
-    const qs = new URLSearchParams({ calendarId, from, to });
+    const qs = new URLSearchParams({
+      calendarId,
+      from: startOfDay(first).toISOString(),
+      to:   endOfDay(last).toISOString(),
+    });
     const r = await fetch(`/api/google/calendar/events?${qs.toString()}`, {
       headers: { Authorization: `Bearer ${idt}` },
     });
@@ -102,7 +100,7 @@ export default function CalendarioPage() {
     setGEvents(r.ok ? (j.items || []) : []);
   };
 
-  /* ───────────── Config interna (staff/servizi) ───────────── */
+  /* -------------------- Config interna (staff/servizi) -------------------- */
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -115,7 +113,7 @@ export default function CalendarioPage() {
     })();
   }, [user]);
 
-  /* ───────────── Fetch appuntamenti interni del mese ───────────── */
+  /* -------------------- Appuntamenti interni del mese -------------------- */
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -134,233 +132,170 @@ export default function CalendarioPage() {
     })();
   }, [user, monthRef, staffId]);
 
-  /* ───────────── Fetch Google eventi del mese ───────────── */
+  /* -------------------- Eventi Google del mese -------------------- */
   useEffect(() => { if (user && cfg) loadGoogleCalendars(); /* eslint-disable-next-line */ }, [user, cfg]);
   useEffect(() => { if (user && googleCalId) loadGoogleMonth(googleCalId); /* eslint-disable-next-line */ }, [user, monthRef, googleCalId]);
 
-  /* ───────────── Mappe per giorno ───────────── */
-  const apptsByDay = useMemo(() => {
-    const map = {};
-    for (const a of appts) {
-      const key = ymd(toDate(a.start));
-      if (!map[key]) map[key] = [];
-      map[key].push({ ...a, __type: 'internal' });
-    }
-    for (const k of Object.keys(map)) map[k].sort((x, y) => +toDate(x.start) - +toDate(y.start));
-    return map;
-  }, [appts]);
-
-  const gByDay = useMemo(() => {
-    const map = {};
-    for (const ev of gEvents) {
-      const startIso = ev.start?.dateTime || (ev.start?.date ? ev.start.date + 'T00:00:00' : null);
-      if (!startIso) continue;
-      const key = ymd(startIso);
-      if (!map[key]) map[key] = [];
-      map[key].push({ ...ev, __type: 'google' });
-    }
-    for (const k of Object.keys(map)) {
-      map[k].sort((x, y) => new Date(x.start?.dateTime || x.start?.date).getTime() - new Date(y.start?.dateTime || y.start?.date).getTime());
-    }
-    return map;
-  }, [gEvents]);
-
-  // merge
+  /* -------------------- Merge per giorno -------------------- */
   const mergedByDay = useMemo(() => {
-    const keys = new Set([...Object.keys(apptsByDay), ...Object.keys(gByDay)]);
-    const out = {};
-    keys.forEach(k => { out[k] = [ ...(apptsByDay[k] || []), ...(gByDay[k] || []) ]; });
-    return out;
-  }, [apptsByDay, gByDay]);
+    const map = {};
+    // interni
+    for (const a of appts) {
+      const k = ymd(toDate(a.start));
+      (map[k] ||= []).push({ __type: 'internal', ...a });
+    }
+    // google
+    for (const ev of gEvents) {
+      const s = ev.start?.dateTime || (ev.start?.date ? ev.start.date + 'T00:00:00' : null);
+      if (!s) continue;
+      const k = ymd(s);
+      (map[k] ||= []).push({ __type: 'google', ...ev });
+    }
+    // sort
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => {
+        const as = a.__type === 'internal'
+          ? toDate(a.start)
+          : new Date(a.start?.dateTime || a.start?.date || 0);
+        const bs = b.__type === 'internal'
+          ? toDate(b.start)
+          : new Date(b.start?.dateTime || b.start?.date || 0);
+        return +as - +bs;
+      });
+    }
+    return map;
+  }, [appts, gEvents]);
 
-  // giorni che hanno eventi → per “modifiers” del DayPicker
-  const daysWithEvents = useMemo(() => {
-    return Object.keys(mergedByDay).map(k => new Date(k + 'T12:00:00')); // T12:00 per evitare TZ edge
-  }, [mergedByDay]);
+  // giorni con eventi → dot nel calendario
+  const daysWithEvents = useMemo(
+    () => Object.keys(mergedByDay).map(k => new Date(k + 'T12:00:00')),
+    [mergedByDay]
+  );
 
-  /* ───────────── UI ───────────── */
+  const selectedKey = ymd(date);
+  const eventsOfDay = mergedByDay[selectedKey] || [];
+
+  /* -------------------- UI -------------------- */
   if (!user) return <div className="p-6">Devi effettuare il login.</div>;
-  if (!cfg) return <div className="p-6">Caricamento calendario…</div>;
-
-  const selectedKey = ymd(selectedDay);
-  const itemsOfDay = (mergedByDay[selectedKey] || []).sort((a, b) => {
-    const getStart = (it) => (it.__type === 'internal')
-      ? toDate(it.start)
-      : new Date(it.start?.dateTime || (it.start?.date ? it.start.date + 'T00:00:00' : 0));
-    return +getStart(a) - +getStart(b);
-  });
 
   return (
-    <div className="p-6 space-y-6 font-[Montserrat]">
-      <h1 className="text-2xl font-bold">Calendario</h1>
+    <div className="p-6 font-[Montserrat]">
+      <h1 className="text-2xl font-bold mb-4">Calendario</h1>
 
-      {/* Google connect + selezione calendario */}
-      <div className="rounded-xl border p-4 bg-white flex flex-wrap items-center gap-3">
-        <Button onClick={connectGoogle} variant="outline">Collega Google Calendar</Button>
-        <Button onClick={loadGoogleCalendars} variant="outline">Lista calendari Google</Button>
+      {/* Azioni Google */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        <Button variant="outline" onClick={connectGoogle}>Collega Google Calendar</Button>
+        <Button variant="outline" onClick={loadGoogleCalendars}>Lista calendari Google</Button>
         {googleCalendars.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">Calendario Google:</span>
-            <select
-              className="border rounded px-2 py-1"
-              value={googleCalId}
-              onChange={async (e) => {
-                const id = e.target.value;
-                setGoogleCalId(id);
-                await saveDefaultCalendar(id);
-                await loadGoogleMonth(id);
-              }}
-            >
-              {googleCalendars.map(c => <option key={c.id} value={c.id}>{c.summary}</option>)}
-            </select>
-          </div>
+          <select
+            className="border rounded px-2 py-1"
+            value={googleCalId}
+            onChange={async (e) => {
+              const id = e.target.value;
+              setGoogleCalId(id);
+              await saveDefaultCalendar(id);
+              await loadGoogleMonth(id);
+            }}
+          >
+            {googleCalendars.map(c => <option key={c.id} value={c.id}>{c.summary}</option>)}
+          </select>
         )}
       </div>
 
-      {/* Filtri base (interni) */}
-      <div className="rounded-xl border p-4 bg-white flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Staff</label>
-          <select className="border rounded px-2 py-1" value={staffId} onChange={(e) => setStaffId(e.target.value)}>
-            {(cfg?.staff || []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Servizio</label>
-          <select className="border rounded px-2 py-1" value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
-            {(cfg?.services || []).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.duration}’)</option>)}
-          </select>
-        </div>
-      </div>
+      {/* Calendar31-style card */}
+      <Card className="w-fit py-4">
+        <CardContent className="px-4">
+          <Calendar
+            mode="single"
+            selected={date}
+            onSelect={(d) => d && setDate(d)}
+            className="bg-transparent p-0"
+            required
+            month={monthRef}
+            onMonthChange={setMonthRef}
+            modifiers={{ hasEvents: daysWithEvents }}
+            modifiersClassNames={{
+              hasEvents:
+                "after:content-[''] after:block after:mx-auto after:mt-1 after:h-1.5 after:w-1.5 after:rounded-full after:bg-emerald-500"
+            }}
+          />
+        </CardContent>
 
-      {/* ------- SHADCN Calendar (react-day-picker) ------- */}
-      <div className="rounded-xl border p-4 bg-white">
-        <Calendar
-          // selezione singolo giorno
-          selected={selectedDay}
-          onSelect={(d) => d && setSelectedDay(d)}
-          // navigazione mese
-          month={monthRef}
-          onMonthChange={setMonthRef}
-          captionLayout="label"
-          showOutsideDays
-          // evidenzia giorni con eventi (dot in basso)
-          modifiers={{ hasEvents: daysWithEvents }}
-          modifiersClassNames={{
-            hasEvents: "after:content-[''] after:block after:mx-auto after:mt-1 after:h-1.5 after:w-1.5 after:rounded-full after:bg-emerald-500"
-          }}
-        />
-      </div>
+        <CardFooter className="flex flex-col items-start gap-3 border-t px-4 !pt-4 w-[360px]">
+          <div className="flex w-full items-center justify-between px-1">
+            <div className="text-sm font-medium">
+              {date?.toLocaleDateString('it-IT', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              })}
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              title="Nuovo appuntamento"
+              onClick={() => {
+                // TODO: apri una modal per creare un appuntamento interno
+                // usando /api/calendar/available e /api/calendar/appointments
+                alert('Prossimo step: modal creazione appuntamento 😉');
+              }}
+            >
+              <PlusIcon />
+              <span className="sr-only">Add Event</span>
+            </Button>
+          </div>
 
-      {/* ------- Appuntamenti del giorno (interni + Google) ------- */}
-      <div className="rounded-xl border p-4 bg-white">
-        <h3 className="font-semibold mb-3">
-          Appuntamenti del {selectedDay.toLocaleDateString('it-IT')}
-        </h3>
+          <div className="flex w-full flex-col gap-2">
+            {eventsOfDay.length === 0 && (
+              <div className="text-sm text-gray-500 px-1">Nessun evento</div>
+            )}
 
-        {itemsOfDay.length === 0 ? (
-          <div className="text-gray-500 text-sm">Nessun evento</div>
-        ) : (
-          <div className="space-y-2">
-            {itemsOfDay.map((item) => {
-              if (item.__type === 'internal') {
-                const s = toDate(item.start);
-                const e = toDate(item.end);
+            {eventsOfDay.map((ev, idx) => {
+              if (ev.__type === 'internal') {
+                const s = toDate(ev.start); const e = toDate(ev.end);
+                const title = `${ev.customer?.name || '—'} • ${ev.service_id}`;
                 return (
-                  <div key={item.id} className="border rounded-lg p-3 flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold">{item.customer?.name || '—'} • {item.service_id}</div>
-                      <div className="text-sm text-gray-600">
-                        {fmtDateTime(s)} → {fmtDateTime(e)}
-                      </div>
-                      <div className="text-xs text-gray-500">Staff: {item.staff_id} • Stato: {item.status}</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={async () => {
-                          const idt = await user.getIdToken();
-                          await fetch('/api/calendar/appointments', {
-                            method: 'PATCH',
-                            headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ id: item.id, patch: { status: item.status === 'confirmed' ? 'done' : 'confirmed' } }),
-                          });
-                          // refresh mese
-                          const idt2 = await user.getIdToken();
-                          const { first, last } = monthWindow(monthRef);
-                          const qs = new URLSearchParams({
-                            from: startOfDay(first).toISOString(),
-                            to:   endOfDay(last).toISOString(),
-                          });
-                          if (staffId) qs.set('staff_id', staffId);
-                          const r2 = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
-                            headers: { Authorization: `Bearer ${idt2}` },
-                          });
-                          setAppts(await r2.json());
-                        }}
-                      >
-                        {item.status === 'confirmed' ? 'Chiudi' : 'Conferma'}
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        onClick={async () => {
-                          if (!confirm('Eliminare appuntamento?')) return;
-                          const idt = await user.getIdToken();
-                          const qs = new URLSearchParams({ id: item.id });
-                          await fetch(`/api/calendar/appointments?${qs.toString()}`, {
-                            method: 'DELETE',
-                            headers: { Authorization: `Bearer ${idt}` },
-                          });
-                          // refresh mese
-                          const idt2 = await user.getIdToken();
-                          const { first, last } = monthWindow(monthRef);
-                          const qs2 = new URLSearchParams({
-                            from: startOfDay(first).toISOString(),
-                            to:   endOfDay(last).toISOString(),
-                          });
-                          if (staffId) qs2.set('staff_id', staffId);
-                          const r2 = await fetch(`/api/calendar/appointments?${qs2.toString()}`, {
-                            headers: { Authorization: `Bearer ${idt2}` },
-                          });
-                          setAppts(await r2.json());
-                        }}
-                      >
-                        Cancella
-                      </Button>
+                  <div
+                    key={`i-${ev.id}-${idx}`}
+                    className="relative rounded-md p-2 pl-6 text-sm bg-muted after:absolute after:inset-y-2 after:left-2 after:w-1 after:rounded-full after:bg-emerald-600"
+                  >
+                    <div className="font-medium">{title}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {fmtRange(s, e)} • Staff: {ev.staff_id} • Stato: {ev.status}
                     </div>
                   </div>
                 );
               }
 
-              // Evento Google (sola lettura)
-              const sRaw = item.start?.dateTime || (item.start?.date ? item.start.date + 'T00:00:00' : null);
-              const eRaw = item.end?.dateTime   || (item.end?.date   ? item.end.date   + 'T23:59:59' : null);
+              // Google
+              const sRaw = ev.start?.dateTime || (ev.start?.date ? ev.start.date + 'T00:00:00' : null);
+              const eRaw = ev.end?.dateTime   || (ev.end?.date   ? ev.end.date   + 'T23:59:59' : null);
               const s = sRaw ? new Date(sRaw) : null;
               const e = eRaw ? new Date(eRaw) : null;
-
               return (
                 <div
-                  key={`g-${item.id || sRaw}`}
-                  className="border rounded-lg p-3 flex items-center justify-between bg-violet-50/50"
+                  key={`g-${ev.id || idx}`}
+                  className="relative rounded-md p-2 pl-6 text-sm bg-muted after:absolute after:inset-y-2 after:left-2 after:w-1 after:rounded-full after:bg-violet-600"
                 >
-                  <div>
-                    <div className="font-semibold">{item.summary || '(Google, senza titolo)'}</div>
-                    <div className="text-sm text-gray-600">
-                      {s ? fmtDateTime(s) : '—'}{e ? ' → ' + fmtDateTime(e) : ''}
-                    </div>
-                    {item.location && <div className="text-xs text-gray-500">{item.location}</div>}
+                  <div className="font-medium flex items-center gap-2">
+                    {ev.summary || '(Google, senza titolo)'}
+                    {ev.htmlLink && (
+                      <a href={ev.htmlLink} target="_blank" rel="noopener noreferrer" title="Apri su Google">
+                        <ExternalLink className="w-3.5 h-3.5 text-gray-500" />
+                      </a>
+                    )}
                   </div>
-                  {item.htmlLink && (
-                    <a href={item.htmlLink} target="_blank" rel="noopener noreferrer">
-                      <Button variant="outline">Apri su Google</Button>
-                    </a>
-                  )}
+                  <div className="text-xs text-muted-foreground">
+                    {s ? fmtRange(s, e || s) : '—'}
+                    {ev.location ? ` • ${ev.location}` : ''}
+                  </div>
                 </div>
               );
             })}
           </div>
-        )}
-      </div>
+        </CardFooter>
+      </Card>
     </div>
   );
 }
