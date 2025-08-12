@@ -1,33 +1,65 @@
+// src/app/api/google/calendar/events/route.ts
 export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDB } from '@/lib/firebase-admin';
 import { getUidFromAuthHeader } from '@/lib/auth-server';
-import { googleApi } from '@/lib/google';
+import { loadAppCredsForUser } from '@/lib/google-app-creds';
+
+async function getAccessToken(uid: string): Promise<string> {
+  const oauthRef = adminDB.doc(`users/${uid}/google/oauth`);
+  const oauthSnap = await oauthRef.get();
+  if (!oauthSnap.exists) throw new Error('Non connesso a Google');
+  const oauth = oauthSnap.data() as any;
+
+  if (oauth.expiry_date && Date.now() < oauth.expiry_date - 30_000) return oauth.access_token;
+
+  const app = await loadAppCredsForUser(uid);
+  if (!oauth.refresh_token) throw new Error('refresh_token mancante');
+
+  const params = new URLSearchParams({
+    client_id: app.client_id,
+    client_secret: app.client_secret,
+    grant_type: 'refresh_token',
+    refresh_token: oauth.refresh_token,
+  });
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
+  const j = await res.json();
+  if (!res.ok) throw new Error(`Refresh token fallito: ${JSON.stringify(j)}`);
+
+  await oauthRef.set({
+    access_token: j.access_token,
+    expiry_date: Date.now() + (j.expires_in || 3600) * 1000,
+    updatedAt: new Date(),
+  }, { merge: true });
+
+  return j.access_token as string;
+}
 
 export async function GET(req: NextRequest) {
   try {
     const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
+    const token = await getAccessToken(uid);
+
     const sp = req.nextUrl.searchParams;
-    const calendarId = sp.get('calendarId'); // opzionale: se assente, uso quello di default in config
-    const from = sp.get('from') || new Date(Date.now() - 3*24*3600e3).toISOString(); // -3gg
-    const to   = sp.get('to')   || new Date(Date.now() + 14*24*3600e3).toISOString(); // +14gg
+    const calendarId = sp.get('calendarId') || 'primary';
+    const timeMin = sp.get('from') || new Date().toISOString();
+    const timeMax = sp.get('to') || new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
 
-    let calId = calendarId;
-    if (!calId) {
-      const cfgSnap = await adminDB.doc(`users/${uid}/calendar/config`).get();
-      calId = (cfgSnap.exists ? (cfgSnap.data() as any)?.defaultGoogleCalendarId : null) || 'primary';
-    }
-
-    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId!)}/events`);
-    url.searchParams.set('timeMin', from);
-    url.searchParams.set('timeMax', to);
+    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
     url.searchParams.set('singleEvents', 'true');
     url.searchParams.set('orderBy', 'startTime');
-    url.searchParams.set('maxResults', '2500');
+    url.searchParams.set('timeMin', timeMin);
+    url.searchParams.set('timeMax', timeMax);
 
-    const data = await googleApi(uid, url.toString(), { method: 'GET' });
-    return NextResponse.json({ calendarId: calId, items: data.items || [] });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const json = await res.json();
+    if (!res.ok) return NextResponse.json(json, { status: res.status });
+    return NextResponse.json(json);
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 400 });
   }

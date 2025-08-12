@@ -5,27 +5,16 @@ import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDB } from '@/lib/firebase-admin';
 import { getUidFromAuthHeader } from '@/lib/auth-server';
-
-const APP_DOC = (uid: string) => `users/${uid}/google/app`;
+import { loadAppCredsForUser } from '@/lib/google-app-creds';
 
 export async function GET(req: NextRequest) {
   try {
     const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
-
-    // prendo credenziali BYOG dallo user
-    const appSnap = await adminDB.doc(APP_DOC(uid)).get();
-    if (!appSnap.exists) {
-      return NextResponse.json({ error: 'Mancano le credenziali OAuth per questo utente' }, { status: 400 });
-    }
-    const app = appSnap.data() as { client_id?: string; redirect_uri?: string };
-    if (!app.client_id) {
-      return NextResponse.json({ error: 'client_id mancante nello user' }, { status: 400 });
-    }
+    const app = await loadAppCredsForUser(uid);
 
     const origin = req.nextUrl.origin;
     const redirect_uri = app.redirect_uri || `${origin}/api/google/oauth/callback`;
 
-    // salvo uno state con redirect_uri per coerenza
     const nonce = crypto.randomBytes(24).toString('base64url');
     await adminDB.doc(`users/${uid}/oauth_states/${nonce}`).set({
       provider: 'google',
@@ -46,9 +35,9 @@ export async function GET(req: NextRequest) {
     url.searchParams.set('client_id', app.client_id);
     url.searchParams.set('redirect_uri', redirect_uri);
     url.searchParams.set('scope', scope);
-    url.searchParams.set('access_type', 'offline');         // refresh_token
+    url.searchParams.set('access_type', 'offline');         // per refresh_token
     url.searchParams.set('include_granted_scopes', 'true');
-    url.searchParams.set('prompt', 'consent');              // forza refresh_token
+    url.searchParams.set('prompt', 'consent');              // assicura refresh_token
     url.searchParams.set('state', state);
 
     return NextResponse.json({ url: url.toString() });

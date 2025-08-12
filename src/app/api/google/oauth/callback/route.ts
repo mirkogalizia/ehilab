@@ -3,6 +3,7 @@ export const runtime = 'nodejs';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDB } from '@/lib/firebase-admin';
+import { loadAppCredsForUser } from '@/lib/google-app-creds';
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -21,17 +22,10 @@ export async function GET(req: NextRequest) {
   const stateSnap = await stateRef.get();
   if (!stateSnap.exists) return NextResponse.json({ error: 'State not found/expired' }, { status: 400 });
 
-  const { redirect_uri } = (stateSnap.data() || {}) as { redirect_uri?: string };
+  const { redirect_uri } = (stateSnap.data() || {}) as any;
   await stateRef.delete();
 
-  // prendo app creds BYOG dallo user
-  const appSnap = await adminDB.doc(`users/${uid}/google/app`).get();
-  if (!appSnap.exists) return NextResponse.json({ error: 'Mancano le credenziali BYOG dello user' }, { status: 400 });
-  const app = appSnap.data() as { client_id?: string; client_secret?: string; redirect_uri?: string };
-  if (!app.client_id || !app.client_secret) {
-    return NextResponse.json({ error: 'client_id/client_secret mancanti' }, { status: 400 });
-  }
-
+  const app = await loadAppCredsForUser(uid);
   const ru = redirect_uri || app.redirect_uri || `${req.nextUrl.origin}/api/google/oauth/callback`;
 
   const params = new URLSearchParams({

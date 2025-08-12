@@ -4,11 +4,11 @@ export const runtime = 'nodejs';
 import { NextRequest, NextResponse } from 'next/server';
 import { adminDB } from '@/lib/firebase-admin';
 import { getUidFromAuthHeader } from '@/lib/auth-server';
+import { loadAppCredsForUser } from '@/lib/google-app-creds';
 
 async function getAccessToken(uid: string): Promise<string> {
   const oauthRef = adminDB.doc(`users/${uid}/google/oauth`);
-  const appRef = adminDB.doc(`users/${uid}/google/app`);
-  const [oauthSnap, appSnap] = await Promise.all([oauthRef.get(), appRef.get()]);
+  const oauthSnap = await oauthRef.get();
   if (!oauthSnap.exists) throw new Error('Non connesso a Google');
   const oauth = oauthSnap.data() as any;
 
@@ -17,8 +17,7 @@ async function getAccessToken(uid: string): Promise<string> {
     return oauth.access_token as string;
   }
 
-  if (!appSnap.exists) throw new Error('App BYOG mancante');
-  const app = appSnap.data() as any;
+  const app = await loadAppCredsForUser(uid);
   if (!oauth.refresh_token) throw new Error('refresh_token mancante');
 
   const params = new URLSearchParams({
@@ -33,7 +32,7 @@ async function getAccessToken(uid: string): Promise<string> {
     body: params.toString(),
   });
   const j = await res.json();
-  if (!res.ok) throw new Error('Refresh token fallito');
+  if (!res.ok) throw new Error(`Refresh token fallito: ${JSON.stringify(j)}`);
 
   await oauthRef.set({
     access_token: j.access_token,
@@ -48,6 +47,7 @@ export async function GET(req: NextRequest) {
   try {
     const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
     const token = await getAccessToken(uid);
+
     const res = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
       headers: { Authorization: `Bearer ${token}` },
     });

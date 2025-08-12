@@ -1,10 +1,10 @@
-// src/lib/auth-server.ts
 import { adminAuth } from './firebase-admin';
 
-export async function getUidFromAuthHeader(authorization?: string | null) {
-  if (!authorization) throw new Error('Missing Authorization header');
-  const token = authorization.replace(/^Bearer\s+/i, '').trim();
-  if (!token) throw new Error('Missing Bearer token');
-  const decoded = await adminAuth.verifyIdToken(token);
+export async function getUidFromAuthHeader(authHeader: string | null): Promise<string> {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    throw new Error('Missing Authorization header');
+  }
+  const idToken = authHeader.slice(7);
+  const decoded = await adminAuth.verifyIdToken(idToken);
   return decoded.uid;
 }
