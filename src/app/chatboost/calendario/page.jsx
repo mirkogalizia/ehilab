@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Link as LinkIcon, Send as SendIcon, Search, PlusIcon } from 'lucide-react';
+import { ExternalLink, Link as LinkIcon, Send as SendIcon, Search, PlusIcon, X as CloseIcon } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 import { db } from '@/lib/firebase';
 import {
@@ -47,7 +47,6 @@ const normalizePhone = (phoneRaw) => {
   if (phoneRaw.startsWith('+')) return phoneRaw;
   return '';
 };
-// prova ad estrarre email/telefono grezzi dal testo di un evento Google
 const guessContactFromText = (text='') => {
   const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   const phoneMatch = text.match(/\+?\d[\d\s().-]{6,}\d/);
@@ -64,7 +63,7 @@ export default function CalendarioPage() {
   const [date, setDate] = useState(new Date());
   const [monthRef, setMonthRef] = useState(new Date());
 
-  // configurazione interna (staff/servizi opzionale)
+  // configurazione interna (staff/servizi)
   const [cfg, setCfg] = useState(null);
   const [staffId, setStaffId] = useState('');
   const [serviceId, setServiceId] = useState('');
@@ -85,7 +84,7 @@ export default function CalendarioPage() {
     return m;
   }, [contacts]);
 
-  // mappa evento↔contatto (sia interni che google)
+  // mappa evento↔contatto
   const [linksMap, setLinksMap] = useState(new Map()); // key: `${kind}:${eventId}` -> contactId
 
   // template WhatsApp
@@ -101,6 +100,14 @@ export default function CalendarioPage() {
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [linkTarget, setLinkTarget] = useState(null); // { kind:'internal'|'google', id:string }
   const [contactSearch, setContactSearch] = useState('');
+
+  // modale creazione appuntamento
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createTime, setCreateTime] = useState('10:00');
+  const [createNotes, setCreateNotes] = useState('');
+  const [createContactManual, setCreateContactManual] = useState({ name: '', phone: '', email: '' });
+  const [createContactPicked, setCreateContactPicked] = useState(null); // contact object
+  const [contactQuickSearch, setContactQuickSearch] = useState('');
 
   // auto-refresh
   const refreshTimer = useRef(null);
@@ -157,7 +164,7 @@ export default function CalendarioPage() {
     setGEvents(r.ok ? (j.items || []) : []);
   };
 
-  /* -------------------- Config interna + templates + rubrica + userData -------------------- */
+  /* -------------------- Config + templates + rubrica + userData -------------------- */
   useEffect(() => {
     if (!user) return;
 
@@ -187,7 +194,7 @@ export default function CalendarioPage() {
         setContacts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       });
 
-      // userData (per phone_number_id) — stessa logica di ChatPage
+      // userData (per phone_number_id)
       const usersSnap = await getDocs(collection(db, 'users'));
       const me = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
       if (me) setUserData(me);
@@ -241,9 +248,9 @@ export default function CalendarioPage() {
     const id = `${user.uid}__${kind}__${eventId}`;
     await setDoc(doc(db, 'calendar_links', id), {
       user_uid: user.uid,
-      kind,               // 'internal' | 'google'
-      eventId,            // id appuntamento interno o id evento google
-      contactId,          // phone (id contact) o altro id
+      kind,
+      eventId,
+      contactId,
       linkedAt: new Date()
     }, { merge: true });
     setLinksMap(m => new Map(m).set(`${kind}:${eventId}`, contactId));
@@ -254,19 +261,16 @@ export default function CalendarioPage() {
   /* -------------------- Merge per giorno -------------------- */
   const mergedByDay = useMemo(() => {
     const map = {};
-    // interni
     for (const a of appts) {
       const k = ymd(toDate(a.start));
       (map[k] ||= []).push({ __type: 'internal', ...a });
     }
-    // google
     for (const ev of gEvents) {
       const s = ev.start?.dateTime || (ev.start?.date ? ev.start.date + 'T00:00:00' : null);
       if (!s) continue;
       const k = ymd(s);
       (map[k] ||= []).push({ __type: 'google', ...ev });
     }
-    // sort
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => {
         const as = a.__type === 'internal'
@@ -289,7 +293,7 @@ export default function CalendarioPage() {
   const selectedKey = ymd(date);
   const eventsOfDay = mergedByDay[selectedKey] || [];
 
-  /* -------------------- Invio template (stessa logica di ChatPage) -------------------- */
+  /* -------------------- Invio template (come ChatPage: selezione + bottone) -------------------- */
   const sendTemplate = async (phone, templateName) => {
     if (!userData?.phone_number_id) {
       alert('Configurazione WhatsApp mancante (phone_number_id).');
@@ -306,11 +310,10 @@ export default function CalendarioPage() {
         type: 'template',
         template: {
           name: templateName,
-          language: { code: 'it' }, // adatta se necessario
+          language: { code: 'it' },
           components: [{ type: 'BODY', parameters: [] }],
         },
       };
-
       const resp = await fetch(
         `https://graph.facebook.com/v19.0/${userData.phone_number_id}/messages`,
         {
@@ -325,7 +328,6 @@ export default function CalendarioPage() {
       const text = await resp.text();
       let data;
       try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-
       if (resp.ok && data?.messages) {
         alert('Template inviato ✅');
       } else {
@@ -339,19 +341,16 @@ export default function CalendarioPage() {
 
   /* -------------------- Derive: contatto per evento -------------------- */
   const resolveContactForEvent = (ev) => {
-    // 1) link esplicito salvato
     const evKey = ev.__type === 'internal' ? `internal:${ev.id}` : `google:${ev.id}`;
     const linkedId = linksMap.get(evKey);
     if (linkedId && contactsById.get(linkedId)) return contactsById.get(linkedId);
 
-    // 2) interni: usa customer.phone
     if (ev.__type === 'internal') {
       const ph = normalizePhone(ev.customer?.phone);
       if (ph && contactsById.get(ph)) return contactsById.get(ph);
       return null;
     }
 
-    // 3) google: prova attendees/email + testo
     const att = (ev.attendees || []).find(a => a.email);
     if (att) {
       const byEmail = Array.from(contactsById.values()).find(c => (c.email || '').toLowerCase() === att.email.toLowerCase());
@@ -383,8 +382,98 @@ export default function CalendarioPage() {
     // eslint-disable-next-line
   }, [user, monthRef, googleCalId, staffId]);
 
+  /* -------------------- Creazione appuntamento -------------------- */
+  const filteredQuick = useMemo(() => {
+    const s = contactQuickSearch.trim().toLowerCase();
+    if (!s) return contacts.slice(0, 50);
+    return contacts.filter(c => {
+      return [c.firstName, c.lastName, c.phone, c.email]
+        .filter(Boolean)
+        .some(v => String(v).toLowerCase().includes(s));
+    }).slice(0, 50);
+  }, [contacts, contactQuickSearch]);
+
+  const openCreate = () => {
+    setCreateOpen(true);
+    setCreateTime('10:00');
+    setCreateNotes('');
+    setCreateContactManual({ name: '', phone: '', email: '' });
+    setCreateContactPicked(null);
+    setContactQuickSearch('');
+  };
+
+  const createAppointment = async () => {
+    if (!user) return;
+
+    const baseDate = ymd(date);
+    if (!baseDate || !createTime) {
+      alert('Seleziona data e orario.');
+      return;
+    }
+
+    // contatto: priorità pick rubrica → manuale
+    const picked = createContactPicked;
+    const manualName = createContactManual.name?.trim();
+    const manualPhone = normalizePhone(createContactManual.phone);
+
+    let customer;
+    if (picked) {
+      customer = {
+        name: `${picked.firstName || ''} ${picked.lastName || ''}`.trim() || (picked.phone || ''),
+        phone: normalizePhone(picked.phone) || '',
+        email: picked.email || ''
+      };
+    } else if (manualName && manualPhone) {
+      customer = {
+        name: manualName,
+        phone: manualPhone,
+        email: (createContactManual.email || '').trim()
+      };
+    } else {
+      alert('Seleziona un contatto dalla rubrica o inserisci nome e telefono.');
+      return;
+    }
+
+    if (!serviceId || !staffId) {
+      alert('Seleziona servizio e staff.');
+      return;
+    }
+
+    const startISO = new Date(`${baseDate}T${createTime}:00`).toISOString();
+
+    try {
+      const idt = await user.getIdToken();
+      const res = await fetch('/api/calendar/appointments', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer,
+          service_id: serviceId,
+          staff_id: staffId,
+          start: startISO,
+          notes: createNotes,
+          syncToGoogle: true
+        })
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        alert(j?.error || 'Errore creazione');
+        return;
+      }
+      // refresh mese e giorno
+      await loadInternalMonth();
+      if (googleCalId) await loadGoogleMonth(googleCalId);
+      setCreateOpen(false);
+    } catch (e) {
+      alert(e?.message || String(e));
+    }
+  };
+
   /* -------------------- UI -------------------- */
   if (!user) return <div className="p-6">Devi effettuare il login.</div>;
+
+  const currentService = (cfg?.services || []).find(s => s.id === serviceId);
+  const serviceDuration = currentService?.duration ? `• Durata ${currentService.duration}’` : '';
 
   return (
     <div className="p-6 font-[Montserrat] h-full">
@@ -439,7 +528,7 @@ export default function CalendarioPage() {
                 size="icon"
                 className="size-6"
                 title="Nuovo appuntamento"
-                onClick={() => alert('Prossimo step: modal creazione appuntamento 😉')}
+                onClick={openCreate}
               >
                 <PlusIcon />
                 <span className="sr-only">Add Event</span>
@@ -482,7 +571,6 @@ export default function CalendarioPage() {
 
                 const rightTagColor = isInternal ? 'bg-emerald-600' : 'bg-violet-600';
 
-                // chiave unica evento per memorizzare la scelta del template e non inviare subito
                 const evKey = `${isInternal ? 'i' : 'g'}:${ev.id || idx}`;
 
                 return (
@@ -614,6 +702,147 @@ export default function CalendarioPage() {
             <div className="mt-4 text-right">
               <Button variant="outline" onClick={()=>{ setLinkModalOpen(false); setLinkTarget(null); }}>
                 Chiudi
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal NUOVO APPUNTAMENTO */}
+      {createOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
+            <div className="flex items-center justify-between p-5 border-b">
+              <h3 className="text-lg font-semibold">Nuovo appuntamento</h3>
+              <button
+                className="p-1 rounded hover:bg-gray-100"
+                onClick={() => setCreateOpen(false)}
+              >
+                <CloseIcon className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* Colonna sx: Data/Orario/Servizio/Staff */}
+              <div className="space-y-3">
+                <div>
+                  <label className="text-sm text-gray-600">Data</label>
+                  <Input value={ymd(date)} readOnly className="bg-gray-50" />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">Orario</label>
+                  <Input type="time" value={createTime} onChange={e=>setCreateTime(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">Servizio <span className="text-gray-400">{serviceDuration && `(${serviceDuration})`}</span></label>
+                  <select
+                    className="border rounded px-2 py-2 w-full"
+                    value={serviceId}
+                    onChange={(e)=>setServiceId(e.target.value)}
+                  >
+                    {(cfg?.services || []).length === 0 && <option value="">— Nessun servizio configurato —</option>}
+                    {(cfg?.services || []).map(s => (
+                      <option key={s.id} value={s.id}>{s.name}{s.duration ? ` • ${s.duration}’` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">Staff</label>
+                  <select
+                    className="border rounded px-2 py-2 w-full"
+                    value={staffId}
+                    onChange={(e)=>setStaffId(e.target.value)}
+                  >
+                    {(cfg?.staff || []).length === 0 && <option value="">— Nessuno —</option>}
+                    {(cfg?.staff || []).map(s => (
+                      <option key={s.id} value={s.id}>{s.name || s.id}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-600">Note</label>
+                  <textarea
+                    rows={4}
+                    className="w-full border rounded px-3 py-2"
+                    placeholder="Note per l’appuntamento (opzionale)"
+                    value={createNotes}
+                    onChange={e=>setCreateNotes(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Colonna dx: Contatto (rubrica o manuale) */}
+              <div className="space-y-3">
+                <div className="p-3 border rounded-lg">
+                  <div className="font-medium mb-2">Cerca in rubrica</div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Search className="w-4 h-4 text-gray-500" />
+                    <Input
+                      placeholder="Nome, cognome, telefono o email…"
+                      value={contactQuickSearch}
+                      onChange={e=>setContactQuickSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="max-h-40 overflow-auto divide-y rounded border bg-white">
+                    {filteredQuick.length === 0 && (
+                      <div className="text-sm text-gray-500 p-2">Nessun contatto</div>
+                    )}
+                    {filteredQuick.map(c => {
+                      const selected = createContactPicked?.id === c.id;
+                      return (
+                        <button
+                          type="button"
+                          key={c.id}
+                          className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${selected ? 'bg-emerald-50' : ''}`}
+                          onClick={() => {
+                            setCreateContactPicked(c);
+                            setCreateContactManual({ name:'', phone:'', email:'' });
+                          }}
+                        >
+                          <div className="font-medium">{c.firstName} {c.lastName}</div>
+                          <div className="text-xs text-gray-500">{c.phone} {c.email && `• ${c.email}`}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-3 border rounded-lg">
+                  <div className="font-medium mb-2">Oppure inserisci manualmente</div>
+                  <div className="grid grid-cols-1 gap-2">
+                    <Input
+                      placeholder="Nome e cognome"
+                      value={createContactManual.name}
+                      onChange={e=>{
+                        setCreateContactManual(m=>({ ...m, name: e.target.value }));
+                        setCreateContactPicked(null);
+                      }}
+                    />
+                    <Input
+                      placeholder="Telefono (es: +39333...)"
+                      value={createContactManual.phone}
+                      onChange={e=>{
+                        setCreateContactManual(m=>({ ...m, phone: e.target.value }));
+                        setCreateContactPicked(null);
+                      }}
+                    />
+                    <Input
+                      placeholder="Email (opzionale)"
+                      value={createContactManual.email}
+                      onChange={e=>{
+                        setCreateContactManual(m=>({ ...m, email: e.target.value }));
+                        setCreateContactPicked(null);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 border-t flex items-center justify-end gap-2">
+              <Button variant="outline" onClick={()=>setCreateOpen(false)}>Annulla</Button>
+              <Button onClick={createAppointment} className="bg-black text-white hover:bg-gray-800">
+                Crea e sincronizza
               </Button>
             </div>
           </div>
