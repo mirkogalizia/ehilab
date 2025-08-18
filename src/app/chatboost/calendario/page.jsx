@@ -1,9 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { PlusIcon, ExternalLink } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ExternalLink, Link as LinkIcon, Send as SendIcon, Search, PlusIcon } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
+import { db } from '@/lib/firebase';
+import {
+  collection, query, where, onSnapshot, setDoc, doc, getDocs
+} from 'firebase/firestore';
+
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 
@@ -29,6 +35,27 @@ const monthWindow = (current) => {
   const m = current.getMonth();
   return { first: new Date(y, m, 1), last: new Date(y, m + 1, 0) };
 };
+const normalizePhone = (phoneRaw) => {
+  if (!phoneRaw) return '';
+  let phone = String(phoneRaw).trim()
+    .replace(/^[+]+/, '')
+    .replace(/^00/, '')
+    .replace(/[\s\-().]/g, '');
+  if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
+  if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
+  if (/^\d+$/.test(phone) && phone.length > 10) return '+' + phone;
+  if (phoneRaw.startsWith('+')) return phoneRaw;
+  return '';
+};
+// prova ad estrarre email/telefono grezzi dal testo di un evento Google
+const guessContactFromText = (text='') => {
+  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const phoneMatch = text.match(/\+?\d[\d\s().-]{6,}\d/);
+  return {
+    email: emailMatch ? emailMatch[0] : '',
+    phone: phoneMatch ? normalizePhone(phoneMatch[0]) : ''
+  };
+};
 
 export default function CalendarioPage() {
   const { user } = useAuth();
@@ -50,6 +77,28 @@ export default function CalendarioPage() {
   const [googleCalendars, setGoogleCalendars] = useState([]);
   const [googleCalId, setGoogleCalId] = useState('');
 
+  // rubrica
+  const [contacts, setContacts] = useState([]);
+  const contactsById = useMemo(() => {
+    const m = new Map();
+    for (const c of contacts) m.set(c.id || c.phone, c);
+    return m;
+  }, [contacts]);
+
+  // mappa evento↔contatto (sia interni che google)
+  const [linksMap, setLinksMap] = useState(new Map()); // key: `${kind}:${eventId}` -> contactId
+
+  // template WhatsApp
+  const [templates, setTemplates] = useState([]);
+
+  // modale abbinamento contatto
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkTarget, setLinkTarget] = useState(null); // { kind:'internal'|'google', id:string }
+  const [contactSearch, setContactSearch] = useState('');
+
+  // auto-refresh
+  const refreshTimer = useRef(null);
+
   /* -------------------- Google OAuth & liste -------------------- */
   const connectGoogle = async () => {
     if (!user) return;
@@ -67,8 +116,10 @@ export default function CalendarioPage() {
     const items = j.items || [];
     setGoogleCalendars(items);
 
+    // priorità: Firestore cfg → localStorage → primary → primo
+    const saved = cfg?.defaultGoogleCalendarId || localStorage.getItem('defaultGoogleCalendarId');
     const preferred =
-      (cfg?.defaultGoogleCalendarId) ||
+      saved ||
       (items.find(c => c.primary)?.id) ||
       (items[0]?.id);
     if (preferred && !googleCalId) setGoogleCalId(preferred);
@@ -82,6 +133,7 @@ export default function CalendarioPage() {
       headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ defaultGoogleCalendarId: calendarId, syncToGoogle: true }),
     });
+    localStorage.setItem('defaultGoogleCalendarId', calendarId);
   };
 
   const loadGoogleMonth = async (calendarId) => {
@@ -100,41 +152,93 @@ export default function CalendarioPage() {
     setGEvents(r.ok ? (j.items || []) : []);
   };
 
-  /* -------------------- Config interna (staff/servizi) -------------------- */
+  /* -------------------- Config interna + templates + rubrica -------------------- */
   useEffect(() => {
     if (!user) return;
+
     (async () => {
+      // config
       const idt = await user.getIdToken();
       const res = await fetch('/api/calendar/config', { headers: { Authorization: `Bearer ${idt}` } });
       const json = await res.json();
       setCfg(json || {});
       if (json?.staff?.length) setStaffId(s => s || json.staff[0].id);
       if (json?.services?.length) setServiceId(s => s || json.services[0].id);
+
+      // templates approvati
+      try {
+        const tRes = await fetch('/api/list-templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_uid: user.uid }),
+        });
+        const t = await tRes.json();
+        if (Array.isArray(t)) setTemplates(t.filter(x => x.status === 'APPROVED'));
+      } catch {}
+
+      // rubrica realtime
+      const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
+      const unsub = onSnapshot(qContacts, snap => {
+        setContacts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      });
+      return () => unsub();
     })();
   }, [user]);
 
   /* -------------------- Appuntamenti interni del mese -------------------- */
-  useEffect(() => {
+  const loadInternalMonth = async () => {
     if (!user) return;
-    (async () => {
-      const idt = await user.getIdToken();
-      const { first, last } = monthWindow(monthRef);
-      const qs = new URLSearchParams({
-        from: startOfDay(first).toISOString(),
-        to:   endOfDay(last).toISOString(),
-      });
-      if (staffId) qs.set('staff_id', staffId);
-      const r = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
-        headers: { Authorization: `Bearer ${idt}` },
-      });
-      const data = await r.json();
-      setAppts(Array.isArray(data) ? data : []);
-    })();
-  }, [user, monthRef, staffId]);
+    const idt = await user.getIdToken();
+    const { first, last } = monthWindow(monthRef);
+    const qs = new URLSearchParams({
+      from: startOfDay(first).toISOString(),
+      to:   endOfDay(last).toISOString(),
+    });
+    if (staffId) qs.set('staff_id', staffId);
+    const r = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${idt}` },
+    });
+    const data = await r.json();
+    setAppts(Array.isArray(data) ? data : []);
+  };
+
+  useEffect(() => { if (user) loadInternalMonth(); }, [user, monthRef, staffId]);
 
   /* -------------------- Eventi Google del mese -------------------- */
   useEffect(() => { if (user && cfg) loadGoogleCalendars(); /* eslint-disable-next-line */ }, [user, cfg]);
   useEffect(() => { if (user && googleCalId) loadGoogleMonth(googleCalId); /* eslint-disable-next-line */ }, [user, monthRef, googleCalId]);
+
+  /* -------------------- Link evento↔contatto (Firestore) -------------------- */
+  const loadLinks = async () => {
+    if (!user) return;
+    const qLinks = query(
+      collection(db, 'calendar_links'),
+      where('user_uid', '==', user.uid)
+    );
+    const snap = await getDocs(qLinks);
+    const m = new Map();
+    snap.forEach(d => {
+      const data = d.data();
+      m.set(`${data.kind}:${data.eventId}`, data.contactId);
+    });
+    setLinksMap(m);
+  };
+  useEffect(() => { if (user) loadLinks(); }, [user]);
+
+  const linkContact = async (kind, eventId, contactId) => {
+    if (!user) return;
+    const id = `${user.uid}__${kind}__${eventId}`;
+    await setDoc(doc(db, 'calendar_links', id), {
+      user_uid: user.uid,
+      kind,               // 'internal' | 'google'
+      eventId,            // id appuntamento interno o id evento google
+      contactId,          // phone (id contact) o altro id
+      linkedAt: new Date()
+    }, { merge: true });
+    setLinksMap(m => new Map(m).set(`${kind}:${eventId}`, contactId));
+    setLinkModalOpen(false);
+    setLinkTarget(null);
+  };
 
   /* -------------------- Merge per giorno -------------------- */
   const mergedByDay = useMemo(() => {
@@ -166,7 +270,6 @@ export default function CalendarioPage() {
     return map;
   }, [appts, gEvents]);
 
-  // giorni con eventi → dot nel calendario
   const daysWithEvents = useMemo(
     () => Object.keys(mergedByDay).map(k => new Date(k + 'T12:00:00')),
     [mergedByDay]
@@ -175,17 +278,84 @@ export default function CalendarioPage() {
   const selectedKey = ymd(date);
   const eventsOfDay = mergedByDay[selectedKey] || [];
 
+  /* -------------------- Auto refresh (60s) quando la tab è visibile -------------------- */
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      loadInternalMonth();
+      if (googleCalId) loadGoogleMonth(googleCalId);
+    };
+    refreshTimer.current = setInterval(tick, 60000);
+    const vis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', vis);
+    return () => {
+      if (refreshTimer.current) clearInterval(refreshTimer.current);
+      document.removeEventListener('visibilitychange', vis);
+    };
+    // eslint-disable-next-line
+  }, [user, monthRef, googleCalId, staffId]);
+
+  /* -------------------- Invio template -------------------- */
+  const sendTemplate = async (phone, templateName) => {
+    if (!user || !phone || !templateName) return alert('Dati mancanti.');
+    try {
+      const idt = await user.getIdToken();
+      const r = await fetch('/api/wa/send-template', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${idt}`, 'Content-Type':'application/json' },
+        body: JSON.stringify({ to: phone, templateName }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        const reason = j?.details?.message || j?.error || 'Errore invio';
+        alert(`Invio KO: ${reason}`);
+      } else {
+        alert('Template inviato ✅');
+      }
+    } catch (e) {
+      alert(`Errore invio: ${e?.message || e}`);
+    }
+  };
+
+  /* -------------------- Derive: contatto per evento -------------------- */
+  const resolveContactForEvent = (ev) => {
+    // 1) link esplicito salvato
+    const evKey = ev.__type === 'internal' ? `internal:${ev.id}` : `google:${ev.id}`;
+    const linkedId = linksMap.get(evKey);
+    if (linkedId && contactsById.get(linkedId)) return contactsById.get(linkedId);
+
+    // 2) interni: usa customer.phone
+    if (ev.__type === 'internal') {
+      const ph = normalizePhone(ev.customer?.phone);
+      if (ph && contactsById.get(ph)) return contactsById.get(ph);
+      return null;
+    }
+
+    // 3) google: prova attendees/email + testo
+    const att = (ev.attendees || []).find(a => a.email);
+    if (att) {
+      const byEmail = Array.from(contactsById.values()).find(c => (c.email || '').toLowerCase() === att.email.toLowerCase());
+      if (byEmail) return byEmail;
+    }
+    const guess = guessContactFromText(`${ev.description || ''} ${ev.location || ''} ${ev.summary || ''}`);
+    if (guess.phone && contactsById.get(guess.phone)) return contactsById.get(guess.phone);
+    if (guess.email) {
+      const byE = Array.from(contactsById.values()).find(c => (c.email || '').toLowerCase() === guess.email.toLowerCase());
+      if (byE) return byE;
+    }
+    return null;
+  };
+
   /* -------------------- UI -------------------- */
   if (!user) return <div className="p-6">Devi effettuare il login.</div>;
 
   return (
-    <div className="p-6 font-[Montserrat]">
+    <div className="p-6 font-[Montserrat] h-full">
       <h1 className="text-2xl font-bold mb-4">Calendario</h1>
 
-      {/* Azioni Google */}
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap gap-2 items-center">
         <Button variant="outline" onClick={connectGoogle}>Collega Google Calendar</Button>
-        <Button variant="outline" onClick={loadGoogleCalendars}>Lista calendari Google</Button>
+        <Button variant="outline" onClick={loadGoogleCalendars}>Ricarica calendari</Button>
         {googleCalendars.length > 0 && (
           <select
             className="border rounded px-2 py-1"
@@ -202,100 +372,208 @@ export default function CalendarioPage() {
         )}
       </div>
 
-      {/* Calendar31-style card */}
-      <Card className="w-fit py-4">
-        <CardContent className="px-4">
-          <Calendar
-            mode="single"
-            selected={date}
-            onSelect={(d) => d && setDate(d)}
-            className="bg-transparent p-0"
-            required
-            month={monthRef}
-            onMonthChange={setMonthRef}
-            modifiers={{ hasEvents: daysWithEvents }}
-            modifiersClassNames={{
-              hasEvents:
-                "after:content-[''] after:block after:mx-auto after:mt-1 after:h-1.5 after:w-1.5 after:rounded-full after:bg-emerald-500"
-            }}
-          />
-        </CardContent>
-
-        <CardFooter className="flex flex-col items-start gap-3 border-t px-4 !pt-4 w-[360px]">
-          <div className="flex w-full items-center justify-between px-1">
-            <div className="text-sm font-medium">
-              {date?.toLocaleDateString('it-IT', {
-                day: 'numeric',
-                month: 'long',
-                year: 'numeric',
-              })}
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              title="Nuovo appuntamento"
-              onClick={() => {
-                // TODO: apri una modal per creare un appuntamento interno
-                // usando /api/calendar/available e /api/calendar/appointments
-                alert('Prossimo step: modal creazione appuntamento 😉');
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* Calendar (sx) */}
+        <Card className="w-fit py-4">
+          <CardContent className="px-4">
+            <Calendar
+              mode="single"
+              selected={date}
+              onSelect={(d) => d && setDate(d)}
+              className="bg-transparent p-0"
+              required
+              month={monthRef}
+              onMonthChange={setMonthRef}
+              modifiers={{ hasEvents: daysWithEvents }}
+              modifiersClassNames={{
+                hasEvents:
+                  "after:content-[''] after:block after:mx-auto after:mt-1 after:h-1.5 after:w-1.5 after:rounded-full after:bg-emerald-500"
               }}
-            >
-              <PlusIcon />
-              <span className="sr-only">Add Event</span>
-            </Button>
+            />
+          </CardContent>
+
+          <CardFooter className="flex flex-col items-start gap-3 border-t px-4 !pt-4 w-[360px]">
+            <div className="flex w-full items-center justify-between px-1">
+              <div className="text-sm font-medium">
+                {date?.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                title="Nuovo appuntamento"
+                onClick={() => alert('Prossimo step: modal creazione appuntamento 😉')}
+              >
+                <PlusIcon />
+                <span className="sr-only">Add Event</span>
+              </Button>
+            </div>
+
+            <div className="text-xs text-muted-foreground px-1">
+              I giorni con puntino verde hanno eventi (interni o Google).
+            </div>
+          </CardFooter>
+        </Card>
+
+        {/* Lista appuntamenti del giorno (dx) */}
+        <div className="rounded-xl border p-4 bg-white">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Appuntamenti del giorno</h3>
+            <div className="text-sm text-gray-500">{eventsOfDay.length} eventi</div>
           </div>
 
-          <div className="flex w-full flex-col gap-2">
-            {eventsOfDay.length === 0 && (
-              <div className="text-sm text-gray-500 px-1">Nessun evento</div>
-            )}
+          {eventsOfDay.length === 0 ? (
+            <div className="text-gray-500 text-sm">Nessun evento</div>
+          ) : (
+            <div className="space-y-2">
+              {eventsOfDay.map((ev, idx) => {
+                const isInternal = ev.__type === 'internal';
+                const s = isInternal
+                  ? toDate(ev.start)
+                  : new Date(ev.start?.dateTime || ev.start?.date || Date.now());
+                const e = isInternal
+                  ? toDate(ev.end)
+                  : new Date(ev.end?.dateTime || ev.end?.date || s);
 
-            {eventsOfDay.map((ev, idx) => {
-              if (ev.__type === 'internal') {
-                const s = toDate(ev.start); const e = toDate(ev.end);
-                const title = `${ev.customer?.name || '—'} • ${ev.service_id}`;
+                const contact = resolveContactForEvent(ev);
+                const contactName = contact ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim() : '';
+                const contactPhone = contact?.phone || '';
+
+                const title = isInternal
+                  ? `${ev.customer?.name || '—'} • ${ev.service_id}`
+                  : (ev.summary || '(Google, senza titolo)');
+
+                const rightTagColor = isInternal ? 'bg-emerald-600' : 'bg-violet-600';
+
                 return (
-                  <div
-                    key={`i-${ev.id}-${idx}`}
-                    className="relative rounded-md p-2 pl-6 text-sm bg-muted after:absolute after:inset-y-2 after:left-2 after:w-1 after:rounded-full after:bg-emerald-600"
-                  >
-                    <div className="font-medium">{title}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {fmtRange(s, e)} • Staff: {ev.staff_id} • Stato: {ev.status}
+                  <div key={`${ev.__type}-${ev.id || idx}`} className="border rounded-lg p-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="font-semibold flex items-center gap-2">
+                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${rightTagColor}`} />
+                          {title}
+                          {!isInternal && ev.htmlLink && (
+                            <a href={ev.htmlLink} target="_blank" rel="noopener noreferrer" title="Apri su Google">
+                              <ExternalLink className="w-3.5 h-3.5 text-gray-500" />
+                            </a>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600 mt-1">
+                          {fmtRange(s, e)} {isInternal && `• Staff: ${ev.staff_id} • Stato: ${ev.status}`}
+                        </div>
+
+                        {/* Contatto */}
+                        <div className="mt-2 text-sm">
+                          {contact ? (
+                            <div className="text-gray-800">
+                              <span className="font-medium">{contactName || contact.phone || contact.email || 'Contatto'}</span>
+                              {contact.phone && <span className="text-gray-500"> • {contact.phone}</span>}
+                              {contact.email && <span className="text-gray-500"> • {contact.email}</span>}
+                            </div>
+                          ) : (
+                            <div className="text-gray-500 italic">Nessun contatto collegato</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2 shrink-0">
+                        {!contact && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex items-center gap-1"
+                            onClick={() => {
+                              const id = isInternal ? ev.id : ev.id;
+                              setLinkTarget({ kind: isInternal ? 'internal' : 'google', id });
+                              setLinkModalOpen(true);
+                            }}
+                          >
+                            <LinkIcon className="w-4 h-4" /> Abbina
+                          </Button>
+                        )}
+                        {contactPhone && templates.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            <select
+                              className="border rounded px-2 py-1 text-sm"
+                              onChange={(e) => {
+                                const tpl = e.target.value;
+                                if (!tpl) return;
+                                sendTemplate(contactPhone, tpl);
+                                e.target.value = '';
+                              }}
+                            >
+                              <option value="">Template…</option>
+                              {templates.map(t => (
+                                <option key={t.name} value={t.name}>
+                                  {t.components?.[0]?.text
+                                    ? t.components[0].text.slice(0, 40) + (t.components[0].text.length > 40 ? '…' : '')
+                                    : t.name}
+                                </option>
+                              ))}
+                            </select>
+                            <Button variant="outline" size="icon" title="Invia template">
+                              <SendIcon className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
-              }
+              })}
+            </div>
+          )}
+        </div>
+      </div>
 
-              // Google
-              const sRaw = ev.start?.dateTime || (ev.start?.date ? ev.start.date + 'T00:00:00' : null);
-              const eRaw = ev.end?.dateTime   || (ev.end?.date   ? ev.end.date   + 'T23:59:59' : null);
-              const s = sRaw ? new Date(sRaw) : null;
-              const e = eRaw ? new Date(eRaw) : null;
-              return (
-                <div
-                  key={`g-${ev.id || idx}`}
-                  className="relative rounded-md p-2 pl-6 text-sm bg-muted after:absolute after:inset-y-2 after:left-2 after:w-1 after:rounded-full after:bg-violet-600"
+      {/* Modal abbinamento contatto */}
+      {linkModalOpen && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Abbina contatto</h3>
+              <button className="text-2xl leading-none" onClick={()=>{ setLinkModalOpen(false); setLinkTarget(null); }}>×</button>
+            </div>
+            <div className="flex items-center gap-2 mb-3">
+              <Search className="w-4 h-4 text-gray-500" />
+              <Input
+                placeholder="Cerca per nome, cognome, telefono, email…"
+                value={contactSearch}
+                onChange={e=>setContactSearch(e.target.value)}
+              />
+            </div>
+            <div className="max-h-80 overflow-y-auto divide-y">
+              {contacts
+                .filter(c => {
+                  if (!contactSearch) return true;
+                  const s = contactSearch.toLowerCase();
+                  return [
+                    c.firstName, c.lastName, c.phone, c.email, (c.tags||[]).join(' ')
+                  ].filter(Boolean).some(v => String(v).toLowerCase().includes(s));
+                })
+                .slice(0, 200)
+                .map(c => (
+                <button
+                  key={c.id}
+                  onClick={()=> linkContact(linkTarget.kind, linkTarget.id, c.id)}
+                  className="w-full text-left py-2 px-1 hover:bg-gray-50"
                 >
-                  <div className="font-medium flex items-center gap-2">
-                    {ev.summary || '(Google, senza titolo)'}
-                    {ev.htmlLink && (
-                      <a href={ev.htmlLink} target="_blank" rel="noopener noreferrer" title="Apri su Google">
-                        <ExternalLink className="w-3.5 h-3.5 text-gray-500" />
-                      </a>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {s ? fmtRange(s, e || s) : '—'}
-                    {ev.location ? ` • ${ev.location}` : ''}
-                  </div>
-                </div>
-              );
-            })}
+                  <div className="font-medium">{c.firstName} {c.lastName}</div>
+                  <div className="text-xs text-gray-500">{c.phone} {c.email && `• ${c.email}`}</div>
+                </button>
+              ))}
+              {contacts.length === 0 && (
+                <div className="text-sm text-gray-500 p-2">Rubrica vuota.</div>
+              )}
+            </div>
+            <div className="mt-4 text-right">
+              <Button variant="outline" onClick={()=>{ setLinkModalOpen(false); setLinkTarget(null); }}>
+                Chiudi
+              </Button>
+            </div>
           </div>
-        </CardFooter>
-      </Card>
+        </div>
+      )}
     </div>
   );
 }
