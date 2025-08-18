@@ -4,192 +4,255 @@ import { adminDB, adminTimestamp } from '@/lib/firebase-admin';
 import { getUidFromAuthHeader } from '@/lib/auth-server';
 import { googleApi } from '@/lib/google';
 
+function toDate(v: any): Date {
+  if (!v) return new Date();
+  if (typeof v?.toDate === 'function') return v.toDate();
+  if (typeof v === 'string') return new Date(v);
+  if (v && typeof v === 'object' && 'seconds' in v) return new Date(v.seconds * 1000);
+  return new Date(v);
+}
+
+/** ---------------- GET: lista appuntamenti (range + staff opzionale) ---------------- */
 export async function GET(req: NextRequest) {
-  const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
-  const sp = req.nextUrl.searchParams;
-  const from = sp.get('from');
-  const to   = sp.get('to');
-  const staffId = sp.get('staff_id'); // opzionale, ora non vincola
+  try {
+    const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
+    const sp = req.nextUrl.searchParams;
+    const from = sp.get('from');
+    const to = sp.get('to');
+    const staffId = sp.get('staff_id');
 
-  let q = adminDB.collection('appointments').where('user_uid','==', uid);
-  if (from) q = q.where('start','>=', adminTimestamp.fromDate(new Date(from)));
-  if (to)   q = q.where('start','<=', adminTimestamp.fromDate(new Date(to)));
+    let q: FirebaseFirestore.Query = adminDB.collection('appointments')
+      .where('user_uid', '==', uid);
 
-  const snap = await q.get();
-  const items = snap.docs.map(d => ({ id: d.id, ...d.data() as any }))
-    .filter(a => !staffId || a.staff_id === staffId);
+    if (from) q = q.where('start', '>=', adminTimestamp.fromDate(new Date(from)));
+    if (to)   q = q.where('start', '<=', adminTimestamp.fromDate(new Date(to)));
 
-  return NextResponse.json(items);
+    const snap = await q.get();
+    const items = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter((a: any) => !staffId || a.staff_id === staffId);
+
+    return NextResponse.json(items);
+  } catch (e: any) {
+    return NextResponse.json({ error: 'Internal error', details: String(e?.message || e) }, { status: 500 });
+  }
 }
 
+/** ---------------- POST: crea appuntamento (service/staff NON obbligatori) ---------------- */
 export async function POST(req: NextRequest) {
-  const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
-  const body = await req.json();
+  try {
+    const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
 
-  // 🔸 Ora service_id e staff_id sono opzionali. Aggiunto "party" (array di contatti).
-  const { customer, start, notes, service_id = null, staff_id = null, durationMin, party } = body;
+    // Leggiamo come testo per evitare errori di parse su body vuoti
+    const raw = await req.text();
+    let body: any = {};
+    try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
 
-  if (!customer?.name || !customer?.phone || !start) {
-    return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
-  }
+    const {
+      customer,          // { name, phone }
+      start,             // ISO string
+      durationMin,       // opzionale (minuti), default 60
+      notes,
+      party = [],        // opzionale: array di { id?, name?, phone?, email? }
+      service_id = null, // opzionale
+      staff_id = null,   // opzionale
+    } = body;
 
-  // Config e default duration/buffer
-  const cfgSnap = await adminDB.doc(`users/${uid}/calendar/config`).get();
-  const cfg:any = cfgSnap.exists ? cfgSnap.data() : {};
-
-  const fallbackDuration = Number(cfg?.defaultDuration ?? 90);
-  const fallbackBuffer   = Number(cfg?.defaultBuffer   ?? 0);
-
-  const duration = Number(durationMin ?? fallbackDuration);
-  const buffer   = Number(fallbackBuffer);
-
-  const startDate = new Date(start);
-  const end = new Date(startDate.getTime() + (duration + buffer) * 60000);
-
-  // 🔸 Conflict check SOLO se c’è uno staff esplicito (altrimenti “resource-less”)
-  let conflictQ = adminDB.collection('appointments')
-    .where('user_uid','==', uid)
-    .where('status','in',['pending','confirmed','done'])
-    .where('start','<=', adminTimestamp.fromDate(end));
-
-  if (staff_id) conflictQ = conflictQ.where('staff_id','==', staff_id);
-  const snapC = await conflictQ.get();
-  const hasOverlap = snapC.docs.some(d => {
-    const a:any = d.data();
-    const aEnd = a.end.toDate ? a.end.toDate() : new Date(a.end);
-    const aStart = a.start.toDate ? a.start.toDate() : new Date(a.start);
-    return aStart < end && aEnd > startDate;
-  });
-  if (hasOverlap) return NextResponse.json({ error: 'Time overlap' }, { status: 409 });
-
-  // 🔸 Salvo appuntamento (service_id/staff_id possono essere null) + party opzionale
-  const docRef = adminDB.collection('appointments').doc();
-  const data = {
-    user_uid: uid,
-    customer,              // { name, phone, ... }
-    service_id,            // null ok
-    staff_id,              // null ok
-    start: adminTimestamp.fromDate(startDate),
-    end: adminTimestamp.fromDate(end),
-    status: 'pending',
-    source: 'manual',
-    notes: notes || '',
-    party: Array.isArray(party) ? party : [], // [{id,name,phone,email}] opzionale
-    createdAt: adminTimestamp.now(),
-    updatedAt: adminTimestamp.now(),
-  };
-
-  await docRef.set(data);
-
-  // 🔸 Sync Google con defaultGoogleCalendarId (senza staff mapping)
-  if (cfg.syncToGoogle) {
-    try {
-      const calendarId = cfg.defaultGoogleCalendarId;
-      if (calendarId) {
-        // Includo i nominativi del party in description
-        const partyLine =
-          (data.party?.length ? `\nPartecipanti:\n${data.party.map((p:any)=>`- ${p.name || p.phone || p.email || p.id || ''}`).join('\n')}` : '');
-        const ev = await googleApi(
-          uid,
-          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              summary: `${customer.name}`,
-              description: `${notes || ''}${partyLine}`,
-              start: { dateTime: startDate.toISOString() },
-              end:   { dateTime: end.toISOString() }
-            })
-          }
-        );
-        await docRef.update({ google_event_id: ev.id });
-      }
-    } catch {
-      await docRef.update({ google_event_id: null });
+    if (!customer?.name || !customer?.phone || !start) {
+      return NextResponse.json(
+        { error: 'Missing fields (customer.name, customer.phone, start)' },
+        { status: 400 }
+      );
     }
-  }
 
-  const finalSnap = await docRef.get();
-  return NextResponse.json({ id: docRef.id, ...finalSnap.data() });
-}
+    // Carica config per fallback (durata/buffer/default calendar)
+    const cfgSnap = await adminDB.doc(`users/${uid}/calendar/config`).get();
+    const cfg: any = cfgSnap.exists ? cfgSnap.data() : {};
 
-export async function PATCH(req: NextRequest) {
-  const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
-  const body = await req.json();
-  const { id, patch } = body;
-  if (!id || !patch) return NextResponse.json({ error: 'Missing id/patch' }, { status: 400 });
+    // Priorità durata: durationMin → durata servizio → default (60)
+    let duration = Number(durationMin);
+    if (!duration || Number.isNaN(duration)) {
+      if (service_id) {
+        const service = (cfg.services || []).find((s: any) => s.id === service_id);
+        duration = Number(service?.duration || 60);
+      } else {
+        duration = Number(cfg.defaultDuration || 60);
+      }
+    }
+    const buffer = Number(cfg.defaultBuffer || 0);
 
-  const ref = adminDB.collection('appointments').doc(id);
-  const snap = await ref.get();
-  if (!snap.exists) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  const appt:any = snap.data();
-  if (appt.user_uid !== uid) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const startDate = new Date(start);
+    const endDate = new Date(startDate.getTime() + (duration + buffer) * 60000);
 
-  const cfgSnap = await adminDB.doc(`users/${uid}/calendar/config`).get();
-  const cfg:any = cfgSnap.exists ? cfgSnap.data() : {};
-  const fallbackDuration = Number(cfg?.defaultDuration ?? 90);
-  const fallbackBuffer   = Number(cfg?.defaultBuffer   ?? 0);
+    // Crea doc Firestore
+    const docRef = adminDB.collection('appointments').doc();
+    const data = {
+      user_uid: uid,
+      customer,
+      service_id,
+      staff_id,
+      start: adminTimestamp.fromDate(startDate),
+      end: adminTimestamp.fromDate(endDate),
+      durationMin: duration,
+      status: 'pending',
+      source: 'manual',
+      notes: notes || '',
+      party: Array.isArray(party) ? party : [],
+      createdAt: adminTimestamp.now(),
+      updatedAt: adminTimestamp.now(),
+    };
+    await docRef.set(data);
 
-  // Se cambia start o durationMin ricalcolo end
-  let updates:any = { ...patch, updatedAt: adminTimestamp.now() };
-  if (patch.start || patch.durationMin) {
-    const start = new Date(patch.start || (appt.start.toDate ? appt.start.toDate() : new Date(appt.start)));
-    const duration = Number(patch.durationMin ?? fallbackDuration);
-    const end = new Date(start.getTime() + (duration + fallbackBuffer) * 60000);
-    updates.start = adminTimestamp.fromDate(start);
-    updates.end   = adminTimestamp.fromDate(end);
-  }
+    // Sync Google (se attivo)
+    let google_event_id: string | null = null;
+    if (cfg.syncToGoogle) {
+      try {
+        const calendarId =
+          (cfg.staff || []).find((s: any) => s.id === staff_id)?.googleCalendarId ||
+          cfg.defaultGoogleCalendarId;
 
-  await ref.update(updates);
+        if (calendarId) {
+          const descriptionParts: string[] = [];
+          if (notes) descriptionParts.push(`Note: ${notes}`);
+          if (data.party?.length) {
+            descriptionParts.push(
+              'Partecipanti:\n' +
+              data.party.map((p: any) =>
+                `- ${(p.name || '').trim()} ${p.phone || ''} ${p.email || ''}`.trim()
+              ).join('\n')
+            );
+          }
 
-  // Sync Google se presente l’evento
-  const after = (await ref.get()).data() as any;
-  if (after.google_event_id && cfg.defaultGoogleCalendarId) {
-    try {
-      await googleApi(
-        uid,
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cfg.defaultGoogleCalendarId)}/events/${after.google_event_id}`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({
-            summary: `${after.customer?.name || ''}`,
-            start: { dateTime: (after.start.toDate ? after.start.toDate() : new Date(after.start)).toISOString() },
-            end:   { dateTime: (after.end.toDate ? after.end.toDate() : new Date(after.end)).toISOString() },
-            description: after.notes || ''
-          })
+          const ev = await googleApi(
+            uid,
+            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                summary: `${customer.name} — Prenotazione`,
+                description: descriptionParts.join('\n\n'),
+                start: { dateTime: startDate.toISOString() },
+                end:   { dateTime: endDate.toISOString() },
+              }),
+            }
+          );
+          google_event_id = ev?.id || null;
+          await docRef.update({ google_event_id });
         }
-      );
-    } catch {}
-  }
+      } catch (e: any) {
+        await docRef.update({ google_event_id: null, google_sync_error: String(e?.message || e) });
+      }
+    }
 
-  return NextResponse.json({ ok: true });
+    const finalSnap = await docRef.get();
+    return NextResponse.json({ id: docRef.id, ...finalSnap.data() });
+  } catch (e: any) {
+    console.error('POST /api/calendar/appointments error:', e);
+    return NextResponse.json({ error: 'Internal error', details: String(e?.message || e) }, { status: 500 });
+  }
 }
 
-export async function DELETE(req: NextRequest) {
-  const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
-  const { searchParams } = new URL(req.url);
-  const id = searchParams.get('id');
-  if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+/** ---------------- PATCH: aggiorna (ricalcola end se cambia start/durationMin) ---------------- */
+export async function PATCH(req: NextRequest) {
+  try {
+    const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
+    const body = await req.json();
+    const { id, patch } = body || {};
+    if (!id || !patch) return NextResponse.json({ error: 'Missing id/patch' }, { status: 400 });
 
-  const ref = adminDB.collection('appointments').doc(id);
-  const snap = await ref.get();
-  if (!snap.exists) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  const appt:any = snap.data();
-  if (appt.user_uid !== uid) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const ref = adminDB.collection('appointments').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const appt: any = snap.data();
+    if (appt.user_uid !== uid) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const cfgSnap = await adminDB.doc(`users/${uid}/calendar/config`).get();
-  const cfg:any = cfgSnap.exists ? cfgSnap.data() : {};
+    const cfgSnap = await adminDB.doc(`users/${uid}/calendar/config`).get();
+    const cfg: any = cfgSnap.exists ? cfgSnap.data() : {};
+    const buffer = Number(cfg.defaultBuffer || 0);
 
-  if (appt.google_event_id && cfg.defaultGoogleCalendarId) {
-    try {
-      await googleApi(
-        uid,
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cfg.defaultGoogleCalendarId)}/events/${appt.google_event_id}`,
-        { method: 'DELETE' }
+    let updates: any = { ...patch, updatedAt: adminTimestamp.now() };
+
+    if (patch.start || patch.durationMin) {
+      const start = patch.start ? new Date(patch.start) : toDate(appt.start);
+      const duration = Number(
+        patch.durationMin ??
+        appt.durationMin ??
+        60
       );
-    } catch {}
-  }
+      const end = new Date(start.getTime() + (duration + buffer) * 60000);
+      updates.start = adminTimestamp.fromDate(start);
+      updates.end   = adminTimestamp.fromDate(end);
+      updates.durationMin = duration;
+    }
 
-  await ref.delete();
-  return NextResponse.json({ ok: true });
+    await ref.update(updates);
+
+    // Sync Google se presente
+    const after = (await ref.get()).data() as any;
+    if (after?.google_event_id) {
+      const calendarId =
+        (cfg.staff || []).find((s: any) => s.id === after.staff_id)?.googleCalendarId ||
+        cfg.defaultGoogleCalendarId;
+
+      if (calendarId) {
+        try {
+          await googleApi(
+            uid,
+            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${after.google_event_id}`,
+            {
+              method: 'PATCH',
+              body: JSON.stringify({
+                summary: `${after.customer?.name || ''} — Prenotazione`,
+                start: { dateTime: toDate(after.start).toISOString() },
+                end:   { dateTime: toDate(after.end).toISOString() },
+                description: after.notes || '',
+              }),
+            }
+          );
+        } catch {}
+      }
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: 'Internal error', details: String(e?.message || e) }, { status: 500 });
+  }
+}
+
+/** ---------------- DELETE: elimina (anche Google se agganciato) ---------------- */
+export async function DELETE(req: NextRequest) {
+  try {
+    const uid = await getUidFromAuthHeader(req.headers.get('authorization'));
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+    if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+    const ref = adminDB.collection('appointments').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    const appt: any = snap.data();
+    if (appt.user_uid !== uid) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    // cancella su Google se presente
+    const cfgSnap = await adminDB.doc(`users/${uid}/calendar/config`).get();
+    const cfg: any = cfgSnap.exists ? cfgSnap.data() : {};
+    const calendarId =
+      (cfg.staff || []).find((s: any) => s.id === appt.staff_id)?.googleCalendarId ||
+      cfg.defaultGoogleCalendarId;
+
+    if (appt.google_event_id && calendarId) {
+      try {
+        await googleApi(
+          uid,
+          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${appt.google_event_id}`,
+          { method: 'DELETE' }
+        );
+      } catch {}
+    }
+
+    await ref.delete();
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: 'Internal error', details: String(e?.message || e) }, { status: 500 });
+  }
 }
