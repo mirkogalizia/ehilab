@@ -1,13 +1,10 @@
-// src/app/chatboost/calendario/page.jsx
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Link as LinkIcon, Send as SendIcon, Search, Plus as PlusIcon, X } from 'lucide-react';
+import { ExternalLink, Link as LinkIcon, Send as SendIcon, Search, PlusIcon, Trash2 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 import { db } from '@/lib/firebase';
-import {
-  collection, query, where, onSnapshot, setDoc, doc, getDocs
-} from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,32 +33,13 @@ const monthWindow = (current) => {
   const m = current.getMonth();
   return { first: new Date(y, m, 1), last: new Date(y, m + 1, 0) };
 };
-const normalizePhone = (phoneRaw = '') => {
-  let phone = String(phoneRaw).trim()
-    .replace(/^[+]+/, '')
-    .replace(/^00/, '')
-    .replace(/[\s\-().]/g, '');
+const normalizePhone = (phoneRaw='') => {
+  let phone = String(phoneRaw).trim().replace(/^[+]+/,'').replace(/^00/,'').replace(/[\s\-().]/g,'');
   if (!phone) return '';
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
-  if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
+  if (phone.startsWith('3')  && phone.length === 10) return '+39' + phone;
   if (/^\d+$/.test(phone) && phone.length > 10) return '+' + phone;
-  if (String(phoneRaw).startsWith('+')) return String(phoneRaw).trim();
-  return '';
-};
-const guessContactFromText = (text='') => {
-  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  const phoneMatch = text.match(/\+?\d[\d\s().-]{6,}\d/);
-  return {
-    email: emailMatch ? emailMatch[0] : '',
-    phone: phoneMatch ? normalizePhone(phoneMatch[0]) : ''
-  };
-};
-// compone ISO locale partendo da data + "HH:MM"
-const composeStartISO = (dateObj, hhmm) => {
-  const [hh='00', mm='00'] = String(hhmm || '').split(':');
-  const d = new Date(dateObj);
-  d.setHours(parseInt(hh,10)||0, parseInt(mm,10)||0, 0, 0);
-  return d.toISOString();
+  return phoneRaw.startsWith('+') ? phoneRaw : '';
 };
 
 export default function CalendarioPage() {
@@ -81,40 +59,26 @@ export default function CalendarioPage() {
 
   // rubrica
   const [contacts, setContacts] = useState([]);
-  const contactsById = useMemo(() => {
-    const m = new Map();
-    for (const c of contacts) m.set(c.id || c.phone, c);
-    return m;
-  }, [contacts]);
-
-  // mappa evento↔contatto salvata
-  const [linksMap, setLinksMap] = useState(new Map()); // key: `${kind}:${eventId}` -> contactId
+  const [contactSearch, setContactSearch] = useState('');
 
   // template WhatsApp
   const [templates, setTemplates] = useState([]);
-  const [tplChoice, setTplChoice] = useState({}); // { [eventKey]: templateName }
+  // scelta template per-evento
+  const [tplChoice, setTplChoice] = useState({}); // { [evKey]: templateName }
 
-  // userData per WhatsApp (phone_number_id)
+  // userData per invio template diretto (come ChatPage)
   const [userData, setUserData] = useState(null);
 
-  // modale abbinamento contatto
-  const [linkModalOpen, setLinkModalOpen] = useState(false);
-  const [linkTarget, setLinkTarget] = useState(null);
-  const [contactSearch, setContactSearch] = useState('');
-
-  // modale NUOVO appuntamento
+  // modal create
   const [createOpen, setCreateOpen] = useState(false);
   const [createTime, setCreateTime] = useState('20:00');
   const [createDuration, setCreateDuration] = useState(90);
   const [createNotes, setCreateNotes] = useState('');
-  const [searchPick, setSearchPick] = useState(''); // ricerca nella rubrica
-  const [selectedPeople, setSelectedPeople] = useState([]); // multiselezione rubrica
-  const [manualName, setManualName] = useState('');
-  const [manualPhone, setManualPhone] = useState('');
+  const [selContacts, setSelContacts] = useState([]); // [{id, firstName, lastName, phone, email}]
 
   const refreshTimer = useRef(null);
 
-  /* ---------------- Google OAuth & liste ---------------- */
+  /* -------------------- Google OAuth & liste -------------------- */
   const connectGoogle = async () => {
     if (!user) return;
     const idt = await user.getIdToken();
@@ -163,11 +127,18 @@ export default function CalendarioPage() {
     setGEvents(r.ok ? (j.items || []) : []);
   };
 
-  /* ---------------- Config + templates + rubrica + userData ---------------- */
+  /* -------------------- Load base: contatti, templates, userData -------------------- */
   useEffect(() => {
     if (!user) return;
+
     (async () => {
-      // templates approvati
+      // rubrica realtime
+      const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
+      const unsub = onSnapshot(qContacts, snap => {
+        setContacts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      });
+
+      // templates
       try {
         const tRes = await fetch('/api/list-templates', {
           method: 'POST',
@@ -178,12 +149,6 @@ export default function CalendarioPage() {
         if (Array.isArray(t)) setTemplates(t.filter(x => x.status === 'APPROVED'));
       } catch {}
 
-      // rubrica realtime
-      const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
-      const unsub = onSnapshot(qContacts, snap => {
-        setContacts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      });
-
       // userData (per phone_number_id)
       const usersSnap = await getDocs(collection(db, 'users'));
       const me = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
@@ -193,7 +158,7 @@ export default function CalendarioPage() {
     })();
   }, [user]);
 
-  /* ---------------- Appuntamenti interni del mese ---------------- */
+  /* -------------------- Appuntamenti interni del mese -------------------- */
   const loadInternalMonth = async () => {
     if (!user) return;
     const idt = await user.getIdToken();
@@ -205,60 +170,40 @@ export default function CalendarioPage() {
     const r = await fetch(`/api/calendar/appointments?${qs.toString()}`, {
       headers: { Authorization: `Bearer ${idt}` },
     });
-    const txt = await r.text();
-    let data = [];
-    try { data = txt ? JSON.parse(txt) : []; } catch { data = []; }
+    const data = await r.json();
     setAppts(Array.isArray(data) ? data : []);
   };
 
   useEffect(() => { if (user) loadInternalMonth(); }, [user, monthRef]);
 
-  /* ---------------- Eventi Google del mese ---------------- */
+  /* -------------------- Eventi Google del mese -------------------- */
   useEffect(() => { if (user) loadGoogleCalendars(); }, [user]);
   useEffect(() => { if (user && googleCalId) loadGoogleMonth(googleCalId); }, [user, monthRef, googleCalId]);
 
-  /* ---------------- Link evento↔contatto (Firestore) ---------------- */
-  const loadLinks = async () => {
-    if (!user) return;
-    const qLinks = query(collection(db, 'calendar_links'), where('user_uid', '==', user.uid));
-    const snap = await getDocs(qLinks);
-    const m = new Map();
-    snap.forEach(d => {
-      const data = d.data();
-      m.set(`${data.kind}:${data.eventId}`, data.contactId);
-    });
-    setLinksMap(m);
-  };
-  useEffect(() => { if (user) loadLinks(); }, [user]);
-
-  const linkContact = async (kind, eventId, contactId) => {
-    if (!user) return;
-    const id = `${user.uid}__${kind}__${eventId}`;
-    await setDoc(doc(db, 'calendar_links', id), {
-      user_uid: user.uid, kind, eventId, contactId, linkedAt: new Date()
-    }, { merge: true });
-    setLinksMap(m => new Map(m).set(`${kind}:${eventId}`, contactId));
-    setLinkModalOpen(false);
-    setLinkTarget(null);
-  };
-
-  /* ---------------- Merge per giorno (interni + Google) ---------------- */
+  /* -------------------- Merge per giorno -------------------- */
   const mergedByDay = useMemo(() => {
     const map = {};
+    // interni
     for (const a of appts) {
       const k = ymd(toDate(a.start));
       (map[k] ||= []).push({ __type: 'internal', ...a });
     }
+    // google
     for (const ev of gEvents) {
       const s = ev.start?.dateTime || (ev.start?.date ? ev.start.date + 'T00:00:00' : null);
       if (!s) continue;
       const k = ymd(s);
       (map[k] ||= []).push({ __type: 'google', ...ev });
     }
+    // ordina per ora
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => {
-        const as = a.__type === 'internal' ? toDate(a.start) : new Date(a.start?.dateTime || a.start?.date || 0);
-        const bs = b.__type === 'internal' ? toDate(b.start) : new Date(b.start?.dateTime || b.start?.date || 0);
+        const as = a.__type === 'internal'
+          ? toDate(a.start)
+          : new Date(a.start?.dateTime || a.start?.date || 0);
+        const bs = b.__type === 'internal'
+          ? toDate(b.start)
+          : new Date(b.start?.dateTime || b.start?.date || 0);
         return +as - +bs;
       });
     }
@@ -273,85 +218,116 @@ export default function CalendarioPage() {
   const selectedKey = ymd(date);
   const eventsOfDay = mergedByDay[selectedKey] || [];
 
-  /* ---------------- Invio template (manuale con bottone) ---------------- */
-  const sendTemplate = async (phone, templateName) => {
+  /* -------------------- Invio template: a tutti i contatti dell'evento -------------------- */
+  const sendTemplateBulk = async (phones, templateName) => {
     if (!userData?.phone_number_id) {
-      alert('Config WhatsApp mancante (phone_number_id).');
+      alert('Configurazione WhatsApp mancante (phone_number_id).');
       return;
     }
     if (!templateName) {
       alert('Seleziona un template.');
       return;
     }
-    try {
-      const resp = await fetch(
-        `https://graph.facebook.com/v19.0/${userData.phone_number_id}/messages`,
-        {
+    let ok = 0, ko = 0;
+    for (const raw of phones) {
+      const phone = normalizePhone(raw);
+      if (!phone) { ko++; continue; }
+      try {
+        const payload = {
+          messaging_product: 'whatsapp',
+          to: phone,
+          type: 'template',
+          template: { name: templateName, language: { code: 'it' }, components: [{ type:'BODY', parameters: [] }] }
+        };
+        const resp = await fetch(`https://graph.facebook.com/v19.0/${userData.phone_number_id}/messages`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: phone,
-            type: 'template',
-            template: { name: templateName, language: { code: 'it' }, components: [{ type: 'BODY', parameters: [] }] }
-          }),
-        }
-      );
-      const txt = await resp.text();
-      let data; try { data = txt ? JSON.parse(txt) : {}; } catch { data = { raw: txt }; }
-      if (resp.ok && data?.messages) alert('Template inviato ✅');
-      else alert('Invio KO: ' + (data?.error?.message || JSON.stringify(data)));
-    } catch (e) { alert('Invio KO: ' + (e?.message || e)); }
+          body: JSON.stringify(payload),
+        });
+        const txt = await resp.text();
+        const json = txt ? JSON.parse(txt) : {};
+        if (resp.ok && json?.messages) ok++; else ko++;
+      } catch { ko++; }
+    }
+    alert(`Inviati: ${ok} • Falliti: ${ko}`);
   };
 
-  /* ---------------- Deriva contatto per evento ---------------- */
-  const resolveContactForEvent = (ev) => {
-    const evKey = ev.__type === 'internal' ? `internal:${ev.id}` : `google:${ev.id}`;
-    const linkedId = linksMap.get(evKey);
-    if (linkedId && contactsById.get(linkedId)) return contactsById.get(linkedId);
-
-    if (ev.__type === 'internal') {
-      const ph = normalizePhone(ev.customer?.phone);
-      if (ph && contactsById.get(ph)) return contactsById.get(ph);
-      return null;
-    }
-
-    const att = (ev.attendees || []).find(a => a.email);
-    if (att) {
-      const byEmail = Array.from(contactsById.values())
-        .find(c => (c.email || '').toLowerCase() === att.email.toLowerCase());
-      if (byEmail) return byEmail;
-    }
-    const guess = guessContactFromText(`${ev.description || ''} ${ev.location || ''} ${ev.summary || ''}`);
-    if (guess.phone && contactsById.get(guess.phone)) return contactsById.get(guess.phone);
-    if (guess.email) {
-      const byE = Array.from(contactsById.values())
-        .find(c => (c.email || '').toLowerCase() === guess.email.toLowerCase());
-      if (byE) return byE;
-    }
-    return null;
+  /* -------------------- Delete evento interno -------------------- */
+  const deleteAppt = async (id) => {
+    if (!user || !id) return;
+    if (!confirm('Eliminare questo evento?')) return;
+    const idt = await user.getIdToken();
+    const qs = new URLSearchParams({ id });
+    await fetch(`/api/calendar/appointments?${qs.toString()}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${idt}` },
+    });
+    // ricarica
+    loadInternalMonth();
   };
 
-  /* ---------------- Auto refresh (60s) ---------------- */
-  useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState !== 'visible') return;
-      loadInternalMonth();
-      if (googleCalId) loadGoogleMonth(googleCalId);
-    };
-    refreshTimer.current = setInterval(tick, 60000);
-    const vis = () => { if (document.visibilityState === 'visible') tick(); };
-    document.addEventListener('visibilitychange', vis);
-    return () => {
-      if (refreshTimer.current) clearInterval(refreshTimer.current);
-      document.removeEventListener('visibilitychange', vis);
-    };
-  }, [user, monthRef, googleCalId]);
+  /* -------------------- Create modal helpers -------------------- */
+  const filteredContacts = useMemo(() => {
+    const s = contactSearch.trim().toLowerCase();
+    if (!s) return contacts;
+    return contacts.filter(c =>
+      [c.firstName, c.lastName, c.phone, c.email, (c.tags||[]).join(' ')].filter(Boolean)
+      .some(v => String(v).toLowerCase().includes(s))
+    );
+  }, [contactSearch, contacts]);
 
-  /* ---------------- UI ---------------- */
+  const toggleSelectContact = (c) => {
+    setSelContacts((arr) => {
+      const exists = arr.find(x => x.id === c.id);
+      if (exists) return arr.filter(x => x.id !== c.id);
+      return [...arr, c];
+    });
+  };
+
+  const createEvent = async () => {
+    if (!user) return;
+    if (!selContacts.length) { alert('Seleziona almeno un contatto'); return; }
+    if (!createTime) { alert('Scegli un orario'); return; }
+
+    // costruisci ISO UTC preservando l'orario locale selezionato
+    const base = new Date(`${ymd(date)}T${createTime}:00`);
+    const startISO = new Date(base.getTime() - base.getTimezoneOffset()*60000).toISOString();
+
+    const contactsPayload = selContacts.map(c => ({
+      contactId: c.id,
+      name: `${c.firstName||''} ${c.lastName||''}`.trim() || null,
+      phone: c.phone || null,
+      email: c.email || null,
+    }));
+
+    const idt = await user.getIdToken();
+    const res = await fetch('/api/calendar/appointments', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start: startISO,
+        durationMinutes: Number(createDuration || 90),
+        notes: createNotes || '',
+        contacts: contactsPayload,
+      })
+    });
+    const j = await res.json();
+    if (!res.ok) {
+      alert(j?.error || 'Errore creazione');
+      return;
+    }
+    // reset & chiudi
+    setCreateOpen(false);
+    setSelContacts([]);
+    setCreateNotes('');
+    // ricarica eventi
+    loadInternalMonth();
+  };
+
+  /* -------------------- UI -------------------- */
   if (!user) return <div className="p-6">Devi effettuare il login.</div>;
 
   return (
@@ -402,18 +378,11 @@ export default function CalendarioPage() {
               <div className="text-sm font-medium">
                 {date?.toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-6"
-                title="Nuovo appuntamento"
-                onClick={() => setCreateOpen(true)}
-              >
+              <Button variant="ghost" size="icon" className="size-6" title="Nuovo appuntamento" onClick={() => setCreateOpen(true)}>
                 <PlusIcon />
                 <span className="sr-only">Add Event</span>
               </Button>
             </div>
-
             <div className="text-xs text-muted-foreground px-1">
               I giorni con puntino verde hanno eventi (interni o Google).
             </div>
@@ -436,15 +405,17 @@ export default function CalendarioPage() {
                 const s = isInternal ? toDate(ev.start) : new Date(ev.start?.dateTime || ev.start?.date || Date.now());
                 const e = isInternal ? toDate(ev.end)   : new Date(ev.end?.dateTime   || ev.end?.date   || s);
 
-                const contact = resolveContactForEvent(ev);
-                const contactName = contact ? `${contact.firstName || ''} ${contact.lastName || ''}`.trim() : '';
-                const contactPhone = contact?.phone || '';
+                // contatti dell'evento (interni) → array
+                const guests = isInternal ? (ev.guests || []) : [];
+                const phones = guests.map(g => g.phone).filter(Boolean);
 
                 const title = isInternal
-                  ? `${ev.customer?.name || '—'}`
+                  ? (guests[0]?.name || guests[0]?.phone || 'Prenotazione')
+                    + (guests.length > 1 ? ` (+${guests.length-1})` : '')
                   : (ev.summary || '(Google, senza titolo)');
 
                 const rightTagColor = isInternal ? 'bg-emerald-600' : 'bg-violet-600';
+
                 const evKey = `${isInternal ? 'i' : 'g'}:${ev.id || idx}`;
 
                 return (
@@ -460,47 +431,39 @@ export default function CalendarioPage() {
                             </a>
                           )}
                         </div>
+
                         <div className="text-xs text-gray-600 mt-1">
-                          {fmtRange(s, e)} {isInternal && ev.status ? `• Stato: ${ev.status}` : ''}
+                          {fmtRange(s, e)}
+                          {isInternal && ev.status ? ` • Stato: ${ev.status}` : ''}
                         </div>
 
-                        {/* Contatto */}
-                        <div className="mt-2 text-sm">
-                          {contact ? (
-                            <div className="text-gray-800">
-                              <span className="font-medium">{contactName || contact.phone || contact.email || 'Contatto'}</span>
-                              {contact.phone && <span className="text-gray-500"> • {contact.phone}</span>}
-                              {contact.email && <span className="text-gray-500"> • {contact.email}</span>}
-                            </div>
-                          ) : (
-                            <div className="text-gray-500 italic">Nessun contatto collegato</div>
-                          )}
-                        </div>
+                        {/* Chip contatti interni */}
+                        {isInternal && guests.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {guests.map((g, i) => (
+                              <span key={i} className="text-xs bg-gray-100 text-gray-800 px-2 py-1 rounded-full">
+                                {(g.name || g.phone || g.email || 'Contatto')}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
-                      <div className="flex flex-col gap-2 shrink-0">
-                        {!contact && (
-                          <Button
-                            variant="outline" size="sm"
-                            className="flex items-center gap-1"
-                            onClick={() => {
-                              const id = ev.id;
-                              setLinkTarget({ kind: isInternal ? 'internal' : 'google', id });
-                              setLinkModalOpen(true);
-                            }}
-                          >
-                            <LinkIcon className="w-4 h-4" /> Abbina
+                      <div className="flex flex-col gap-2 shrink-0 items-end">
+                        {/* Elimina solo per interni */}
+                        {isInternal && (
+                          <Button variant="ghost" size="sm" onClick={() => deleteAppt(ev.id)} title="Elimina">
+                            <Trash2 className="w-4 h-4" />
                           </Button>
                         )}
 
-                        {contactPhone && templates.length > 0 && (
+                        {/* Invio template a TUTTI i numeri dell'evento interno */}
+                        {isInternal && phones.length > 0 && templates.length > 0 && (
                           <div className="flex items-center gap-2">
                             <select
                               className="border rounded px-2 py-1 text-sm"
                               value={tplChoice[evKey] || ''}
-                              onChange={(e) =>
-                                setTplChoice((prev) => ({ ...prev, [evKey]: e.target.value }))
-                              }
+                              onChange={(e) => setTplChoice((prev) => ({ ...prev, [evKey]: e.target.value }))}
                             >
                               <option value="">Template…</option>
                               {templates.map(t => (
@@ -512,8 +475,10 @@ export default function CalendarioPage() {
                               ))}
                             </select>
                             <Button
-                              variant="outline" size="icon" title="Invia template"
-                              onClick={() => sendTemplate(contactPhone, tplChoice[evKey])}
+                              variant="outline"
+                              size="icon"
+                              title="Invia template a tutti i contatti"
+                              onClick={() => sendTemplateBulk(phones, tplChoice[evKey])}
                               disabled={!tplChoice[evKey]}
                             >
                               <SendIcon className="w-4 h-4" />
@@ -530,238 +495,80 @@ export default function CalendarioPage() {
         </div>
       </div>
 
-      {/* Modal abbinamento contatto */}
-      {linkModalOpen && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Abbina contatto</h3>
-              <button className="text-2xl leading-none" onClick={()=>{ setLinkModalOpen(false); setLinkTarget(null); }}>×</button>
-            </div>
-            <div className="flex items-center gap-2 mb-3">
-              <Search className="w-4 h-4 text-gray-500" />
-              <Input
-                placeholder="Cerca per nome, cognome, telefono, email…"
-                value={contactSearch}
-                onChange={e=>setContactSearch(e.target.value)}
-              />
-            </div>
-            <div className="max-h-80 overflow-y-auto divide-y">
-              {contacts
-                .filter(c => {
-                  if (!contactSearch) return true;
-                  const s = contactSearch.toLowerCase();
-                  return [
-                    c.firstName, c.lastName, c.phone, c.email, (c.tags||[]).join(' ')
-                  ].filter(Boolean).some(v => String(v).toLowerCase().includes(s));
-                })
-                .slice(0, 200)
-                .map(c => (
-                <button
-                  key={c.id}
-                  onClick={()=> linkContact(linkTarget.kind, linkTarget.id, c.id)}
-                  className="w-full text-left py-2 px-1 hover:bg-gray-50"
-                >
-                  <div className="font-medium">{c.firstName} {c.lastName}</div>
-                  <div className="text-xs text-gray-500">{c.phone} {c.email && `• ${c.email}`}</div>
-                </button>
-              ))}
-              {contacts.length === 0 && (
-                <div className="text-sm text-gray-500 p-2">Rubrica vuota.</div>
-              )}
-            </div>
-            <div className="mt-4 text-right">
-              <Button variant="outline" onClick={()=>{ setLinkModalOpen(false); setLinkTarget(null); }}>
-                Chiudi
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal NUOVO APPUNTAMENTO */}
+      {/* Modal Crea Evento */}
       {createOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-6">
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setCreateOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-2xl" onClick={(e)=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Nuovo appuntamento</h3>
-              <button className="text-2xl leading-none" onClick={() => setCreateOpen(false)}>×</button>
+              <h3 className="text-lg font-semibold">Nuovo evento – {date.toLocaleDateString('it-IT')}</h3>
+              <button className="text-2xl leading-none" onClick={()=>setCreateOpen(false)}>×</button>
             </div>
 
-            {/* riga data/ora/durata */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
-                <label className="text-xs text-gray-500">Data</label>
-                <Input type="date" value={ymd(date)} onChange={e => setDate(new Date(e.target.value + 'T12:00:00'))} />
+                <label className="block text-sm text-gray-600 mb-1">Orario</label>
+                <Input type="time" value={createTime} onChange={e=>setCreateTime(e.target.value)} />
               </div>
               <div>
-                <label className="text-xs text-gray-500">Ora</label>
-                <Input type="time" value={createTime} onChange={e => setCreateTime(e.target.value)} />
+                <label className="block text-sm text-gray-600 mb-1">Durata (min)</label>
+                <Input type="number" min={15} step={15} value={createDuration} onChange={e=>setCreateDuration(e.target.value)} />
               </div>
               <div>
-                <label className="text-xs text-gray-500">Durata (min)</label>
-                <Input type="number" min={10} step={5} value={createDuration} onChange={e => setCreateDuration(e.target.value)} />
+                <label className="block text-sm text-gray-600 mb-1">Note</label>
+                <Input value={createNotes} onChange={e=>setCreateNotes(e.target.value)} placeholder="opzionale" />
               </div>
             </div>
 
-            {/* Selezione multipla dalla rubrica */}
-            <div className="mb-3">
-              <label className="text-xs text-gray-500">Cerca in rubrica (selezione multipla)</label>
-              <Input
-                placeholder="Cerca nome / telefono / email…"
-                value={searchPick}
-                onChange={e => setSearchPick(e.target.value)}
-                className="mb-2"
-              />
-              {searchPick && (
-                <div className="max-h-40 overflow-auto border rounded-md">
-                  {contacts
-                    .filter(c => {
-                      const s = searchPick.toLowerCase();
-                      return [c.firstName, c.lastName, c.phone, c.email].filter(Boolean)
-                        .some(v => String(v).toLowerCase().includes(s));
-                    })
-                    .slice(0, 50)
-                    .map(c => {
-                      const already = selectedPeople.some(p => p.id === c.id);
-                      return (
-                        <button
-                          key={c.id}
-                          disabled={already}
-                          onClick={() => setSelectedPeople(prev => [...prev, c])}
-                          className={`w-full text-left px-3 py-2 hover:bg-gray-50 ${already ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                          <span className="font-medium">{c.firstName} {c.lastName}</span>
-                          <span className="text-xs text-gray-500 ml-2">{c.phone} {c.email && `• ${c.email}`}</span>
-                        </button>
-                      );
-                    })}
-                  {contacts.length === 0 && (
-                    <div className="p-2 text-sm text-gray-500">Rubrica vuota.</div>
-                  )}
-                </div>
-              )}
+            <div className="mt-5">
+              <label className="block text-sm text-gray-600 mb-2">Cerca in rubrica</label>
+              <div className="flex items-center gap-2 mb-2">
+                <Search className="w-4 h-4 text-gray-500" />
+                <Input
+                  placeholder="Nome, cognome, telefono, email…"
+                  value={contactSearch}
+                  onChange={e=>setContactSearch(e.target.value)}
+                />
+              </div>
 
-              {/* Chips selezionati */}
-              {selectedPeople.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {selectedPeople.map(p => (
-                    <span key={p.id} className="inline-flex items-center gap-2 px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 text-sm">
-                      {(p.firstName || '') + ' ' + (p.lastName || '')}
-                      <button
-                        className="text-emerald-900/60 hover:text-emerald-900"
-                        onClick={() => setSelectedPeople(arr => arr.filter(x => x.id !== p.id))}
-                        title="Rimuovi"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+              {/* Selezionati (chip) */}
+              {selContacts.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {selContacts.map(c => (
+                    <span key={c.id} className="inline-flex items-center gap-2 text-xs bg-emerald-50 text-emerald-800 px-2 py-1 rounded-full">
+                      {(c.firstName||'') + ' ' + (c.lastName||'')}
+                      <button className="ml-1" onClick={() => toggleSelectContact(c)}>×</button>
                     </span>
                   ))}
                 </div>
               )}
-            </div>
 
-            {/* Aggiunta manuale 1 contatto (se non presente in rubrica) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-              <div>
-                <label className="text-xs text-gray-500">Nome (manuale)</label>
-                <Input value={manualName} onChange={e => setManualName(e.target.value)} placeholder="Es. Mario Rossi" />
+              {/* Lista contatti */}
+              <div className="max-h-64 overflow-y-auto rounded border bg-white">
+                {filteredContacts.map(c => {
+                  const selected = !!selContacts.find(x => x.id === c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-gray-50 ${selected ? 'bg-gray-100' : ''}`}
+                      onClick={() => toggleSelectContact(c)}
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{(c.firstName||'') + ' ' + (c.lastName||'')}</div>
+                        <div className="text-xs text-gray-500 truncate">{c.phone} {c.email ? `• ${c.email}` : ''}</div>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${selected ? 'bg-black text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {selected ? 'Selezionato' : 'Scegli'}
+                      </span>
+                    </button>
+                  );
+                })}
+                {filteredContacts.length === 0 && <div className="p-3 text-sm text-gray-500">Nessun contatto</div>}
               </div>
-              <div>
-                <label className="text-xs text-gray-500">Telefono (manuale)</label>
-                <Input value={manualPhone} onChange={e => setManualPhone(e.target.value)} placeholder="+39…" />
-              </div>
             </div>
 
-            {/* Note */}
-            <div className="mb-4">
-              <label className="text-xs text-gray-500">Note (opzionale)</label>
-              <textarea
-                className="w-full border rounded-md px-3 py-2 min-h-[80px]"
-                value={createNotes}
-                onChange={e => setCreateNotes(e.target.value)}
-                placeholder="Note per la prenotazione…"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCreateOpen(false)}>Annulla</Button>
-              <Button
-                onClick={async () => {
-                  // costruisci lista finale: selezionati + eventuale manuale
-                  const all = [...selectedPeople];
-                  if (manualName && normalizePhone(manualPhone)) {
-                    all.unshift({
-                      id: `manual:${normalizePhone(manualPhone)}`,
-                      firstName: manualName, lastName: '',
-                      phone: normalizePhone(manualPhone), email: ''
-                    });
-                  }
-
-                  if (all.length === 0) {
-                    alert('Seleziona almeno un contatto o inserisci manualmente nome e telefono.');
-                    return;
-                  }
-
-                  const main = all[0];
-                  const mainName = [main.firstName, main.lastName].filter(Boolean).join(' ') || '—';
-                  const mainPhone = normalizePhone(main.phone);
-                  if (!mainPhone) {
-                    alert('Il contatto principale deve avere un telefono valido.');
-                    return;
-                  }
-
-                  const party = all.slice(1).map(p => ({
-                    id: p.id,
-                    name: [p.firstName, p.lastName].filter(Boolean).join(' '),
-                    phone: normalizePhone(p.phone),
-                    email: p.email || ''
-                  }));
-
-                  const startISO = composeStartISO(date, createTime);
-
-                  try {
-                    const idt = await user.getIdToken();
-                    const r = await fetch('/api/calendar/appointments', {
-                      method: 'POST',
-                      headers: { Authorization: `Bearer ${idt}`, 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        customer: { name: mainName, phone: mainPhone },
-                        start: startISO,
-                        durationMin: Number(createDuration) || 60,
-                        notes: createNotes,
-                        party,
-                        service_id: null,
-                        staff_id: null
-                      }),
-                    });
-                    const txt = await r.text();
-                    let j = {}; try { j = txt ? JSON.parse(txt) : {}; } catch {}
-                    if (!r.ok) {
-                      alert(j?.error || txt || 'Errore creazione');
-                      return;
-                    }
-                    // refresh
-                    await loadInternalMonth();
-                    if (googleCalId) await loadGoogleMonth(googleCalId);
-
-                    // reset e chiudi
-                    setCreateOpen(false);
-                    setCreateNotes('');
-                    setCreateDuration(90);
-                    setCreateTime('20:00');
-                    setSearchPick('');
-                    setSelectedPeople([]);
-                    setManualName('');
-                    setManualPhone('');
-                  } catch (e) {
-                    alert('Errore creazione: ' + (e?.message || e));
-                  }
-                }}
-                className="bg-black text-white"
-              >
-                Crea
-              </Button>
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="outline" onClick={()=>setCreateOpen(false)}>Annulla</Button>
+              <Button onClick={createEvent} className="bg-black text-white">Crea evento</Button>
             </div>
           </div>
         </div>
