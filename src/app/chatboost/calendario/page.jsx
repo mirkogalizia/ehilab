@@ -11,28 +11,28 @@ import { Input } from '@/components/ui/input';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 
-/* -------------------- Helpers -------------------- */
-const ymd = (d: Date | string | number) => {
+/* -------------------- Helpers (JS) -------------------- */
+const ymd = (d) => {
   const z = new Date(d);
   const off = new Date(z.getTime() - z.getTimezoneOffset() * 60000);
   return off.toISOString().slice(0, 10);
 };
-const startOfDay = (d: Date | string | number) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
-const endOfDay   = (d: Date | string | number) => { const x = new Date(d); x.setHours(23,59,59,999); return x; };
-const toDate = (v: any) => {
+const startOfDay = (d) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+const endOfDay   = (d) => { const x = new Date(d); x.setHours(23,59,59,999); return x; };
+const toDate = (v) => {
   if (!v) return new Date();
   if (v && typeof v.toDate === 'function') return v.toDate();
   if (typeof v === 'string') return new Date(v);
   if (v && typeof v === 'object' && 'seconds' in v) return new Date(v.seconds * 1000);
   return new Date(v);
 };
-const fmtTime = (d: any) => new Date(d).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-const fmtRange = (from: any, to: any) => `${fmtTime(from)} – ${fmtTime(to)}`;
-const monthWindow = (current: Date) => {
+const fmtTime = (d) => new Date(d).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+const fmtRange = (from, to) => `${fmtTime(from)} – ${fmtTime(to)}`;
+const monthWindow = (current) => {
   const y = current.getFullYear(); const m = current.getMonth();
   return { first: new Date(y, m, 1), last: new Date(y, m + 1, 0) };
 };
-const normalizePhone = (phoneRaw: string) => {
+const normalizePhone = (phoneRaw) => {
   if (!phoneRaw) return '';
   let phone = String(phoneRaw).trim()
     .replace(/^[+]+/, '')
@@ -59,26 +59,26 @@ export default function CalendarioPage() {
   const [date, setDate] = useState(new Date());
   const [monthRef, setMonthRef] = useState(new Date());
 
-  const [cfg, setCfg] = useState<any>(null);
+  const [cfg, setCfg] = useState(null);
 
-  const [appts, setAppts] = useState<any[]>([]);     // interni
-  const [gEvents, setGEvents] = useState<any[]>([]); // google
+  const [appts, setAppts] = useState([]);
+  const [gEvents, setGEvents] = useState([]);
 
-  const [googleCalendars, setGoogleCalendars] = useState<any[]>([]);
+  const [googleCalendars, setGoogleCalendars] = useState([]);
   const [googleCalId, setGoogleCalId] = useState('');
 
-  const [contacts, setContacts] = useState<any[]>([]);
+  const [contacts, setContacts] = useState([]);
   const contactsById = useMemo(() => {
-    const m = new Map<string, any>();
+    const m = new Map();
     for (const c of contacts) m.set(c.id || c.phone, c);
     return m;
   }, [contacts]);
 
-  const [linksMap, setLinksMap] = useState<Map<string,string>>(new Map());
-  const [templates, setTemplates] = useState<any[]>([]);
-  const [tplChoice, setTplChoice] = useState<Record<string,string>>({});
+  const [linksMap, setLinksMap] = useState(new Map());
+  const [templates, setTemplates] = useState([]);
+  const [tplChoice, setTplChoice] = useState({});
 
-  const [userData, setUserData] = useState<any>(null);
+  const [userData, setUserData] = useState(null);
 
   // Modal create
   const [createOpen, setCreateOpen] = useState(false);
@@ -86,11 +86,11 @@ export default function CalendarioPage() {
   const [createDuration, setCreateDuration] = useState(90);
   const [createNotes, setCreateNotes] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedContacts, setSelectedContacts] = useState<any[]>([]);
+  const [selectedContacts, setSelectedContacts] = useState([]);
   const [manualName, setManualName] = useState('');
   const [manualPhone, setManualPhone] = useState('');
 
-  const refreshTimer = useRef<any>(null);
+  const refreshTimer = useRef(null);
 
   /* -------------------- Google OAuth & liste -------------------- */
   const connectGoogle = async () => {
@@ -110,11 +110,11 @@ export default function CalendarioPage() {
     setGoogleCalendars(items);
 
     const saved = cfg?.defaultGoogleCalendarId || localStorage.getItem('defaultGoogleCalendarId');
-    const preferred = saved || (items.find((c:any)=>c.primary)?.id) || (items[0]?.id);
+    const preferred = saved || (items.find((c)=>c.primary)?.id) || (items[0]?.id);
     if (preferred && !googleCalId) setGoogleCalId(preferred);
   };
 
-  const saveDefaultCalendar = async (calendarId: string) => {
+  const saveDefaultCalendar = async (calendarId) => {
     if (!user || !calendarId) return;
     const idt = await user.getIdToken();
     await fetch('/api/calendar/config', {
@@ -125,7 +125,7 @@ export default function CalendarioPage() {
     localStorage.setItem('defaultGoogleCalendarId', calendarId);
   };
 
-  const loadGoogleMonth = async (calendarId: string) => {
+  const loadGoogleMonth = async (calendarId) => {
     if (!user || !calendarId) { setGEvents([]); return; }
     const idt = await user.getIdToken();
     const { first, last } = monthWindow(monthRef);
@@ -157,7 +157,7 @@ export default function CalendarioPage() {
           body: JSON.stringify({ user_uid: user.uid }),
         });
         const t = await tRes.json();
-        if (Array.isArray(t)) setTemplates(t.filter((x:any) => x.status === 'APPROVED'));
+        if (Array.isArray(t)) setTemplates(t.filter((x) => x.status === 'APPROVED'));
       } catch {}
 
       const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
@@ -166,7 +166,7 @@ export default function CalendarioPage() {
       });
 
       const usersSnap = await getDocs(collection(db, 'users'));
-      const me = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).find((u:any) => u.email === user.email);
+      const me = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).find((u) => u.email === user.email);
       if (me) setUserData(me);
 
       return () => unsub();
@@ -199,16 +199,16 @@ export default function CalendarioPage() {
     if (!user) return;
     const qLinks = query(collection(db, 'calendar_links'), where('user_uid', '==', user.uid));
     const snap = await getDocs(qLinks);
-    const m = new Map<string,string>();
+    const m = new Map();
     snap.forEach(d => {
-      const data:any = d.data();
+      const data = d.data();
       m.set(`${data.kind}:${data.eventId}`, data.contactId);
     });
     setLinksMap(m);
   };
   useEffect(() => { if (user) loadLinks(); }, [user]);
 
-  const linkContact = async (kind:'internal'|'google', eventId:string, contactId:string) => {
+  const linkContact = async (kind, eventId, contactId) => {
     if (!user) return;
     const id = `${user.uid}__${kind}__${eventId}`;
     await setDoc(doc(db, 'calendar_links', id), {
@@ -219,7 +219,7 @@ export default function CalendarioPage() {
 
   /* -------------------- Merge per giorno -------------------- */
   const mergedByDay = useMemo(() => {
-    const map: Record<string, any[]> = {};
+    const map = {};
     for (const a of appts) {
       const k = ymd(toDate(a.start)); (map[k] ||= []).push({ __type: 'internal', ...a });
     }
@@ -243,7 +243,7 @@ export default function CalendarioPage() {
   const eventsOfDay = mergedByDay[selectedKey] || [];
 
   /* -------------------- Invio template -------------------- */
-  const sendTemplate = async (phone: string, templateName?: string) => {
+  const sendTemplate = async (phone, templateName) => {
     if (!userData?.phone_number_id) {
       alert('Configurazione WhatsApp mancante (phone_number_id).');
       return;
@@ -271,14 +271,14 @@ export default function CalendarioPage() {
         }
       );
       const text = await resp.text();
-      let data:any; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+      let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
       if (resp.ok && data?.messages) alert('Template inviato ✅');
       else alert('Invio KO: ' + (data?.error?.message || JSON.stringify(data)));
-    } catch (e:any) { alert('Invio KO: ' + (e?.message || e)); }
+    } catch (e) { alert('Invio KO: ' + (e?.message || e)); }
   };
 
   /* -------------------- Derive: contatto per evento -------------------- */
-  const resolveContactForEvent = (ev:any) => {
+  const resolveContactForEvent = (ev) => {
     const evKey = ev.__type === 'internal' ? `internal:${ev.id}` : `google:${ev.id}`;
     const linkedId = linksMap.get(evKey);
     if (linkedId && contactsById.get(linkedId)) return contactsById.get(linkedId);
@@ -289,15 +289,15 @@ export default function CalendarioPage() {
       return null;
     }
 
-    const att = (ev.attendees || []).find((a:any) => a.email);
+    const att = (ev.attendees || []).find((a) => a.email);
     if (att) {
-      const byEmail = Array.from(contactsById.values()).find((c:any) => (c.email || '').toLowerCase() === att.email.toLowerCase());
+      const byEmail = Array.from(contactsById.values()).find((c) => (c.email || '').toLowerCase() === att.email.toLowerCase());
       if (byEmail) return byEmail;
     }
     const guess = guessContactFromText(`${ev.description || ''} ${ev.location || ''} ${ev.summary || ''}`);
     if (guess.phone && contactsById.get(guess.phone)) return contactsById.get(guess.phone);
     if (guess.email) {
-      const byE = Array.from(contactsById.values()).find((c:any) => (c.email || '').toLowerCase() === guess.email.toLowerCase());
+      const byE = Array.from(contactsById.values()).find((c) => (c.email || '').toLowerCase() === guess.email.toLowerCase());
       if (byE) return byE;
     }
     return null;
@@ -321,14 +321,14 @@ export default function CalendarioPage() {
   }, [user, monthRef, googleCalId]);
 
   /* -------------------- Create modal helpers -------------------- */
-  const toggleSelectContact = (c:any) => {
+  const toggleSelectContact = (c) => {
     setSelectedContacts(prev => {
       const exists = prev.find(p => (p.id || p.phone) === (c.id || c.phone));
       if (exists) return prev.filter(p => (p.id || p.phone) !== (c.id || c.phone));
       return [...prev, c];
     });
   };
-  const removeSelected = (idOrPhone:string) => {
+  const removeSelected = (idOrPhone) => {
     setSelectedContacts(prev => prev.filter(p => (p.id || p.phone) !== idOrPhone));
   };
 
@@ -344,8 +344,7 @@ export default function CalendarioPage() {
 
   const createAppointment = async () => {
     if (!user) return;
-    // definisco il "cliente principale": il primo selezionato o quello manuale
-    let mainName = manualName?.trim();
+    let mainName = (manualName || '').trim();
     let mainPhone = normalizePhone(manualPhone || '');
 
     if (selectedContacts.length > 0) {
@@ -380,8 +379,8 @@ export default function CalendarioPage() {
           start: startISO,
           durationMin: createDuration,
           notes: createNotes,
-          party,                 // 🔸 nuovo campo
-          service_id: null,      // non usati ora
+          party,
+          service_id: null,
           staff_id: null
         }),
       });
@@ -390,14 +389,13 @@ export default function CalendarioPage() {
         alert(j?.error || 'Errore creazione');
         return;
       }
-      // refresh e chiudi modal
       await loadInternalMonth();
       if (googleCalId) await loadGoogleMonth(googleCalId);
       setCreateOpen(false);
       setSelectedContacts([]);
       setManualName(''); setManualPhone('');
       setCreateNotes('');
-    } catch (e:any) {
+    } catch (e) {
       alert(e?.message || 'Errore');
     }
   };
@@ -423,7 +421,7 @@ export default function CalendarioPage() {
               await loadGoogleMonth(id);
             }}
           >
-            {googleCalendars.map((c:any) => <option key={c.id} value={c.id}>{c.summary}</option>)}
+            {googleCalendars.map((c) => <option key={c.id} value={c.id}>{c.summary}</option>)}
           </select>
         )}
       </div>
@@ -475,7 +473,7 @@ export default function CalendarioPage() {
             <div className="text-gray-500 text-sm">Nessun evento</div>
           ) : (
             <div className="space-y-2">
-              {eventsOfDay.map((ev:any, idx:number) => {
+              {eventsOfDay.map((ev, idx) => {
                 const isInternal = ev.__type === 'internal';
                 const s = isInternal ? toDate(ev.start) : new Date(ev.start?.dateTime || ev.start?.date || Date.now());
                 const e = isInternal ? toDate(ev.end)   : new Date(ev.end?.dateTime   || ev.end?.date   || s);
@@ -506,7 +504,6 @@ export default function CalendarioPage() {
                           {fmtRange(s, e)} {isInternal && ev.party?.length ? `• ${ev.party.length} partecipanti` : ''}
                         </div>
 
-                        {/* Contatto “principale” noto */}
                         <div className="mt-2 text-sm">
                           {contact ? (
                             <div className="text-gray-800">
@@ -525,10 +522,7 @@ export default function CalendarioPage() {
                           <Button
                             variant="outline" size="sm" className="flex items-center gap-1"
                             onClick={() => {
-                              const id = isInternal ? ev.id : ev.id;
-                              // apre la tua modale di abbinamento, se vuoi riusarla più avanti
-                              // per ora non la ripeschiamo qui per brevità
-                              alert('Collega contatto: questa parte resta come nel tuo flusso attuale.');
+                              alert('Collega contatto: lasciata come nel tuo flusso attuale.');
                             }}
                           >
                             <LinkIcon className="w-4 h-4" /> Abbina
@@ -579,7 +573,6 @@ export default function CalendarioPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Colonna 1: data/ora/durata */}
               <div className="md:col-span-1">
                 <label className="block text-sm text-gray-600 mb-1">Data</label>
                 <div className="px-3 py-2 bg-gray-100 rounded-lg text-sm">{date.toLocaleDateString('it-IT')}</div>
@@ -599,7 +592,6 @@ export default function CalendarioPage() {
                 />
               </div>
 
-              {/* Colonna 2-3: ricerca e selezione multipla contatti */}
               <div className="md:col-span-2">
                 <label className="block text-sm text-gray-600 mb-1">Cerca in rubrica</label>
                 <div className="flex items-center gap-2">
@@ -611,7 +603,6 @@ export default function CalendarioPage() {
                   />
                 </div>
 
-                {/* Pills selezionati */}
                 {selectedContacts.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {selectedContacts.map(c => {
@@ -629,34 +620,41 @@ export default function CalendarioPage() {
                   </div>
                 )}
 
-                {/* Lista contatti con selezione multipla */}
                 <div className="mt-3 max-h-64 overflow-y-auto border rounded-lg divide-y">
-                  {visibleContacts.map(c => {
-                    const id = c.id || c.phone;
-                    const label = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.phone || c.email || id;
-                    const selected = !!selectedContacts.find(p => (p.id || p.phone) === (c.id || c.phone));
-                    return (
-                      <button
-                        key={id}
-                        onClick={()=>toggleSelectContact(c)}
-                        className={`w-full text-left px-3 py-2 flex items-center justify-between ${selected ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}
-                      >
-                        <div>
-                          <div className="font-medium">{label}</div>
-                          <div className="text-xs text-gray-500">{c.phone} {c.email && `• ${c.email}`}</div>
-                        </div>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${selected ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
-                          {selected ? 'Selezionato' : 'Seleziona'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                  {visibleContacts.length === 0 && (
-                    <div className="p-3 text-sm text-gray-500">Nessun contatto trovato.</div>
+                  {contacts
+                    .filter(c => {
+                      if (!searchQuery.trim()) return true;
+                      const s = searchQuery.toLowerCase();
+                      return [c.firstName, c.lastName, c.phone, c.email, (c.tags||[]).join(' ')]
+                        .filter(Boolean)
+                        .some(v => String(v).toLowerCase().includes(s));
+                    })
+                    .slice(0, 200)
+                    .map(c => {
+                      const id = c.id || c.phone;
+                      const label = `${c.firstName || ''} ${c.lastName || ''}`.trim() || c.phone || c.email || id;
+                      const selected = !!selectedContacts.find(p => (p.id || p.phone) === (c.id || c.phone));
+                      return (
+                        <button
+                          key={id}
+                          onClick={()=>toggleSelectContact(c)}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between ${selected ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}
+                        >
+                          <div>
+                            <div className="font-medium">{label}</div>
+                            <div className="text-xs text-gray-500">{c.phone} {c.email && `• ${c.email}`}</div>
+                          </div>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${selected ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                            {selected ? 'Selezionato' : 'Seleziona'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  {contacts.length === 0 && (
+                    <div className="p-3 text-sm text-gray-500">Rubrica vuota.</div>
                   )}
                 </div>
 
-                {/* Fallback inserimento manuale se non esiste in rubrica */}
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm text-gray-600 mb-1">Nome (manuale)</label>
