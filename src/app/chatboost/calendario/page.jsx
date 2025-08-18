@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ExternalLink, Link as LinkIcon, Send as SendIcon, Search, PlusIcon, Loader2 } from 'lucide-react';
+import { ExternalLink, Link as LinkIcon, Send as SendIcon, Search, PlusIcon } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
 import { db } from '@/lib/firebase';
 import {
@@ -44,7 +44,7 @@ const normalizePhone = (phoneRaw) => {
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
   if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
   if (/^\d+$/.test(phone) && phone.length > 10) return '+' + phone;
-  if (String(phoneRaw).startsWith('+')) return String(phoneRaw).trim();
+  if (phoneRaw.startsWith('+')) return phoneRaw;
   return '';
 };
 // prova ad estrarre email/telefono grezzi dal testo di un evento Google
@@ -56,16 +56,6 @@ const guessContactFromText = (text='') => {
     phone: phoneMatch ? normalizePhone(phoneMatch[0]) : ''
   };
 };
-
-// parser JSON “safe” per evitare JSON.parse error su body vuoto
-async function safeJson(resp) {
-  const text = await resp.text();
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    return { raw: text };
-  }
-}
 
 export default function CalendarioPage() {
   const { user } = useAuth();
@@ -101,9 +91,11 @@ export default function CalendarioPage() {
   // template WhatsApp
   const [templates, setTemplates] = useState([]);
 
-  // scelta template per-evento + stato invio
-  const [tplPick, setTplPick] = useState({});          // { [eventKey]: templateName }
-  const [tplSending, setTplSending] = useState({});    // { [eventKey]: true }
+  // scelte template per-evento (key → templateName)
+  const [tplChoice, setTplChoice] = useState({}); // { [eventKey]: string }
+
+  // userData per prendere phone_number_id come in ChatPage
+  const [userData, setUserData] = useState(null);
 
   // modale abbinamento contatto
   const [linkModalOpen, setLinkModalOpen] = useState(false);
@@ -130,7 +122,6 @@ export default function CalendarioPage() {
     const items = j.items || [];
     setGoogleCalendars(items);
 
-    // priorità: Firestore cfg → localStorage → primary → primo
     const saved = cfg?.defaultGoogleCalendarId || localStorage.getItem('defaultGoogleCalendarId');
     const preferred =
       saved ||
@@ -166,7 +157,7 @@ export default function CalendarioPage() {
     setGEvents(r.ok ? (j.items || []) : []);
   };
 
-  /* -------------------- Config interna + templates + rubrica -------------------- */
+  /* -------------------- Config interna + templates + rubrica + userData -------------------- */
   useEffect(() => {
     if (!user) return;
 
@@ -195,6 +186,12 @@ export default function CalendarioPage() {
       const unsub = onSnapshot(qContacts, snap => {
         setContacts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       });
+
+      // userData (per phone_number_id) — stessa logica di ChatPage
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const me = usersSnap.docs.map(d => ({ id: d.id, ...d.data() })).find(u => u.email === user.email);
+      if (me) setUserData(me);
+
       return () => unsub();
     })();
   }, [user]);
@@ -292,54 +289,51 @@ export default function CalendarioPage() {
   const selectedKey = ymd(date);
   const eventsOfDay = mergedByDay[selectedKey] || [];
 
-  /* -------------------- Auto refresh (60s) quando la tab è visibile -------------------- */
-  useEffect(() => {
-    const tick = () => {
-      if (document.visibilityState !== 'visible') return;
-      loadInternalMonth();
-      if (googleCalId) loadGoogleMonth(googleCalId);
-    };
-    refreshTimer.current = setInterval(tick, 60000);
-    const vis = () => { if (document.visibilityState === 'visible') tick(); };
-    document.addEventListener('visibilitychange', vis);
-    return () => {
-      if (refreshTimer.current) clearInterval(refreshTimer.current);
-      document.removeEventListener('visibilitychange', vis);
-    };
-    // eslint-disable-next-line
-  }, [user, monthRef, googleCalId, staffId]);
-
-  /* -------------------- Invio template -------------------- */
+  /* -------------------- Invio template (stessa logica di ChatPage) -------------------- */
   const sendTemplate = async (phone, templateName) => {
-    if (!user || !phone || !templateName) return alert('Dati mancanti.');
+    if (!userData?.phone_number_id) {
+      alert('Configurazione WhatsApp mancante (phone_number_id).');
+      return;
+    }
+    if (!templateName) {
+      alert('Seleziona un template.');
+      return;
+    }
     try {
-      const idt = await user.getIdToken();
-      const r = await fetch('/api/wa/send-template', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${idt}`, 'Content-Type':'application/json' },
-        body: JSON.stringify({ to: phone, templateName }),
-      });
-      const j = await safeJson(r);
-      if (!r.ok) {
-        const reason = j?.details?.message || j?.error || j?.raw || 'Errore invio';
-        alert(`Invio KO: ${reason}`);
-      } else {
+      const payload = {
+        messaging_product: 'whatsapp',
+        to: phone,
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: 'it' }, // adatta se necessario
+          components: [{ type: 'BODY', parameters: [] }],
+        },
+      };
+
+      const resp = await fetch(
+        `https://graph.facebook.com/v19.0/${userData.phone_number_id}/messages`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      const text = await resp.text();
+      let data;
+      try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+
+      if (resp.ok && data?.messages) {
         alert('Template inviato ✅');
+      } else {
+        const reason = data?.error?.message || JSON.stringify(data);
+        alert('Invio KO: ' + reason);
       }
     } catch (e) {
-      alert(`Errore invio: ${e?.message || e}`);
-    }
-  };
-
-  const handleSendPicked = async (eventKey, phone) => {
-    const name = tplPick[eventKey];
-    if (!name) return alert('Seleziona prima un template.');
-    if (!phone) return alert('Contatto senza numero di telefono.');
-    setTplSending(s => ({ ...s, [eventKey]: true }));
-    try {
-      await sendTemplate(phone, name);
-    } finally {
-      setTplSending(s => ({ ...s, [eventKey]: false }));
+      alert('Invio KO: ' + (e?.message || e));
     }
   };
 
@@ -371,6 +365,23 @@ export default function CalendarioPage() {
     }
     return null;
   };
+
+  /* -------------------- Auto refresh (60s) quando visibile -------------------- */
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      loadInternalMonth();
+      if (googleCalId) loadGoogleMonth(googleCalId);
+    };
+    refreshTimer.current = setInterval(tick, 60000);
+    const vis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', vis);
+    return () => {
+      if (refreshTimer.current) clearInterval(refreshTimer.current);
+      document.removeEventListener('visibilitychange', vis);
+    };
+    // eslint-disable-next-line
+  }, [user, monthRef, googleCalId, staffId]);
 
   /* -------------------- UI -------------------- */
   if (!user) return <div className="p-6">Devi effettuare il login.</div>;
@@ -471,7 +482,8 @@ export default function CalendarioPage() {
 
                 const rightTagColor = isInternal ? 'bg-emerald-600' : 'bg-violet-600';
 
-                const eventKey = `${ev.__type}:${ev.id || idx}`;
+                // chiave unica evento per memorizzare la scelta del template e non inviare subito
+                const evKey = `${isInternal ? 'i' : 'g'}:${ev.id || idx}`;
 
                 return (
                   <div key={`${ev.__type}-${ev.id || idx}`} className="border rounded-lg p-3">
@@ -520,14 +532,13 @@ export default function CalendarioPage() {
                           </Button>
                         )}
 
-                        {/* Se ho il telefono e ci sono template: scelta + invio esplicito */}
                         {contactPhone && templates.length > 0 && (
                           <div className="flex items-center gap-2">
                             <select
                               className="border rounded px-2 py-1 text-sm"
-                              value={tplPick[eventKey] || ''}
+                              value={tplChoice[evKey] || ''}
                               onChange={(e) =>
-                                setTplPick(p => ({ ...p, [eventKey]: e.target.value || '' }))
+                                setTplChoice((prev) => ({ ...prev, [evKey]: e.target.value }))
                               }
                             >
                               <option value="">Template…</option>
@@ -543,14 +554,10 @@ export default function CalendarioPage() {
                               variant="outline"
                               size="icon"
                               title="Invia template"
-                              disabled={!tplPick[eventKey] || tplSending[eventKey]}
-                              onClick={() => handleSendPicked(eventKey, contactPhone)}
+                              onClick={() => sendTemplate(contactPhone, tplChoice[evKey])}
+                              disabled={!tplChoice[evKey]}
                             >
-                              {tplSending[eventKey] ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <SendIcon className="w-4 h-4" />
-                              )}
+                              <SendIcon className="w-4 h-4" />
                             </Button>
                           </div>
                         )}
