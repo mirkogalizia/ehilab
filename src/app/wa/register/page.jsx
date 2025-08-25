@@ -12,7 +12,7 @@ import { useRouter } from 'next/navigation';
 import { LoadScript, Autocomplete } from '@react-google-maps/api';
 import { auth, db } from '@/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 const schema = z.object({
   firstName: z.string().min(1, 'Il nome è obbligatorio'),
@@ -27,48 +27,78 @@ const schema = z.object({
   taxCode: z.string().optional(),
 });
 
+function normalizePhone(raw = '') {
+  return raw.trim()
+    .replace(/^[+]+/, '')
+    .replace(/^00/, '')
+    .replace(/[\s\-().]/g, '');
+}
+
 export default function RegisterPage() {
   const [autoComplete, setAutoComplete] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [errMsg, setErrMsg] = useState('');
   const router = useRouter();
 
   const {
     register,
     handleSubmit,
     setValue,
-    formState: { errors },
+    formState: { errors, isSubmitting },
   } = useForm({
     resolver: zodResolver(schema),
   });
 
   const onSubmit = async (data) => {
+    setErrMsg('');
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, data.email, data.password);
-      const user = userCredential.user;
+      // 1) Crea utente Auth
+      const cred = await createUserWithEmailAndPassword(auth, data.email, data.password);
+      const user = cred.user;
 
-      // Salva il documento con ID = user.uid
-      await setDoc(doc(db, 'users', user.uid), {
-        ...data,
-        uid: user.uid, // salva anche come campo
-        createdAt: new Date(),
-      });
+      // 2) Prepara payload per Firestore (senza password!)
+      const payload = {
+        firstName: data.firstName,
+        lastName: data.lastName,
+        email: data.email.toLowerCase(),
+        personalPhone: normalizePhone(data.personalPhone),
+        whatsappNumber: normalizePhone(data.whatsappNumber),
+        company: data.company || '',
+        address: data.address || '',
+        vat: data.vat || '',
+        taxCode: data.taxCode || '',
+        uid: user.uid,
+        createdAt: serverTimestamp(),
+      };
 
+      // 3) Scrivi su Firestore (doc id = uid)
+      await setDoc(doc(db, 'users', user.uid), payload, { merge: true });
+
+      // 4) Success UI + redirect
       setSuccess(true);
-
-      // Redirect automatico dopo 2 secondi alla pagina login
       setTimeout(() => {
         router.push('/wa/login');
-      }, 2000);
-    } catch (error) {
-      alert('Errore durante la registrazione.');
-      console.error(error);
+      }, 1600);
+    } catch (err) {
+      console.error('Registration error:', err);
+      // Messaggi più utili
+      const code = err?.code || '';
+      if (code === 'auth/email-already-in-use') {
+        setErrMsg('Questa email è già registrata.');
+      } else if (code === 'permission-denied') {
+        setErrMsg('Permesso negato su Firestore: controlla le regole.');
+      } else if (code === 'failed-precondition') {
+        setErrMsg('Firestore non inizializzato correttamente (o regole).');
+      } else {
+        setErrMsg('Errore durante la registrazione. Riprova.');
+      }
     }
   };
 
   const onPlaceChanged = () => {
     if (autoComplete) {
       const place = autoComplete.getPlace();
-      if (place.formatted_address) {
+      if (place?.formatted_address) {
         setValue('address', place.formatted_address);
       }
     }
@@ -76,9 +106,17 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-      <Card className="max-w-2xl w-full shadow-xl border border-gray-300">
+      <Card className="max-w-2xl w-full shadow-xl border border-gray-200">
         <CardContent className="p-8">
-          <h2 className="text-2xl font-bold mb-4">Registrati a Chat Boost</h2>
+          <h2 className="text-2xl font-bold mb-2">Registrati a Chat Boost</h2>
+          <p className="text-sm text-gray-500 mb-6">Crea l’account e collega il tuo numero WhatsApp in seguito.</p>
+
+          {errMsg && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {errMsg}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -92,16 +130,19 @@ export default function RegisterPage() {
                 {errors.lastName && <p className="text-red-500 text-sm">{errors.lastName.message}</p>}
               </div>
             </div>
+
             <div>
               <Label>Email*</Label>
               <Input type="email" {...register('email')} />
               {errors.email && <p className="text-red-500 text-sm">{errors.email.message}</p>}
             </div>
+
             <div>
               <Label>Password*</Label>
-              <Input type="password" {...register('password')} />
+              <Input type="password" autoComplete="new-password" {...register('password')} />
               {errors.password && <p className="text-red-500 text-sm">{errors.password.message}</p>}
             </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Telefono personale*</Label>
@@ -114,18 +155,21 @@ export default function RegisterPage() {
                 {errors.whatsappNumber && <p className="text-red-500 text-sm">{errors.whatsappNumber.message}</p>}
               </div>
             </div>
+
             <div>
               <Label>Azienda (opzionale)</Label>
               <Input {...register('company')} />
             </div>
+
             <div>
               <Label>Indirizzo completo (opzionale)</Label>
-              <LoadScript googleMapsApiKey="AIzaSyANjsj5ydZ-4o-r9mlCPIkimvDkHO5TfOM" libraries={["places"]}>
+              <LoadScript googleMapsApiKey="AIzaSyANjsj5ydZ-4o-r9mlCPIkimvDkHO5TfOM" libraries={['places']}>
                 <Autocomplete onLoad={setAutoComplete} onPlaceChanged={onPlaceChanged}>
                   <Input {...register('address')} placeholder="Via Roma 10, Milano..." />
                 </Autocomplete>
               </LoadScript>
             </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Partita IVA (opzionale)</Label>
@@ -136,7 +180,10 @@ export default function RegisterPage() {
                 <Input {...register('taxCode')} />
               </div>
             </div>
-            <Button type="submit" className="w-full mt-4">Registrati</Button>
+
+            <Button type="submit" className="w-full mt-4" disabled={isSubmitting}>
+              {isSubmitting ? 'Registrazione in corso…' : 'Registrati'}
+            </Button>
           </form>
         </CardContent>
       </Card>
@@ -153,11 +200,10 @@ export default function RegisterPage() {
             <p className="text-gray-500 text-center text-sm mb-2">
               Ora puoi effettuare l’accesso con le tue credenziali.
             </p>
-            <span className="text-xs text-gray-400">Verrai reindirizzato al login...</span>
+            <span className="text-xs text-gray-400">Reindirizzamento al login…</span>
           </div>
         </div>
       )}
     </div>
   );
 }
-
