@@ -35,14 +35,19 @@ export default function LoginPage() {
         {/* Logo + Intro */}
         <div className="text-center space-y-4">
           <img
-            src="/logo.png"
-            alt="Logo EHI Lab"
-            className="mx-auto w-[150px] h-[150px] drop-shadow-md"
+            src="/ristochattext.png"
+            alt="RistoChat by EHI Lab"
+            className="mx-auto w-[190px] h-auto drop-shadow-md"
             onError={(e) => (e.currentTarget.style.display = 'none')}
           />
-          <h1 className="text-3xl font-bold text-gray-900">EHI! Chat Boost</h1>
-          <p className="text-gray-500 text-sm">
-            Accedi alla tua dashboard e digitalizza il tuo business.
+          <h1 className="text-3xl font-bold text-gray-900">RistoChat</h1>
+          <p className="text-gray-600 text-sm leading-relaxed">
+            Riempie i tavoli e fidelizza i clienti con <span className="font-semibold">WhatsApp</span>:
+            prenotazioni automatiche, conferme e reminder, promozioni mirate,
+            richieste recensione Google e recupero clienti inattivi. Tutto in pochi click.
+          </p>
+          <p className="text-[11px] text-gray-400">
+            Ufficiale WhatsApp Business • GDPR‑ready • Niente complicazioni, solo risultati.
           </p>
         </div>
 
@@ -78,23 +83,23 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Highlights */}
+        {/* Highlights per ristoranti */}
         <div className="grid grid-cols-3 gap-6 text-center pt-4">
           <div>
-            <span className="text-2xl">📈</span>
-            <p className="text-xs mt-1 text-gray-600">Più vendite</p>
+            <span className="text-2xl">🍽️</span>
+            <p className="text-xs mt-1 text-gray-600">Prenotazioni smart</p>
           </div>
           <div>
-            <span className="text-2xl">⚡</span>
-            <p className="text-xs mt-1 text-gray-600">Processi rapidi</p>
+            <span className="text-2xl">⭐</span>
+            <p className="text-xs mt-1 text-gray-600">Recensioni Google</p>
           </div>
           <div>
-            <span className="text-2xl">💬</span>
-            <p className="text-xs mt-1 text-gray-600">Clienti fedeli</p>
+            <span className="text-2xl">💌</span>
+            <p className="text-xs mt-1 text-gray-600">Promo mirate</p>
           </div>
         </div>
 
-        {/* Link registrati aggiornato */}
+        {/* Link registrati */}
         <div className="mt-6 flex items-center justify-center">
           <span className="text-gray-500 text-sm">
             Non hai un account?{' '}
@@ -107,5 +112,4 @@ export default function LoginPage() {
     </div>
   );
 }
-
 
