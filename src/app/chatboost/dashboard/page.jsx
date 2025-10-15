@@ -445,13 +445,44 @@ export default function ChatPage() {
     }
   };
 
+  // === NUOVO: Elimina TUTTE le conversazioni (tutti i messaggi dell'utente) ===
+  const handleDeleteAllConversations = async () => {
+    if (!user?.uid) return;
+
+    const mine = allMessages.filter(m => m.user_uid === user.uid);
+    if (mine.length === 0) {
+      alert('Nessuna conversazione da eliminare.');
+      return;
+    }
+
+    const ok1 = confirm(`⚠️ Elimina TUTTE le conversazioni (${mine.length} messaggi)? Azione irreversibile.`);
+    if (!ok1) return;
+    const check = prompt('Scrivi "ELIMINA TUTTO" per confermare:');
+    if (check !== 'ELIMINA TUTTO') return;
+
+    const CHUNK = 450; // sotto il limite batch di 500
+    for (let i = 0; i < mine.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      mine.slice(i, i + CHUNK).forEach(m => {
+        if (m.id) batch.delete(doc(db, 'messages', m.id));
+      });
+      await batch.commit();
+    }
+
+    // Reset UI
+    setSelectedPhone('');
+    setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
+    setChatMenu({ visible: false, x: 0, y: 0, phone: null });
+    alert('Conversazioni eliminate.');
+  };
+
   // listener stabili
   useEffect(() => {
     if (!contextMenu.visible && !chatMenu.visible) return;
     const close = (e) => {
-      const menu = document.getElementById("menu-contestuale-msg");
+      const menu = document.getElementById('menu-contestuale-msg');
       if (menu && menu.contains(e?.target)) return;
-      const chatMenuEl = document.getElementById("menu-contestuale-chat");
+      const chatMenuEl = document.getElementById('menu-contestuale-chat');
       if (chatMenuEl && chatMenuEl.contains(e?.target)) return;
       setContextMenu({ visible: false, x: 0, y: 0, messageId: null });
       setChatMenu({ visible: false, x: 0, y: 0, phone: null });
@@ -481,7 +512,7 @@ export default function ChatPage() {
   const sendMessage = async () => {
     if (!selectedPhone || (!messageText.trim() && !selectedMedia) || !userData) return;
     if (!canSendMessage) {
-      alert("⚠️ La finestra di 24h per l'invio di messaggi è chiusa. Puoi inviare solo template.");
+      alert('⚠️ La finestra di 24h per l\'invio di messaggi è chiusa. Puoi inviare solo template.');
       return;
     }
     if (sending) return;
@@ -497,34 +528,34 @@ export default function ChatPage() {
         const uploadJson = await uploadRes.json();
         const media_id = uploadJson.id;
         if (!media_id) {
-          alert("Errore upload media: " + JSON.stringify(uploadJson.error || uploadJson));
+          alert('Errore upload media: ' + JSON.stringify(uploadJson.error || uploadJson));
           return;
         }
 
         // invia il messaggio media su WhatsApp (rimane com'era)
         const payload = {
-          messaging_product: "whatsapp",
+          messaging_product: 'whatsapp',
           to: selectedPhone,
           type: selectedMedia.type,
-          [selectedMedia.type]: { id: media_id, caption: "" },
+          [selectedMedia.type]: { id: media_id, caption: '' },
         };
         const res = await fetch(
           `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
           {
-            method: "POST",
+            method: 'POST',
             headers: {
               Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-              "Content-Type": "application/json"
+              'Content-Type': 'application/json'
             },
             body: JSON.stringify(payload),
           }
         );
         const data = await res.json();
         if (data.messages) {
-          await addDoc(collection(db, "messages"), {
-            text: "",
+          await addDoc(collection(db, 'messages'), {
+            text: '',
             to: selectedPhone,
-            from: "operator",
+            from: 'operator',
             timestamp: Date.now(),
             createdAt: serverTimestamp(),
             type: selectedMedia.type,
@@ -547,13 +578,13 @@ export default function ChatPage() {
             });
             const dataText = await resText.json();
             if (resText.ok && dataText?.messages) {
-              await addDoc(collection(db, "messages"), {
+              await addDoc(collection(db, 'messages'), {
                 text: messageText.trim(),
                 to: selectedPhone,
-                from: "operator",
+                from: 'operator',
                 timestamp: Date.now(),
                 createdAt: serverTimestamp(),
-                type: "text",
+                type: 'text',
                 user_uid: user.uid,
                 read: true,
                 message_id: dataText.messages[0].id,
@@ -563,7 +594,7 @@ export default function ChatPage() {
           setMessageText('');
           setSelectedMedia(null);
         } else {
-          alert("Errore invio media: " + JSON.stringify(data.error));
+          alert('Errore invio media: ' + JSON.stringify(data.error));
         }
         return;
       }
@@ -580,20 +611,20 @@ export default function ChatPage() {
       });
       const data = await res.json();
       if (res.ok && data.messages) {
-        await addDoc(collection(db, "messages"), {
+        await addDoc(collection(db, 'messages'), {
           text: messageText,
           to: selectedPhone,
-          from: "operator",
+          from: 'operator',
           timestamp: Date.now(),
           createdAt: serverTimestamp(),
-          type: "text",
+          type: 'text',
           user_uid: user.uid,
           read: true,
           message_id: data.messages[0].id,
         });
         setMessageText('');
       } else {
-        alert("Errore invio: " + JSON.stringify(data.error || data));
+        alert('Errore invio: ' + JSON.stringify(data.error || data));
       }
     } finally {
       setSending(false);
@@ -604,55 +635,55 @@ export default function ChatPage() {
   const sendTemplate = async name => {
     if (!selectedPhone || !name || !userData) return;
     const template = templates.find(t => t.name === name);
-    if (!template) return alert("Template non trovato!");
+    if (!template) return alert('Template non trovato!');
     let components = [];
-    if (template.header && template.header.type !== "NONE") {
-      if (template.header.type === "TEXT") {
-        components.push({ type: "HEADER", parameters: [{ type: "text", text: template.header.text || "" }] });
-      } else if (["IMAGE", "DOCUMENT", "VIDEO"].includes(template.header.type)) {
-        if (!template.header.url) return alert("File header non trovato!");
+    if (template.header && template.header.type !== 'NONE') {
+      if (template.header.type === 'TEXT') {
+        components.push({ type: 'HEADER', parameters: [{ type: 'text', text: template.header.text || '' }] });
+      } else if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(template.header.type)) {
+        if (!template.header.url) return alert('File header non trovato!');
         components.push({
-          type: "HEADER",
+          type: 'HEADER',
           parameters: [{ type: template.header.type.toLowerCase(), [template.header.type.toLowerCase()]: { link: template.header.url } }]
         });
       }
     }
-    components.push({ type: "BODY", parameters: [] });
+    components.push({ type: 'BODY', parameters: [] });
 
     const payload = {
-      messaging_product: "whatsapp",
+      messaging_product: 'whatsapp',
       to: selectedPhone,
-      type: "template",
-      template: { name, language: { code: template.language || "it" }, components }
+      type: 'template',
+      template: { name, language: { code: template.language || 'it' }, components }
     };
 
     const res = await fetch(
       `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
       {
-        method: "POST",
+        method: 'POST',
         headers: {
           Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload),
       }
     );
     const data = await res.json();
     if (data.messages) {
-      await addDoc(collection(db, "messages"), {
+      await addDoc(collection(db, 'messages'), {
         text: `Template inviato: ${name}`,
         to: selectedPhone,
-        from: "operator",
+        from: 'operator',
         timestamp: Date.now(),
         createdAt: serverTimestamp(),
-        type: "template",
+        type: 'template',
         user_uid: user.uid,
         read: true,
         message_id: data.messages[0].id,
       });
       setShowTemplates(false);
     } else {
-      alert("Errore template: " + JSON.stringify(data.error));
+      alert('Errore template: ' + JSON.stringify(data.error));
     }
   };
 
@@ -661,14 +692,26 @@ export default function ChatPage() {
     <div className="chat-shell flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* Lista chat */}
       <div
-        className={`${selectedPhone ? "hidden" : "block"} md:block md:w-1/4 bg-white border-r p-4 chat-scroll`}
+        className={`${selectedPhone ? 'hidden' : 'block'} md:block md:w-1/4 bg-white border-r p-4 chat-scroll`}
         ref={listChatRef}
       >
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Conversazioni</h2>
-          <button onClick={() => setShowNewChat(true)} className="flex items-center gap-1 px-3 py-1 bg-black text-white rounded-full">
-            <Plus size={16} /> Nuova
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setShowNewChat(true)} className="flex items-center gap-1 px-3 py-1 bg-black text-white rounded-full" type="button">
+              <Plus size={16} /> Nuova
+            </button>
+            {/* SVUOTA TUTTO */}
+            <button
+              onClick={handleDeleteAllConversations}
+              className="flex items-center gap-1 px-3 py-1 border border-red-600 text-red-600 rounded-full hover:bg-red-50"
+              type="button"
+              title="Elimina tutte le conversazioni"
+              disabled={allMessages.length === 0}
+            >
+              <Trash2 size={16} /> Svuota
+            </button>
+          </div>
         </div>
         <ul className="space-y-0">
           {/* NON LETTI */}
@@ -682,9 +725,9 @@ export default function ChatPage() {
                   onClick={() => setSelectedPhone(phone)}
                   onContextMenu={e => handleChatContextMenu(e, phone)}
                   className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
-                    ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
+                    ${selectedPhone === phone ? 'bg-gray-200 font-semibold shadow' : 'hover:bg-gray-100'}
                     border-b border-gray-100`}
-                  style={{ boxShadow: selectedPhone === phone ? "0 4px 16px #0001" : "" }}
+                  style={{ boxShadow: selectedPhone === phone ? '0 4px 16px #0001' : '' }}
                 >
                   <div>
                     <span className="font-bold text-black">
@@ -713,7 +756,7 @@ export default function ChatPage() {
                   onClick={() => setSelectedPhone(phone)}
                   onContextMenu={e => handleChatContextMenu(e, phone)}
                   className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
-                    ${selectedPhone === phone ? "bg-gray-200 font-semibold shadow" : "hover:bg-gray-100"}
+                    ${selectedPhone === phone ? 'bg-gray-200 font-semibold shadow' : 'hover:bg-gray-100'}
                     border-b border-gray-100`}
                 >
                   <div>
