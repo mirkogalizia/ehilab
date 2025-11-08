@@ -9,19 +9,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/useAuth";
 import {
-  Store, CalendarDays, Plug, RefreshCcw, LogOut, ArrowRight
+  Store, ShoppingCart, CalendarDays, Plug, RefreshCcw, LogOut, ArrowRight, AlertCircle, CheckCircle2
 } from "lucide-react";
 
 export default function AutomazioniPage() {
   const { user } = useAuth();
 
-  // ------- SHOPIFY -------
+  // ------- SHOPIFY ORDINE EVASO (ESISTENTE) -------
   const [enabled, setEnabled] = useState(false);
-  const [templateList, setTemplateList] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
-  const [loadingShopify, setLoadingShopify] = useState(false);
 
-  // ------- CALENDARIO -------
+  // ------- SHOPIFY CARRELLO ABBANDONATO (NUOVO) 🆕 -------
+  const [enabledAbandonedCart, setEnabledAbandonedCart] = useState(false);
+  const [templateAbandonedCart, setTemplateAbandonedCart] = useState('');
+  const [delayMinutes, setDelayMinutes] = useState(60);
+
+  // ------- TEMPLATE LIST (CONDIVISO) -------
+  const [templateList, setTemplateList] = useState([]);
+  const [loadingShopify, setLoadingShopify] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // ------- CALENDARIO (INVARIATO) -------
   const [googleConnected, setGoogleConnected] = useState(false);
   const [calendars, setCalendars] = useState([]);
   const [calendarId, setCalendarId] = useState('');
@@ -43,11 +51,28 @@ export default function AutomazioniPage() {
       try {
         const merchantRef = doc(db, "shopify_merchants", user.uid);
         const snap = await getDoc(merchantRef);
-        const data = snap.data();
-        const automation = data?.automation?.order_fulfilled || {};
-        setEnabled(!!automation.enabled);
-        setSelectedTemplate(automation.template_id || '');
+        
+        if (snap.exists()) {
+          const data = snap.data();
+          
+          // ✅ ORDINE EVASO (esistente)
+          const automation = data?.automation?.order_fulfilled || {};
+          setEnabled(!!automation.enabled);
+          setSelectedTemplate(automation.template_id || '');
 
+          // 🆕 CARRELLO ABBANDONATO (nuovo)
+          const automationCart = data?.automation?.abandoned_cart || {};
+          setEnabledAbandonedCart(!!automationCart.enabled);
+          setTemplateAbandonedCart(automationCart.template_id || '');
+          setDelayMinutes(automationCart.delay_minutes || 60);
+
+          console.log("✅ Configurazioni caricate:", {
+            order_fulfilled: automation,
+            abandoned_cart: automationCart
+          });
+        }
+
+        // Carica lista template approvati
         const res = await fetch('/api/list-templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -55,27 +80,51 @@ export default function AutomazioniPage() {
         });
         const dataTpl = await res.json();
         setTemplateList(Array.isArray(dataTpl) ? dataTpl.filter(t => t.status === 'APPROVED') : []);
+      } catch (error) {
+        console.error("Errore caricamento automazioni:", error);
       } finally {
         setLoadingShopify(false);
       }
     })();
   }, [user]);
 
+  // ✅ Salva impostazioni Shopify (ENTRAMBE le automazioni)
   async function saveAutomazione() {
     if (!user) return;
     setLoadingShopify(true);
+    setSaveSuccess(false);
     try {
       const merchantRef = doc(db, "shopify_merchants", user.uid);
-      await updateDoc(merchantRef, {
-        "automation.order_fulfilled": { enabled, template_id: selectedTemplate }
-      });
-      alert("Automazione Shopify aggiornata!");
+      
+      const updateData = {
+        // Ordine evaso (esistente)
+        "automation.order_fulfilled": { 
+          enabled, 
+          template_id: selectedTemplate 
+        },
+        // 🆕 Carrello abbandonato (nuovo)
+        "automation.abandoned_cart": { 
+          enabled: enabledAbandonedCart, 
+          template_id: templateAbandonedCart,
+          delay_minutes: parseInt(delayMinutes) || 60
+        }
+      };
+      
+      await updateDoc(merchantRef, updateData);
+      
+      console.log("✅ Automazioni salvate:", updateData);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+      
+    } catch (error) {
+      console.error("❌ Errore salvataggio automazioni:", error);
+      alert("Errore durante il salvataggio. Riprova.");
     } finally {
       setLoadingShopify(false);
     }
   }
 
-  // Calendario: helper
+  // Calendario: helper (INVARIATO)
   const fmtDT = (dt) => {
     const d = new Date(dt);
     const hasTime = /\d{2}:\d{2}/.test(d.toTimeString());
@@ -161,45 +210,157 @@ export default function AutomazioniPage() {
         <p className="text-gray-500">Configura le automazioni per Shopify e collega il tuo Google Calendar.</p>
       </header>
 
-      {/* Shopify */}
-      <section className="bg-white border rounded-2xl p-6 shadow-sm">
+      {/* ========== SHOPIFY ========== */}
+      <section className="bg-white border rounded-2xl p-6 shadow-sm space-y-8">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-xl bg-blue-50 text-blue-700"><Store size={18} /></div>
           <h2 className="text-xl font-semibold">Shopify</h2>
         </div>
 
-        <div className="space-y-6">
-          <div className="flex items-center gap-4">
-            <Switch checked={enabled} onCheckedChange={setEnabled} id="auto-switch" />
-            <label htmlFor="auto-switch" className="text-base font-medium cursor-pointer">
-              Invia messaggio WhatsApp quando l’ordine è evaso
-            </label>
+        {/* --- 1. ORDINE EVASO (ESISTENTE) --- */}
+        <div className="border-b pb-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-green-50 text-green-700">📦</div>
+            <h3 className="text-lg font-semibold">Ordine Evaso</h3>
           </div>
 
-          <div>
-            <label className="block mb-2 text-base font-medium">Template messaggio:</label>
-            <select
-              className="border rounded-lg px-4 py-2 w-full"
-              value={selectedTemplate}
-              onChange={e => setSelectedTemplate(e.target.value)}
-              disabled={!enabled || loadingShopify}
-            >
-              <option value="">Seleziona un template</option>
-              {templateList.map(t => (
-                <option key={t.name} value={t.name}>
-                  {t.components?.[0]?.text
-                    ? t.components[0].text.slice(0, 60) + (t.components[0].text.length > 60 ? '...' : '')
-                    : t.name}
-                </option>
-              ))}
-            </select>
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <Switch 
+                checked={enabled} 
+                onCheckedChange={setEnabled} 
+                id="auto-switch" 
+              />
+              <label htmlFor="auto-switch" className="text-base font-medium cursor-pointer">
+                Invia messaggio WhatsApp quando l'ordine è evaso
+              </label>
+              {enabled && selectedTemplate && (
+                <CheckCircle2 size={18} className="text-green-600 ml-auto" />
+              )}
+            </div>
+
+            <div>
+              <label className="block mb-2 text-base font-medium">Template messaggio:</label>
+              <select
+                className="border rounded-lg px-4 py-2 w-full"
+                value={selectedTemplate}
+                onChange={e => setSelectedTemplate(e.target.value)}
+                disabled={!enabled || loadingShopify}
+              >
+                <option value="">Seleziona un template</option>
+                {templateList.map(t => (
+                  <option key={t.name} value={t.name}>
+                    {t.components?.[0]?.text
+                      ? t.components[0].text.slice(0, 60) + (t.components[0].text.length > 60 ? '...' : '')
+                      : t.name}
+                  </option>
+                ))}
+              </select>
+              {enabled && !selectedTemplate && (
+                <div className="flex items-center gap-2 mt-2 text-orange-600 text-sm">
+                  <AlertCircle size={16} />
+                  <span>Seleziona un template per attivare l'automazione</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* --- 2. CARRELLO ABBANDONATO (NUOVO) 🆕 --- */}
+        <div className="border-b pb-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-orange-50 text-orange-700"><ShoppingCart size={18} /></div>
+            <h3 className="text-lg font-semibold">Carrello Abbandonato</h3>
           </div>
 
-          <Button disabled={loadingShopify} onClick={saveAutomazione}>Salva impostazioni Shopify</Button>
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              <Switch 
+                checked={enabledAbandonedCart} 
+                onCheckedChange={setEnabledAbandonedCart} 
+                id="abandoned-cart-switch" 
+              />
+              <label htmlFor="abandoned-cart-switch" className="text-base font-medium cursor-pointer">
+                Invia messaggio per recuperare carrelli abbandonati
+              </label>
+              {enabledAbandonedCart && templateAbandonedCart && (
+                <CheckCircle2 size={18} className="text-green-600 ml-auto" />
+              )}
+            </div>
+
+            <div>
+              <label className="block mb-2 text-base font-medium">Template messaggio:</label>
+              <select
+                className="border rounded-lg px-4 py-2 w-full"
+                value={templateAbandonedCart}
+                onChange={e => setTemplateAbandonedCart(e.target.value)}
+                disabled={!enabledAbandonedCart || loadingShopify}
+              >
+                <option value="">Seleziona un template</option>
+                {templateList.map(t => (
+                  <option key={t.name} value={t.name}>
+                    {t.components?.[0]?.text
+                      ? t.components[0].text.slice(0, 60) + (t.components[0].text.length > 60 ? '...' : '')
+                      : t.name}
+                  </option>
+                ))}
+              </select>
+              {enabledAbandonedCart && !templateAbandonedCart && (
+                <div className="flex items-center gap-2 mt-2 text-orange-600 text-sm">
+                  <AlertCircle size={16} />
+                  <span>Seleziona un template per attivare l'automazione</span>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block mb-2 text-base font-medium">
+                Ritardo invio (minuti dopo abbandono):
+              </label>
+              <Input
+                type="number"
+                min="1"
+                max="1440"
+                value={delayMinutes}
+                onChange={e => setDelayMinutes(parseInt(e.target.value) || 60)}
+                disabled={!enabledAbandonedCart || loadingShopify}
+                className="w-32"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Consigliato: 60 min (1 ora) - Max: 1440 min (24 ore)
+              </p>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
+              <p className="font-medium text-blue-900 mb-1">ℹ️ Come funziona:</p>
+              <ul className="text-blue-800 space-y-1 ml-4 list-disc">
+                <li>Quando un cliente abbandona il checkout, viene salvato automaticamente</li>
+                <li>Dopo il ritardo impostato, viene inviato il messaggio WhatsApp</li>
+                <li>Se il cliente completa l'ordine nel frattempo, il messaggio non viene inviato</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        {/* --- BOTTONE SALVATAGGIO --- */}
+        <div className="pt-2">
+          {saveSuccess && (
+            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-green-800">
+              <CheckCircle2 size={18} />
+              <span>Automazioni Shopify aggiornate con successo!</span>
+            </div>
+          )}
+          <Button 
+            disabled={loadingShopify} 
+            onClick={saveAutomazione}
+            className="w-full sm:w-auto"
+          >
+            {loadingShopify ? 'Salvataggio...' : 'Salva impostazioni Shopify'}
+          </Button>
         </div>
       </section>
 
-      {/* Calendario */}
+      {/* ========== CALENDARIO (INVARIATO) ========== */}
       <section className="bg-white border rounded-2xl p-6 shadow-sm">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700"><CalendarDays size={18} /></div>
@@ -223,7 +384,6 @@ export default function AutomazioniPage() {
               <Button variant="destructive" onClick={disconnectGoogle} className="flex items-center gap-2">
                 <LogOut size={16}/> Disconnetti
               </Button>
-              {/* 👇 link corretto */}
               <Link href="/chatboost/calendario" className="ml-auto">
                 <Button variant="outline" className="flex items-center gap-2">
                   Vai al Calendario <ArrowRight size={16}/>
