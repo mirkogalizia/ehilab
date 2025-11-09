@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/firebase';
 import { setDoc, getDoc, doc as fireDoc } from 'firebase/firestore';
 
+// Utility: normalizza numeri telefono
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
   let phone = phoneRaw.trim()
@@ -13,6 +14,18 @@ function normalizePhone(phoneRaw) {
   if (/^\d+$/.test(phone) && phone.length > 10) return '+' + phone;
   if (phone.startsWith('+')) return phone;
   return '';
+}
+
+// PATCH: funzione per sostituire undefined con null in tutto l'oggetto
+function undefinedToNull(obj) {
+  if (Array.isArray(obj)) return obj.map(undefinedToNull);
+  if (obj && typeof obj === 'object')
+    return Object.fromEntries(
+      Object.entries(obj).map(
+        ([k, v]) => [k, v === undefined ? null : undefinedToNull(v)]
+      )
+    );
+  return obj;
 }
 
 export async function POST(req, { params }) {
@@ -33,7 +46,7 @@ export async function POST(req, { params }) {
     switch (topic) {
       case "orders/fulfilled":
       case "fulfillments/create": {
-        // -------- LOGICA ORDINE EVASO (come il tuo file) --------
+        // -------- LOGICA ORDINE EVASO --------
         const customer = payload.customer || {};
         const shipping = payload.shipping_address || {};
         const phoneRaw = customer.phone || shipping.phone || "";
@@ -61,16 +74,16 @@ export async function POST(req, { params }) {
           orderNumber,
           merchantId,
           customer: {
-            firstName: customer.first_name || shipping.name || "",
-            lastName: customer.last_name || "",
-            email: customer.email || payload.email || "",
-            phone,
-            phone_raw: phoneRaw,
-            address: shipping.address1 || "",
-            city: shipping.city || "",
-            zip: shipping.zip || "",
-            province: shipping.province || "",
-            country: shipping.country || "",
+            firstName: customer.first_name || shipping.name || null,
+            lastName: customer.last_name || null,
+            email: customer.email || payload.email || null,
+            phone: phone || null,
+            phone_raw: phoneRaw || null,
+            address: shipping.address1 || null,
+            city: shipping.city || null,
+            zip: shipping.zip || null,
+            province: shipping.province || null,
+            country: shipping.country || null,
           },
           fulfilled: isNowFulfilled,
           fulfillment_status,
@@ -81,7 +94,7 @@ export async function POST(req, { params }) {
           raw: { ...payload },
         };
 
-        // CREA/AGGIORNA CONTATTO (come prima)
+        // CREA/AGGIORNA CONTATTO
         const contactDocId = phone;
         if (contactDocId) {
           let existingTags = [];
@@ -93,27 +106,27 @@ export async function POST(req, { params }) {
           const newTags = Array.from(new Set([...(existingTags || []), "shopify"]));
           await setDoc(
             fireDoc(db, "contacts", contactDocId),
-            {
+            undefinedToNull({
               id: contactDocId,
               phone,
-              firstName: customer.first_name || shipping.name || "",
-              lastName: customer.last_name || "",
-              email: customer.email || payload.email || "",
-              address: shipping.address1 || "",
-              city: shipping.city || "",
-              zip: shipping.zip || "",
-              province: shipping.province || "",
-              country: shipping.country || "",
+              firstName: customer.first_name || shipping.name || null,
+              lastName: customer.last_name || null,
+              email: customer.email || payload.email || null,
+              address: shipping.address1 || null,
+              city: shipping.city || null,
+              zip: shipping.zip || null,
+              province: shipping.province || null,
+              country: shipping.country || null,
               createdBy: merchantId,
               updatedAt: new Date(),
               source: "shopify",
-              tags: newTags,
-            },
+              tags: newTags
+            }),
             { merge: true }
           );
         }
 
-        await setDoc(orderRef, { ...prevOrder, ...orderData }, { merge: true });
+        await setDoc(orderRef, undefinedToNull({ ...prevOrder, ...orderData }), { merge: true });
 
         if (isNowFulfilled && !wasFulfilled && !wasEvasioneInviata) {
           fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/order-fulfilled`, {
@@ -136,15 +149,15 @@ export async function POST(req, { params }) {
         const phone = normalizePhone(phoneRaw);
         const checkoutId = payload.id?.toString() || payload.token || "";
         const checkoutToken = payload.token || "";
-        const checkoutUrl = payload.abandoned_checkout_url || "";
+        const checkoutUrl = payload.abandoned_checkout_url || null;
         const totalPrice = payload.total_price || "0";
         const subtotalPrice = payload.subtotal_price || "0";
         const currency = payload.currency || "EUR";
         const lineItems = (payload.line_items || []).map(item => ({
-          id: item.id, title: item.title, quantity: item.quantity, price: item.price, variant_title: item.variant_title || "",
+          id: item.id, title: item.title, quantity: item.quantity, price: item.price, variant_title: item.variant_title || null,
           product_id: item.product_id, variant_id: item.variant_id,
         }));
-        const completedAt = payload.completed_at;
+        const completedAt = payload.completed_at || null;
         const isCompleted = completedAt ? true : false;
         const checkoutRef = fireDoc(db, "abandoned_checkouts", checkoutId);
         const prevSnap = await getDoc(checkoutRef);
@@ -154,18 +167,19 @@ export async function POST(req, { params }) {
         let checkoutData = {
           checkoutId, checkoutToken, merchantId,
           customer: {
-            firstName: customer.first_name || shipping.first_name || billing.first_name || "",
-            lastName: customer.last_name || shipping.last_name || billing.last_name || "",
-            email: customer.email || payload.email || "",
-            phone, phone_raw: phoneRaw,
-            address: shipping.address1 || billing.address1 || "",
-            city: shipping.city || billing.city || "",
-            zip: shipping.zip || billing.zip || "",
-            province: shipping.province || billing.province || "",
-            country: shipping.country || billing.country || "",
+            firstName: customer.first_name || shipping.first_name || billing.first_name || null,
+            lastName: customer.last_name || shipping.last_name || billing.last_name || null,
+            email: customer.email || payload.email || null,
+            phone: phone || null,
+            phone_raw: phoneRaw || null,
+            address: shipping.address1 || billing.address1 || null,
+            city: shipping.city || billing.city || null,
+            zip: shipping.zip || billing.zip || null,
+            province: shipping.province || billing.province || null,
+            country: shipping.country || billing.country || null,
           },
           checkoutUrl, totalPrice, subtotalPrice, currency,
-          lineItems, completed: isCompleted, completedAt: completedAt || null,
+          lineItems, completed: isCompleted, completedAt,
           createdAt: prevCheckout.createdAt || payload.created_at || new Date(),
           updatedAt: new Date(),
           raw: { ...payload },
@@ -182,26 +196,26 @@ export async function POST(req, { params }) {
           const newTags = Array.from(new Set([...(existingTags || []), "checkout_abbandonato"]));
           await setDoc(
             fireDoc(db, "contacts", contactDocId),
-            {
+            undefinedToNull({
               id: contactDocId,
               phone,
-              firstName: customer.first_name || shipping.first_name || billing.first_name || "",
-              lastName: customer.last_name || shipping.last_name || billing.last_name || "",
-              email: customer.email || payload.email || "",
-              address: shipping.address1 || billing.address1 || "",
-              city: shipping.city || billing.city || "",
-              zip: shipping.zip || billing.zip || "",
-              province: shipping.province || billing.province || "",
-              country: shipping.country || billing.country || "",
+              firstName: customer.first_name || shipping.first_name || billing.first_name || null,
+              lastName: customer.last_name || shipping.last_name || billing.last_name || null,
+              email: customer.email || payload.email || null,
+              address: shipping.address1 || billing.address1 || null,
+              city: shipping.city || billing.city || null,
+              zip: shipping.zip || billing.zip || null,
+              province: shipping.province || billing.province || null,
+              country: shipping.country || billing.country || null,
               createdBy: merchantId,
               updatedAt: new Date(),
               source: "shopify_checkout",
-              tags: newTags,
-            },
+              tags: newTags
+            }),
             { merge: true }
           );
         }
-        await setDoc(checkoutRef, { ...prevCheckout, ...checkoutData }, { merge: true });
+        await setDoc(checkoutRef, undefinedToNull({ ...prevCheckout, ...checkoutData }), { merge: true });
         const isAbandoned = !isCompleted;
         const hasPhone = phone && phone.length > 5;
         const automation = merchantData?.automation?.abandoned_cart || {};

@@ -1,0 +1,26 @@
+{
+  "id": "test123abc",
+  "token": "tokentest",
+  "customer": {
+    "first_name": "Giulia",
+    "last_name": "Verdi",
+    "email": "giulia.verdi@example.com",
+    "phone": "+393334445556"
+  },
+  "abandoned_checkout_url": "https://notforsale.myshopify.com/checkout/test123abc",
+  "shipping_address": {
+    "first_name": "Giulia",
+    "last_name": "Verdi",
+    "address1": "Via del Corso 10",
+    "city": "Roma",
+    "zip": "00100",
+    "province": "RM",
+    "country": "Italia",
+    "phone": "+393334445556"
+  },
+  "line_items": [
+    { "id": 202, "title": "Felpa Premium", "quantity": 1, "price": "59.90", "variant_title": "Unica" }
+  ],
+  "total_price": "59.90",
+  "currency": "EUR"
+}
