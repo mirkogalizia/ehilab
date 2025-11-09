@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/firebase';
-import { setDoc, getDoc, doc as fireDoc } from 'firebase/firestore';
+import { setDoc, getDoc, doc as fireDoc, deleteDoc } from 'firebase/firestore';
 
 // Utility: normalizza numeri telefono
 function normalizePhone(phoneRaw) {
@@ -16,7 +16,7 @@ function normalizePhone(phoneRaw) {
   return '';
 }
 
-// PATCH: funzione per sostituire undefined con null in tutto l'oggetto
+// Converti tutti i valori undefined in null (ricorsivamente)
 function undefinedToNull(obj) {
   if (Array.isArray(obj)) return obj.map(undefinedToNull);
   if (obj && typeof obj === 'object')
@@ -42,11 +42,72 @@ export async function POST(req, { params }) {
       return NextResponse.json({ success: false, error: "Token non valido" }, { status: 403 });
     }
 
-    // Universal switch by Shopify topic
     switch (topic) {
+      // ORDINE CREATO
+      case "orders/create": {
+        const customer = payload.customer || {};
+        const shipping = payload.shipping_address || {};
+        const phoneRaw = customer.phone || shipping.phone || "";
+        const phone = normalizePhone(phoneRaw);
+
+        const orderId = payload.id?.toString() || "";
+        const orderNumber = payload.order_number?.toString() || "";
+        const fulfillment_status = payload.fulfillment_status || "";
+        const isNowFulfilled = fulfillment_status === "fulfilled" || fulfillment_status === true;
+
+        const fulfillments = payload.fulfillments || [];
+        const fulfillment = fulfillments[0] || {};
+        const trackingNumber = fulfillment.tracking_number || "";
+        const trackingCompany = fulfillment.tracking_company || "";
+        const trackingUrl = fulfillment.tracking_url || "";
+
+        const orderRef = fireDoc(db, "orders", orderId);
+        const prevSnap = await getDoc(orderRef);
+        const prevOrder = prevSnap.exists() ? prevSnap.data() : {};
+
+        let orderData = {
+          orderId,
+          orderNumber,
+          merchantId,
+          customer: {
+            firstName: customer.first_name || shipping.name || null,
+            lastName: customer.last_name || null,
+            email: customer.email || payload.email || null,
+            phone: phone || null,
+            phone_raw: phoneRaw || null,
+            address: shipping.address1 || null,
+            city: shipping.city || null,
+            zip: shipping.zip || null,
+            province: shipping.province || null,
+            country: shipping.country || null,
+          },
+          fulfilled: isNowFulfilled,
+          fulfillment_status,
+          trackingNumber,
+          trackingCompany,
+          trackingUrl,
+          updatedAt: new Date(),
+          raw: { ...payload },
+        };
+
+        // Pulizia carrello abbandonato correlato (se esiste)
+        const checkoutId = payload.checkout_id?.toString() || payload.checkout_token || null;
+        if (checkoutId) {
+          const abCheckoutRef = fireDoc(db, "abandoned_checkouts", checkoutId);
+          const abCheckoutSnap = await getDoc(abCheckoutRef);
+          if (abCheckoutSnap.exists()) {
+            await deleteDoc(abCheckoutRef);
+            console.log(`[SHOPIFY] Pulizia: carrello abbandonato ${checkoutId} eliminato dopo creazione ordine.`);
+          }
+        }
+
+        await setDoc(orderRef, undefinedToNull({ ...prevOrder, ...orderData }), { merge: true });
+        return NextResponse.json({ success: true, kind: "order", orderId, phone });
+      }
+
+      // ORDINE EVASO / FULFILLED
       case "orders/fulfilled":
       case "fulfillments/create": {
-        // -------- LOGICA ORDINE EVASO --------
         const customer = payload.customer || {};
         const shipping = payload.shipping_address || {};
         const phoneRaw = customer.phone || shipping.phone || "";
@@ -94,36 +155,15 @@ export async function POST(req, { params }) {
           raw: { ...payload },
         };
 
-        // CREA/AGGIORNA CONTATTO
-        const contactDocId = phone;
-        if (contactDocId) {
-          let existingTags = [];
-          const contactSnap = await getDoc(fireDoc(db, "contacts", contactDocId));
-          if (contactSnap.exists()) {
-            const data = contactSnap.data();
-            if (Array.isArray(data.tags)) existingTags = data.tags;
+        // Pulizia carrello abbandonato correlato (anche qui come "fallback")
+        const checkoutId = payload.checkout_id?.toString() || payload.checkout_token || null;
+        if (checkoutId) {
+          const abCheckoutRef = fireDoc(db, "abandoned_checkouts", checkoutId);
+          const abCheckoutSnap = await getDoc(abCheckoutRef);
+          if (abCheckoutSnap.exists()) {
+            await deleteDoc(abCheckoutRef);
+            console.log(`[SHOPIFY] Pulizia: carrello abbandonato ${checkoutId} eliminato dopo ordine fulfilled.`);
           }
-          const newTags = Array.from(new Set([...(existingTags || []), "shopify"]));
-          await setDoc(
-            fireDoc(db, "contacts", contactDocId),
-            undefinedToNull({
-              id: contactDocId,
-              phone,
-              firstName: customer.first_name || shipping.name || null,
-              lastName: customer.last_name || null,
-              email: customer.email || payload.email || null,
-              address: shipping.address1 || null,
-              city: shipping.city || null,
-              zip: shipping.zip || null,
-              province: shipping.province || null,
-              country: shipping.country || null,
-              createdBy: merchantId,
-              updatedAt: new Date(),
-              source: "shopify",
-              tags: newTags
-            }),
-            { merge: true }
-          );
         }
 
         await setDoc(orderRef, undefinedToNull({ ...prevOrder, ...orderData }), { merge: true });
@@ -139,7 +179,7 @@ export async function POST(req, { params }) {
         return NextResponse.json({ success: true, kind: "order", orderId, phone });
       }
 
-      // ----------- LOGICA CARRELLO ABBANDONATO -----------   
+      // CARRELLO ABBANDONATO
       case "checkouts/create":
       case "checkouts/update": {
         const customer = payload.customer || {};
@@ -234,7 +274,7 @@ export async function POST(req, { params }) {
         return NextResponse.json({ success: true, kind: "checkout", checkoutId, phone });
       }
 
-      // ------------ FallBack: evento non gestito
+      // EVENTO NON GESTITO
       default:
         return NextResponse.json({ success: false, error: "Evento non gestito: " + topic }, { status: 200 });
     }
