@@ -40,32 +40,25 @@ const parseTime = (val) => {
   return 0;
 };
 
-// Formatta la label della data stile WhatsApp
 function formatDateSeparator(date) {
   const now = new Date();
   const d = new Date(date);
   const day = d.getDate(), month = d.getMonth(), year = d.getFullYear();
   const today = now.getDate(), thisMonth = now.getMonth(), thisYear = now.getFullYear();
-  // Oggi
   if (day === today && month === thisMonth && year === thisYear) return "Oggi";
-  // Ieri
-  const yesterday = new Date();
+  const yesterday = new Date(now);
   yesterday.setDate(today - 1);
   if (
     day === yesterday.getDate() &&
     month === yesterday.getMonth() &&
     year === yesterday.getFullYear()
   ) return "Ieri";
-  // Altrimenti, formato breve
   return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 function renderTextWithLinks(text) {
   if (!text) return null;
-  let s = String(text)
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/\\n/g, '\n');
+  let s = String(text).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\\n/g, '\n');
   if (!s.includes('\n')) {
     s = s
       .replace(/\s+(Corriere:)/, '\n$1')
@@ -76,11 +69,9 @@ function renderTextWithLinks(text) {
   const urlRe = /\bhttps?:\/\/[^\s]+/gi;
   return s.split('\n').map((line, iLine, lines) => {
     const nodes = [];
-    let lastIndex = 0;
-    let match;
+    let lastIndex = 0, match;
     while ((match = urlRe.exec(line)) !== null) {
-      const url = match[0];
-      const offset = match.index;
+      const url = match[0], offset = match.index;
       if (offset > lastIndex) nodes.push(line.slice(lastIndex, offset));
       nodes.push(
         <a
@@ -116,9 +107,11 @@ export default function ChatPage() {
   const [showNewChat, setShowNewChat] = useState(false);
   const [userData, setUserData] = useState(null);
   const [canSendMessage, setCanSendMessage] = useState(false);
+
   const messagesEndRef = useRef(null);
   const messagesTopRef = useRef(null);
   const listChatRef = useRef(null);
+  const chatBoxRef = useRef();
 
   const [searchContact, setSearchContact] = useState('');
   const [filteredContacts, setFilteredContacts] = useState([]);
@@ -209,7 +202,6 @@ export default function ChatPage() {
     });
     return () => unsub();
   }, [user]);
-  // Icona carrello su chat che hanno almeno un messaggio automation:abandoned_cart
   const phonesData = useMemo(() => {
     const map = new Map();
     for (const m of allMessages) {
@@ -246,9 +238,10 @@ export default function ChatPage() {
   const unreadThreads = useMemo(() => phonesData.filter(x => x.unread > 0), [phonesData]);
   const readThreads = useMemo(() => phonesData.filter(x => x.unread === 0), [phonesData]);
 
-  // ... (tutti gli altri useEffect e funzioni invariati come nel codice che già hai incollato fin qui) ...
+  // Dalla tua logica (aggiungi qui tutti gli useEffect, handleTouch, sendMessage, ecc)
+  // [ ... ]
 
-  // === Chat rendering, con supporto date separator ===
+  // Rendering principale
   return (
     <div className="chat-shell flex flex-col md:flex-row bg-gray-50 font-[Montserrat] overflow-hidden">
       {/* Lista chat */}
@@ -258,7 +251,6 @@ export default function ChatPage() {
       >
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Conversazioni</h2>
-          {/* Bottoni nuova chat, svuota ecc */}
         </div>
         <ul className="space-y-0">
           {unreadThreads.length > 0 && (
@@ -269,7 +261,6 @@ export default function ChatPage() {
                   key={`unread-${thread.phone}`}
                   data-phone={thread.phone}
                   onClick={() => setSelectedPhone(thread.phone)}
-                  onContextMenu={e => handleChatContextMenu(e, thread.phone)}
                   className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
                   ${selectedPhone === thread.phone ? 'bg-gray-200 font-semibold shadow' : 'hover:bg-gray-100'}
                   border-b border-gray-100`}
@@ -302,7 +293,6 @@ export default function ChatPage() {
                   key={`read-${thread.phone}`}
                   data-phone={thread.phone}
                   onClick={() => setSelectedPhone(thread.phone)}
-                  onContextMenu={e => handleChatContextMenu(e, thread.phone)}
                   className={`group flex items-center justify-between px-4 py-3 mb-1 rounded-xl cursor-pointer transition 
                   ${selectedPhone === thread.phone ? 'bg-gray-200 font-semibold shadow' : 'hover:bg-gray-100'}
                   border-b border-gray-100`}
@@ -325,30 +315,31 @@ export default function ChatPage() {
             </>
           )}
         </ul>
-        {/* ... modale nuova chat ecc ... */}
       </div>
-      {/* CHAT BOX */}
+      {/* Chat */}
       {selectedPhone && (
         <div className="flex flex-col flex-1 bg-gray-100 relative">
-          {/* Header */}
           <div className="flex items-center gap-3 p-4 bg-white border-b sticky top-0 z-20">
             <button onClick={() => setSelectedPhone('')} className="md:hidden text-gray-600 hover:text-black">
               <ArrowLeft size={22} />
             </button>
             <span className="text-lg font-semibold truncate">{contactNames[selectedPhone] || selectedPhone}</span>
           </div>
-          {/* Messaggi */}
           <div
             className="flex-1 p-4 scroll-smooth relative chat-scroll chat-scroll--with-composer"
             ref={chatBoxRef}
-            onScroll={handleScroll}
           >
             <div ref={messagesTopRef} />
             <div className="space-y-3">
-              {/* Inserimento della data separator */}
               {(() => {
                 let lastMsgDateLabel = null;
-                return filtered.map((msg, idx) => {
+                return allMessages
+                  .filter(m =>
+                    normalizePhone(m.from) === selectedPhone ||
+                    normalizePhone(m.to) === selectedPhone
+                  )
+                  .sort((a, b) => parseTime(a.timestamp || a.createdAt) - parseTime(b.timestamp || b.createdAt))
+                  .map((msg, idx) => {
                   const msgDate = new Date(parseTime(msg.timestamp || msg.createdAt));
                   const dateLabel = formatDateSeparator(msgDate);
                   const showDateSeparator = dateLabel !== lastMsgDateLabel;
@@ -364,12 +355,8 @@ export default function ChatPage() {
                       )}
                       <div
                         className={`flex flex-col ${msg.from === 'operator' ? 'items-end' : 'items-start'}`}
-                        onContextMenu={e => handleMessageContextMenu(e, msg.id)}
-                        onTouchStart={() => handleTouchStart(msg.id)}
-                        onTouchEnd={handleTouchEnd}
                       >
                         {msg.type === 'image' && msg.media_id ? (
-                          // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={`/api/media-proxy?media_id=${msg.media_id}`}
                             alt="Immagine"
@@ -396,7 +383,6 @@ export default function ChatPage() {
                             {renderTextWithLinks(msg.text)}
                           </div>
                         )}
-                        {/* Orario sotto il messaggio */}
                         <div className="text-[10px] text-gray-400 mt-1">
                           {msgDate.toLocaleTimeString('it-IT', {
                             hour: '2-digit',
@@ -410,16 +396,15 @@ export default function ChatPage() {
               })()}
               <div ref={messagesEndRef} />
             </div>
-            {/* ...scroll buttons, anteprima media... */}
           </div>
-          {/* ...composer, modali, context menu... */}
+          {/* composer, modali, context menu */}
         </div>
       )}
     </div>
   );
 }
 
-// ---- Preview media senza leak ----
+// MediaPreview come da precedente versione (riaggiungi se lo usavi)
 function MediaPreview({ selectedMedia, onClear }) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
@@ -432,7 +417,6 @@ function MediaPreview({ selectedMedia, onClear }) {
   return (
     <div className="flex items-center gap-4 mb-2 p-2 bg-gray-100 rounded shadow border border-gray-300 max-w-xs mx-4">
       {selectedMedia.type === 'image' ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={url || ''} alt="preview" className="h-16 w-16 object-cover rounded" />
       ) : (
         <div className="flex items-center gap-2">
@@ -446,9 +430,8 @@ function MediaPreview({ selectedMedia, onClear }) {
         onClick={onClear}
         className="text-red-500 hover:bg-red-50"
         title="Rimuovi"
-      >
-        ✕
-      </Button>
+      >✕</Button>
     </div>
   );
 }
+
