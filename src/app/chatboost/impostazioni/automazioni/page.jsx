@@ -7,27 +7,36 @@ import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/useAuth";
 import {
-  Store, ShoppingCart, CalendarDays, Plug, RefreshCcw, LogOut, ArrowRight, AlertCircle, CheckCircle2
+  Store, ShoppingCart, CalendarDays, Plug, RefreshCcw, LogOut, ArrowRight, 
+  AlertCircle, CheckCircle2, Bot, Zap
 } from "lucide-react";
 
 export default function AutomazioniPage() {
   const { user } = useAuth();
 
-  // ------- SHOPIFY ORDINE EVASO (ESISTENTE) -------
+  // ------- SHOPIFY (ESISTENTE) -------
   const [enabled, setEnabled] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState('');
-
-  // ------- SHOPIFY CARRELLO ABBANDONATO (NUOVO) 🆕 -------
   const [enabledAbandonedCart, setEnabledAbandonedCart] = useState(false);
   const [templateAbandonedCart, setTemplateAbandonedCart] = useState('');
   const [delayMinutes, setDelayMinutes] = useState(60);
-
-  // ------- TEMPLATE LIST (CONDIVISO) -------
   const [templateList, setTemplateList] = useState([]);
   const [loadingShopify, setLoadingShopify] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // ------- 🆕 AI CONFIGURATION (SEMPLIFICATO) -------
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [loadingAI, setLoadingAI] = useState(false);
+  const [saveSuccessAI, setSaveSuccessAI] = useState(false);
+
+  // ------- 🆕 SHOPIFY OAUTH -------
+  const [shopifyConnected, setShopifyConnected] = useState(false);
+  const [shopifyShop, setShopifyShop] = useState('');
+  const [connectingShopify, setConnectingShopify] = useState(false);
 
   // ------- CALENDARIO (INVARIATO) -------
   const [googleConnected, setGoogleConnected] = useState(false);
@@ -43,36 +52,42 @@ export default function AutomazioniPage() {
     to: toIsoDate(new Date(today.getTime() + 7*24*3600*1000))
   });
 
-  // Shopify: carica impostazioni + template
+  // ===== CARICA CONFIGURAZIONI =====
   useEffect(() => {
     if (!user) return;
     (async () => {
       setLoadingShopify(true);
       try {
-        const merchantRef = doc(db, "shopify_merchants", user.uid);
-        const snap = await getDoc(merchantRef);
+        const userRef = doc(db, "users", user.uid);
+        const snap = await getDoc(userRef);
         
         if (snap.exists()) {
           const data = snap.data();
           
-          // ✅ ORDINE EVASO (esistente)
+          // SHOPIFY AUTOMAZIONI
           const automation = data?.automation?.order_fulfilled || {};
           setEnabled(!!automation.enabled);
           setSelectedTemplate(automation.template_id || '');
 
-          // 🆕 CARRELLO ABBANDONATO (nuovo)
           const automationCart = data?.automation?.abandoned_cart || {};
           setEnabledAbandonedCart(!!automationCart.enabled);
           setTemplateAbandonedCart(automationCart.template_id || '');
           setDelayMinutes(automationCart.delay_minutes || 60);
 
-          console.log("✅ Configurazioni caricate:", {
-            order_fulfilled: automation,
-            abandoned_cart: automationCart
-          });
+          // AI CONFIGURAZIONE (solo toggle + prompt)
+          const aiConfig = data?.ai_config || {};
+          setAiEnabled(!!aiConfig.enabled);
+          setCustomPrompt(aiConfig.custom_prompt || '');
+
+          // SHOPIFY OAUTH
+          const shopifyConfig = data?.shopify_config || {};
+          setShopifyConnected(!!shopifyConfig.admin_token);
+          setShopifyShop(shopifyConfig.store_url || '');
+
+          console.log("✅ Configurazioni caricate");
         }
 
-        // Carica lista template approvati
+        // Carica template WhatsApp
         const res = await fetch('/api/list-templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -81,50 +96,103 @@ export default function AutomazioniPage() {
         const dataTpl = await res.json();
         setTemplateList(Array.isArray(dataTpl) ? dataTpl.filter(t => t.status === 'APPROVED') : []);
       } catch (error) {
-        console.error("Errore caricamento automazioni:", error);
+        console.error("Errore caricamento:", error);
       } finally {
         setLoadingShopify(false);
       }
     })();
   }, [user]);
 
-  // ✅ Salva impostazioni Shopify (ENTRAMBE le automazioni)
+  // ===== SALVA AUTOMAZIONI SHOPIFY =====
   async function saveAutomazione() {
     if (!user) return;
     setLoadingShopify(true);
     setSaveSuccess(false);
     try {
-      const merchantRef = doc(db, "shopify_merchants", user.uid);
+      const userRef = doc(db, "users", user.uid);
       
-      const updateData = {
-        // Ordine evaso (esistente)
-        "automation.order_fulfilled": { 
-          enabled, 
-          template_id: selectedTemplate 
-        },
-        // 🆕 Carrello abbandonato (nuovo)
+      await updateDoc(userRef, {
+        "automation.order_fulfilled": { enabled, template_id: selectedTemplate },
         "automation.abandoned_cart": { 
           enabled: enabledAbandonedCart, 
           template_id: templateAbandonedCart,
           delay_minutes: parseInt(delayMinutes) || 60
         }
-      };
+      });
       
-      await updateDoc(merchantRef, updateData);
-      
-      console.log("✅ Automazioni salvate:", updateData);
+      console.log("✅ Automazioni Shopify salvate");
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
       
     } catch (error) {
-      console.error("❌ Errore salvataggio automazioni:", error);
+      console.error("❌ Errore salvataggio:", error);
       alert("Errore durante il salvataggio. Riprova.");
     } finally {
       setLoadingShopify(false);
     }
   }
 
-  // Calendario: helper (INVARIATO)
+  // ===== 🆕 SALVA CONFIGURAZIONE AI (SEMPLIFICATO) =====
+  async function saveAIConfig() {
+    if (!user) return;
+
+    if (aiEnabled && !shopifyConnected) {
+      alert("⚠️ Connetti prima Shopify per permettere all'AI di gestire gli ordini");
+      return;
+    }
+
+    setLoadingAI(true);
+    setSaveSuccessAI(false);
+    try {
+      const userRef = doc(db, "users", user.uid);
+      
+      await updateDoc(userRef, {
+        ai_config: {
+          enabled: aiEnabled,
+          custom_prompt: customPrompt,
+          auto_reply_enabled: true,
+          ticket_tracking: true,
+          updated_at: new Date().toISOString()
+        }
+      });
+      
+      console.log("✅ Configurazione AI salvata");
+      setSaveSuccessAI(true);
+      setTimeout(() => setSaveSuccessAI(false), 3000);
+      
+    } catch (error) {
+      console.error("❌ Errore salvataggio AI:", error);
+      alert("Errore durante il salvataggio. Riprova.");
+    } finally {
+      setLoadingAI(false);
+    }
+  }
+
+  // ===== GESTISCI CALLBACK OAUTH SHOPIFY =====
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shopifyStatus = params.get('shopify');
+    const reason = params.get('reason');
+    
+    if (shopifyStatus === 'success') {
+      alert('✅ Shopify connesso con successo!');
+      window.history.replaceState({}, '', '/automations');
+      window.location.reload();
+    } else if (shopifyStatus === 'error') {
+      const messages = {
+        missing_params: 'Parametri OAuth mancanti',
+        invalid_state: 'State non valido',
+        invalid_hmac: 'Verifica sicurezza fallita',
+        token_exchange: 'Errore ottenimento token',
+        user_not_found: 'Utente non trovato',
+        exception: 'Errore generico'
+      };
+      alert(`❌ Errore connessione Shopify: ${messages[reason] || 'Sconosciuto'}`);
+      window.history.replaceState({}, '', '/automations');
+    }
+  }, []);
+
+  // ===== CALENDARIO HELPERS (INVARIATO) =====
   const fmtDT = (dt) => {
     const d = new Date(dt);
     const hasTime = /\d{2}:\d{2}/.test(d.toTimeString());
@@ -207,17 +275,19 @@ export default function AutomazioniPage() {
     <div className="max-w-5xl mx-auto p-8 font-[Montserrat] space-y-10">
       <header className="space-y-1">
         <h1 className="font-bold text-2xl">Automazioni</h1>
-        <p className="text-gray-500">Configura le automazioni per Shopify e collega il tuo Google Calendar.</p>
+        <p className="text-gray-500">
+          Configura automazioni Shopify, risposte AI automatiche e Google Calendar.
+        </p>
       </header>
 
-      {/* ========== SHOPIFY ========== */}
+      {/* ========== SHOPIFY (INVARIATO) ========== */}
       <section className="bg-white border rounded-2xl p-6 shadow-sm space-y-8">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-xl bg-blue-50 text-blue-700"><Store size={18} /></div>
           <h2 className="text-xl font-semibold">Shopify</h2>
         </div>
 
-        {/* --- 1. ORDINE EVASO (ESISTENTE) --- */}
+        {/* Ordine Evaso */}
         <div className="border-b pb-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 rounded-lg bg-green-50 text-green-700">📦</div>
@@ -266,7 +336,7 @@ export default function AutomazioniPage() {
           </div>
         </div>
 
-        {/* --- 2. CARRELLO ABBANDONATO (NUOVO) 🆕 --- */}
+        {/* Carrello Abbandonato */}
         <div className="border-b pb-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 rounded-lg bg-orange-50 text-orange-700"><ShoppingCart size={18} /></div>
@@ -305,17 +375,11 @@ export default function AutomazioniPage() {
                   </option>
                 ))}
               </select>
-              {enabledAbandonedCart && !templateAbandonedCart && (
-                <div className="flex items-center gap-2 mt-2 text-orange-600 text-sm">
-                  <AlertCircle size={16} />
-                  <span>Seleziona un template per attivare l'automazione</span>
-                </div>
-              )}
             </div>
 
             <div>
               <label className="block mb-2 text-base font-medium">
-                Ritardo invio (minuti dopo abbandono):
+                Ritardo invio (minuti):
               </label>
               <Input
                 type="number"
@@ -326,28 +390,16 @@ export default function AutomazioniPage() {
                 disabled={!enabledAbandonedCart || loadingShopify}
                 className="w-32"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Consigliato: 60 min (1 ora) - Max: 1440 min (24 ore)
-              </p>
-            </div>
-
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
-              <p className="font-medium text-blue-900 mb-1">ℹ️ Come funziona:</p>
-              <ul className="text-blue-800 space-y-1 ml-4 list-disc">
-                <li>Quando un cliente abbandona il checkout, viene salvato automaticamente</li>
-                <li>Dopo il ritardo impostato, viene inviato il messaggio WhatsApp</li>
-                <li>Se il cliente completa l'ordine nel frattempo, il messaggio non viene inviato</li>
-              </ul>
             </div>
           </div>
         </div>
 
-        {/* --- BOTTONE SALVATAGGIO --- */}
+        {/* Bottone Salva Shopify */}
         <div className="pt-2">
           {saveSuccess && (
             <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-green-800">
               <CheckCircle2 size={18} />
-              <span>Automazioni Shopify aggiornate con successo!</span>
+              <span>Automazioni Shopify salvate!</span>
             </div>
           )}
           <Button 
@@ -355,8 +407,186 @@ export default function AutomazioniPage() {
             onClick={saveAutomazione}
             className="w-full sm:w-auto"
           >
-            {loadingShopify ? 'Salvataggio...' : 'Salva impostazioni Shopify'}
+            {loadingShopify ? 'Salvataggio...' : 'Salva Shopify'}
           </Button>
+        </div>
+      </section>
+
+      {/* ========== 🆕 AI ASSISTENTE (SEMPLIFICATO) ========== */}
+      <section className="bg-white border rounded-2xl p-6 shadow-sm space-y-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-xl bg-purple-50 text-purple-700"><Bot size={18} /></div>
+          <h2 className="text-xl font-semibold">Assistente AI</h2>
+        </div>
+
+        {/* Toggle principale */}
+        <div className="border-b pb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-semibold mb-1">Risposte Automatiche AI</h3>
+              <p className="text-sm text-gray-500">
+                L'AI risponderà automaticamente ai clienti su WhatsApp
+              </p>
+            </div>
+            <Switch
+              checked={aiEnabled}
+              onCheckedChange={setAiEnabled}
+              id="ai-toggle"
+            />
+          </div>
+          
+          {aiEnabled && (
+            <div className="p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
+              <Zap size={18} className="text-green-600" />
+              <span className="text-green-800 font-medium">✨ AI attiva - Risposte automatiche abilitate</span>
+            </div>
+          )}
+          {!aiEnabled && (
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <span className="text-gray-600">⏸️ AI disattivata - Dovrai rispondere manualmente</span>
+            </div>
+          )}
+        </div>
+
+        {/* Prompt personalizzato (opzionale) */}
+        <div className="space-y-4">
+          <div>
+            <label className="block mb-2 text-sm font-medium">
+              Personalizza il comportamento dell'AI (opzionale)
+            </label>
+            <Textarea
+              placeholder="Esempio: Rispondi sempre in modo molto cordiale e usa emoji..."
+              value={customPrompt}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              rows={3}
+              disabled={loadingAI}
+              className="resize-none"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Lascia vuoto per usare il comportamento predefinito dell'AI
+            </p>
+          </div>
+        </div>
+
+        {/* Configurazione Shopify OAuth */}
+        <div className="space-y-4 border-t pt-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Store size={16} className="text-gray-600" />
+            <h3 className="font-semibold">Integrazione Shopify</h3>
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">Richiesto per AI</span>
+          </div>
+
+          {!shopifyConnected ? (
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
+              <p className="text-sm">
+                🛍️ Connetti il tuo negozio Shopify per permettere all'AI di rispondere automaticamente alle domande sugli ordini.
+              </p>
+              
+              <div>
+                <label className="block mb-2 text-sm font-medium">
+                  URL del tuo store Shopify <span className="text-red-500">*</span>
+                </label>
+                <Input
+                  placeholder="tuostore.myshopify.com"
+                  value={shopifyShop}
+                  onChange={(e) => setShopifyShop(e.target.value)}
+                  disabled={connectingShopify}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Esempio: notforresale.myshopify.com (senza https://)
+                </p>
+              </div>
+              
+              <Button
+                onClick={() => {
+                  if (!shopifyShop || !shopifyShop.includes('myshopify.com')) {
+                    alert('⚠️ Inserisci un URL Shopify valido (es: tuostore.myshopify.com)');
+                    return;
+                  }
+                  
+                  setConnectingShopify(true);
+                  window.location.href = `/api/shopify/oauth/start?user_id=${user.uid}&shop=${shopifyShop}`;
+                }}
+                disabled={connectingShopify || !shopifyShop}
+                className="w-full"
+              >
+                {connectingShopify ? 'Connessione...' : '🔗 Connetti Shopify (1 click)'}
+              </Button>
+            </div>
+          ) : (
+            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle2 size={18} className="text-green-600" />
+                    <span className="font-medium text-green-800">Shopify connesso</span>
+                  </div>
+                  <p className="text-sm text-green-700">
+                    Store: <code className="bg-white px-2 py-1 rounded text-xs">{shopifyShop}</code>
+                  </p>
+                </div>
+                
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    if (!confirm('Vuoi disconnettere Shopify? L\'AI non potrà più gestire gli ordini.')) return;
+                    
+                    const userRef = doc(db, 'users', user.uid);
+                    await updateDoc(userRef, {
+                      'shopify_config.store_url': '',
+                      'shopify_config.admin_token': '',
+                      'shopify_config.connected_at': null,
+                      'ai_config.enabled': false  // Disabilita anche AI
+                    });
+                    
+                    setShopifyConnected(false);
+                    setShopifyShop('');
+                    setAiEnabled(false);
+                    alert('✅ Shopify disconnesso');
+                  }}
+                >
+                  Disconnetti
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Bottone Salva AI */}
+        <div className="pt-2">
+          {saveSuccessAI && (
+            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-green-800">
+              <CheckCircle2 size={18} />
+              <span>Configurazione AI salvata!</span>
+            </div>
+          )}
+
+          {aiEnabled && !shopifyConnected && (
+            <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg flex items-center gap-2 text-orange-800">
+              <AlertCircle size={18} />
+              <span>Connetti Shopify per attivare l'AI</span>
+            </div>
+          )}
+
+          <Button 
+            disabled={loadingAI || (aiEnabled && !shopifyConnected)} 
+            onClick={saveAIConfig}
+            className="w-full sm:w-auto"
+          >
+            {loadingAI ? 'Salvataggio...' : '💾 Salva Configurazione AI'}
+          </Button>
+        </div>
+
+        {/* Info box */}
+        <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+          <p className="text-sm font-semibold mb-2">ℹ️ Come funziona:</p>
+          <ul className="text-sm space-y-1 ml-4 list-disc text-gray-700">
+            <li>L'AI è inclusa nel tuo piano EhiLab (nessun costo aggiuntivo)</li>
+            <li>Risponde automaticamente a: ordini, tracking, resi, FAQ</li>
+            <li>Apre ticket automatici per ordini in ritardo</li>
+            <li>Puoi disattivarla in qualsiasi momento con il toggle sopra</li>
+          </ul>
         </div>
       </section>
 
@@ -379,7 +609,7 @@ export default function AutomazioniPage() {
           ) : (
             <>
               <Button variant="outline" onClick={loadCalendars} className="flex items-center gap-2" disabled={loadingCalendars}>
-                <RefreshCcw size={16} className={loadingCalendars ? 'animate-spin' : ''}/> Ricarica calendari
+                <RefreshCcw size={16} className={loadingCalendars ? 'animate-spin' : ''}/> Ricarica
               </Button>
               <Button variant="destructive" onClick={disconnectGoogle} className="flex items-center gap-2">
                 <LogOut size={16}/> Disconnetti
@@ -397,7 +627,7 @@ export default function AutomazioniPage() {
           <div className="space-y-5">
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-600">Calendario di default</span>
+                <span className="text-sm text-gray-600">Calendario</span>
                 <select
                   className="border rounded px-2 py-1"
                   value={calendarId}
@@ -427,14 +657,14 @@ export default function AutomazioniPage() {
                 />
               </div>
               <Button variant="outline" onClick={() => loadEvents(calendarId)} disabled={loadingEvents}>
-                Aggiorna eventi
+                Aggiorna
               </Button>
             </div>
 
             <div className="rounded-lg border p-4">
-              <div className="font-semibold mb-2">Eventi nel periodo {loadingEvents && <span className="text-gray-400 text-sm">(caricamento…)</span>}</div>
+              <div className="font-semibold mb-2">Eventi {loadingEvents && <span className="text-gray-400 text-sm">(caricamento…)</span>}</div>
               {!loadingEvents && events.length === 0 && (
-                <div className="text-sm text-gray-500">Nessun evento nel periodo selezionato</div>
+                <div className="text-sm text-gray-500">Nessun evento nel periodo</div>
               )}
               {!loadingEvents && events.length > 0 && (
                 <ul className="divide-y">
@@ -460,3 +690,4 @@ export default function AutomazioniPage() {
     </div>
   );
 }
+
