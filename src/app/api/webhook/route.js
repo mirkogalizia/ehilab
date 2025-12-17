@@ -131,7 +131,7 @@ export async function POST(req) {
 
         try {
           // Chiama endpoint AI
-          const aiResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'https://ehi-lab.it'}/api/ai-reply`, {
+          const aiResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'https://ehi-lab.it'}/api/ai-respond`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
