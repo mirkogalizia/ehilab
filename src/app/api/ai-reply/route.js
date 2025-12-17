@@ -50,7 +50,7 @@ export async function POST(req) {
     threadId = threadResponse.id;
     
     if (!threadId) {
-      throw new Error('Thread ID non ricevuto da OpenAI');
+      throw new Error('Thread ID non ricevuto');
     }
     
     console.log('✅ Thread ID:', threadId);
@@ -63,7 +63,7 @@ export async function POST(req) {
     
     console.log('✅ Messaggio aggiunto');
     
-    // CREA RUN
+    // CREA RUN (SENZA FUNCTION CALLS)
     const runResponse = await openai.beta.threads.runs.create(threadId, {
       assistant_id: ASSISTANT_ID,
       additional_instructions: `Cliente: ${customer_name || 'Sconosciuto'}, Tel: ${customer_phone || 'N/A'}`
@@ -72,111 +72,45 @@ export async function POST(req) {
     runId = runResponse.id;
     
     if (!runId) {
-      throw new Error('Run ID non ricevuto da OpenAI');
+      throw new Error('Run ID non ricevuto');
     }
     
     console.log('✅ Run ID:', runId);
     
-    // POLLING
+    // POLLING SEMPLICE (SOLO completed/failed)
     let attempts = 0;
-    let status = runResponse.status;
+    let runStatus = runResponse;
     
-    while (status !== 'completed' && attempts < 30) {
+    while (runStatus.status !== 'completed' && attempts < 30) {
       await new Promise(r => setTimeout(r, 1000));
       
-      const runCheck = await openai.beta.threads.runs.retrieve(threadId, runId);
-      status = runCheck.status;
+      runStatus = await openai.beta.threads.runs.retrieve(threadId, runId);
       
-      console.log(`🔄 Attempt ${attempts + 1}: ${status}`);
+      console.log(`🔄 Status (${attempts + 1}/30):`, runStatus.status);
       
-      if (status === 'failed' || status === 'cancelled' || status === 'expired') {
-        throw new Error(`Run failed: ${status}`);
+      if (runStatus.status === 'failed') {
+        console.error('❌ Run failed:', runStatus.last_error);
+        throw new Error(`Run failed: ${runStatus.last_error?.message || 'Unknown error'}`);
       }
       
-      // Gestisci function calls
-      if (status === 'requires_action') {
-        const toolCalls = runCheck.required_action?.submit_tool_outputs?.tool_calls || [];
-        
-        if (toolCalls.length > 0) {
-          const outputs = [];
-          
-          for (const call of toolCalls) {
-            if (call.function.name === 'get_order_status') {
-              const args = JSON.parse(call.function.arguments);
-              
-              // Chiamata Shopify
-              const shopifyConfig = userData.shopify_config;
-              
-              if (shopifyConfig?.admin_token) {
-                try {
-                  const orderNum = args.order_id.replace(/[#\s]/g, '');
-                  const url = `https://${shopifyConfig.store_url}/admin/api/2024-10/orders.json?name=${orderNum}&status=any`;
-                  
-                  const res = await fetch(url, {
-                    headers: {
-                      'X-Shopify-Access-Token': shopifyConfig.admin_token,
-                      'Content-Type': 'application/json'
-                    }
-                  });
-                  
-                  const data = await res.json();
-                  
-                  if (data.orders && data.orders.length > 0) {
-                    const order = data.orders[0];
-                    outputs.push({
-                      tool_call_id: call.id,
-                      output: JSON.stringify({
-                        found: true,
-                        order_number: order.name,
-                        status: order.financial_status,
-                        fulfillment: order.fulfillment_status || 'non spedito',
-                        total: `€${order.total_price}`,
-                        customer: `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`,
-                        items: order.line_items.map(i => i.name).join(', ')
-                      })
-                    });
-                  } else {
-                    outputs.push({
-                      tool_call_id: call.id,
-                      output: JSON.stringify({ found: false, message: 'Ordine non trovato' })
-                    });
-                  }
-                } catch (err) {
-                  outputs.push({
-                    tool_call_id: call.id,
-                    output: JSON.stringify({ found: false, error: err.message })
-                  });
-                }
-              } else {
-                outputs.push({
-                  tool_call_id: call.id,
-                  output: JSON.stringify({ found: false, message: 'Shopify non configurato' })
-                });
-              }
-            }
-          }
-          
-          if (outputs.length > 0) {
-            await openai.beta.threads.runs.submitToolOutputs(threadId, runId, {
-              tool_outputs: outputs
-            });
-          }
-        }
+      if (runStatus.status === 'cancelled' || runStatus.status === 'expired') {
+        throw new Error(`Run ${runStatus.status}`);
       }
       
       attempts++;
     }
     
     if (attempts >= 30) {
-      throw new Error('Timeout');
+      throw new Error('Timeout: AI non ha risposto in 30 secondi');
     }
     
     // RECUPERA RISPOSTA
+    console.log('📥 Recupero risposta...');
     const messages = await openai.beta.threads.messages.list(threadId);
     const aiMessages = messages.data.filter(m => m.role === 'assistant');
     
     if (aiMessages.length === 0) {
-      throw new Error('Nessuna risposta AI');
+      throw new Error('Nessuna risposta AI generata');
     }
     
     const response = aiMessages[0].content
@@ -184,7 +118,7 @@ export async function POST(req) {
       .map(c => c.text.value)
       .join('\n');
     
-    console.log('✅ Risposta:', response.slice(0, 50));
+    console.log('✅ Risposta AI:', response.slice(0, 100));
     
     return NextResponse.json({
       ai_enabled: true,
@@ -193,8 +127,9 @@ export async function POST(req) {
     });
     
   } catch (err) {
-    console.error('❌ ERRORE:', err.message);
-    console.error('ThreadID:', threadId, 'RunID:', runId);
+    console.error('❌ ERRORE COMPLETO:', err);
+    console.error('❌ Message:', err.message);
+    console.error('❌ Stack:', err.stack);
     
     return NextResponse.json({ 
       error: err.message,
