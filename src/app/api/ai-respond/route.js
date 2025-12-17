@@ -9,14 +9,13 @@ const openai = new OpenAI({
 
 export async function POST(req) {
   try {
-    const body = await req.json();
-    const { message, customer_phone, customer_name, merchant_id } = body;
+    const { message, customer_phone, customer_name, merchant_id } = await req.json();
     
     if (!message || !merchant_id) {
       return NextResponse.json({ error: 'Missing params' }, { status: 400 });
     }
     
-    console.log('🚀 AI START - Message:', message.slice(0, 30));
+    console.log('🚀 AI CHAT START');
     
     // Verifica utente
     const userDoc = await getDoc(doc(db, 'users', merchant_id));
@@ -25,110 +24,69 @@ export async function POST(req) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
     
-    const aiConfig = userDoc.data().ai_config || {};
+    const userData = userDoc.data();
+    const aiConfig = userData.ai_config || {};
     
     if (!aiConfig.enabled) {
       return NextResponse.json({ ai_enabled: false });
     }
     
-    const assistantId = process.env.OPENAI_ASSISTANT_ID;
+    console.log('✅ AI enabled for merchant');
     
-    if (!assistantId) {
-      return NextResponse.json({ error: 'No assistant' }, { status: 500 });
-    }
+    // SYSTEM PROMPT
+    const systemPrompt = `Sei l'assistente virtuale di un e-commerce italiano chiamato "NOT FOR RESALE".
+
+Il tuo compito è aiutare i clienti con:
+- Informazioni sugli ordini (tracking, stato spedizione, tempi di consegna)
+- Domande sui prodotti
+- Politiche di reso e rimborso
+- Assistenza generale
+
+Rispondi sempre in italiano, in modo cordiale e professionale.
+Usa emoji con moderazione (max 1-2 per messaggio).
+Risposte brevi e chiare (max 3-4 frasi).
+
+Se il cliente chiede informazioni su un ordine specifico, spiega che hai bisogno del numero ordine e dell'email usata per l'acquisto per verificare lo stato.
+
+Cliente attuale: ${customer_name || 'Cliente'}
+Telefono: ${customer_phone || 'N/A'}`;
     
-    console.log('✅ Using assistant:', assistantId);
+    // Custom prompt merchant
+    const customPrompt = aiConfig.custom_prompt || '';
     
-    // CREA THREAD - DESTRUCTURE ESPLICITO
-    const threadObj = await openai.beta.threads.create();
-    const threadId = String(threadObj.id); // Force string
+    // CHIAMATA CHAT COMPLETIONS
+    console.log('🤖 Calling OpenAI Chat Completions...');
     
-    console.log('✅ Thread ID type:', typeof threadId, 'value:', threadId);
-    
-    if (!threadId || threadId === 'undefined') {
-      throw new Error('Invalid thread ID: ' + threadId);
-    }
-    
-    // AGGIUNGI MESSAGGIO
-    await openai.beta.threads.messages.create(threadId, {
-      role: 'user',
-      content: message
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: systemPrompt + (customPrompt ? '\n\nIstruzioni aggiuntive: ' + customPrompt : '')
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ],
+      temperature: 1.0,
+      max_tokens: 500
     });
     
-    console.log('✅ Message added');
+    const response = completion.choices[0].message.content;
+    const tokensUsed = completion.usage.total_tokens;
     
-    // CREA RUN - DESTRUCTURE ESPLICITO
-    const runObj = await openai.beta.threads.runs.create(threadId, {
-      assistant_id: assistantId
-    });
-    
-    const runId = String(runObj.id); // Force string
-    
-    console.log('✅ Run ID type:', typeof runId, 'value:', runId);
-    
-    if (!runId || runId === 'undefined') {
-      throw new Error('Invalid run ID: ' + runId);
-    }
-    
-    // POLLING - USA VARIABILI ESPLICITE
-    let currentStatus = String(runObj.status);
-    let attempts = 0;
-    
-    console.log('🔄 Initial status:', currentStatus);
-    
-    while (currentStatus !== 'completed' && attempts < 30) {
-      await new Promise(r => setTimeout(r, 1000));
-      
-      // RETRIEVE CON VARIABILI FORZATE A STRING
-      console.log(`🔍 Retrieving - threadId: "${threadId}", runId: "${runId}"`);
-      
-      const statusObj = await openai.beta.threads.runs.retrieve(
-        String(threadId), 
-        String(runId)
-      );
-      
-      currentStatus = String(statusObj.status);
-      
-      console.log(`🔄 Attempt ${attempts + 1}: ${currentStatus}`);
-      
-      if (currentStatus === 'failed') {
-        throw new Error('Run failed: ' + (statusObj.last_error?.message || 'Unknown'));
-      }
-      
-      if (currentStatus === 'cancelled' || currentStatus === 'expired') {
-        throw new Error('Run ' + currentStatus);
-      }
-      
-      attempts++;
-    }
-    
-    if (currentStatus !== 'completed') {
-      throw new Error('Timeout after ' + attempts + ' attempts');
-    }
-    
-    // RECUPERA MESSAGGIO
-    const messagesList = await openai.beta.threads.messages.list(String(threadId));
-    const assistantMsg = messagesList.data.find(m => m.role === 'assistant');
-    
-    if (!assistantMsg) {
-      throw new Error('No AI response');
-    }
-    
-    const textContent = assistantMsg.content.find(c => c.type === 'text');
-    const response = textContent?.text?.value || 'No text response';
-    
-    console.log('✅ Response:', response.slice(0, 50));
+    console.log('✅ Response received:', response.slice(0, 50));
+    console.log('📊 Tokens used:', tokensUsed);
     
     return NextResponse.json({
       ai_enabled: true,
       response: response,
-      thread_id: threadId
+      tokens_used: tokensUsed
     });
     
   } catch (err) {
     console.error('❌ ERROR:', err.message);
-    console.error('❌ Stack:', err.stack);
-    
     return NextResponse.json({ 
       error: err.message 
     }, { status: 500 });
