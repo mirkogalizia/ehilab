@@ -61,7 +61,8 @@ export async function POST(req) {
     // ===== VERIFICA SE AI È ABILITATA =====
     const aiConfig = userData.ai_config || {};
     const aiEnabled = aiConfig.enabled === true;
-    const whatsappToken = userData.whatsapp_token || process.env.WHATSAPP_TOKEN;
+    // USA LA VARIABILE DI VERCEL CHE HAI IMPOSTATO: WHATSAPP_ACCESS_TOKEN
+    const whatsappToken = userData.whatsapp_token || process.env.WHATSAPP_ACCESS_TOKEN;
 
     console.log('🤖 AI abilitata:', aiEnabled);
 
