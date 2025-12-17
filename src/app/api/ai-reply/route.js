@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, collection, addDoc } from 'firebase/firestore';
 
-// Inizializza OpenAI con le TUE credenziali
+// Inizializza OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
@@ -27,11 +27,12 @@ export async function POST(req) {
     
     console.log('🤖 AI Reply per:', { customer_phone, merchant_id, message: message.slice(0, 50) });
     
-    // ===== VERIFICA SE AI È ABILITATA PER QUESTO MERCHANT =====
+    // ===== VERIFICA SE AI È ABILITATA =====
     const userRef = doc(db, 'users', merchant_id);
     const userSnap = await getDoc(userRef);
     
     if (!userSnap.exists()) {
+      console.log('❌ Utente non trovato:', merchant_id);
       return NextResponse.json({ 
         error: 'Utente non trovato' 
       }, { status: 404 });
@@ -41,179 +42,226 @@ export async function POST(req) {
     const aiConfig = userData.ai_config || {};
     
     if (!aiConfig.enabled) {
+      console.log('⏸️ AI non abilitata per questo merchant');
       return NextResponse.json({ 
         ai_enabled: false,
-        message: 'AI non abilitata per questo merchant'
+        message: 'AI non abilitata'
       });
     }
     
-    // ===== CREA O RECUPERA THREAD =====
-    // Per semplicità creiamo un nuovo thread ogni volta
-    // TODO: In futuro salva thread_id su Firestore per mantenere contesto
+    // ===== VERIFICA ASSISTANT_ID =====
+    if (!ASSISTANT_ID) {
+      console.error('❌ OPENAI_ASSISTANT_ID non configurato!');
+      return NextResponse.json({ 
+        error: 'Assistant ID non configurato' 
+      }, { status: 500 });
+    }
+    
+    console.log('✅ AI abilitata, Assistant ID:', ASSISTANT_ID);
+    
+    // ===== CREA THREAD =====
+    console.log('📝 Creazione thread...');
     const thread = await openai.beta.threads.create();
     
-    console.log('📝 Thread creato:', thread.id);
+    if (!thread || !thread.id) {
+      console.error('❌ Errore creazione thread:', thread);
+      return NextResponse.json({ 
+        error: 'Errore creazione thread' 
+      }, { status: 500 });
+    }
     
-    // ===== AGGIUNGI MESSAGGIO UTENTE AL THREAD =====
-    await openai.beta.threads.messages.create(thread.id, {
+    const threadId = thread.id;
+    console.log('✅ Thread creato:', threadId);
+    
+    // ===== AGGIUNGI MESSAGGIO =====
+    await openai.beta.threads.messages.create(threadId, {
       role: 'user',
       content: message
     });
+    
+    console.log('✅ Messaggio aggiunto al thread');
     
     // ===== PREPARA ISTRUZIONI CONTESTUALI =====
     let additionalInstructions = `
 Cliente: ${customer_name || 'Cliente'}
 Telefono: ${customer_phone || 'Non disponibile'}
-Merchant ID: ${merchant_id}
 `;
     
-    // Aggiungi prompt personalizzato se presente
     if (aiConfig.custom_prompt) {
-      additionalInstructions += `\n\nISTRUZIONI PERSONALIZZATE MERCHANT:\n${aiConfig.custom_prompt}`;
+      additionalInstructions += `\n\nIstruzioni personalizzate:\n${aiConfig.custom_prompt}`;
     }
     
     // ===== ESEGUI ASSISTANT =====
-    const run = await openai.beta.threads.runs.create(thread.id, {
+    console.log('🚀 Avvio Assistant...');
+    const run = await openai.beta.threads.runs.create(threadId, {
       assistant_id: ASSISTANT_ID,
-      additional_instructions: additionalInstructions,
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: 'get_order_status',
-            description: 'Recupera informazioni su un ordine Shopify verificando email o telefono del cliente',
-            parameters: {
-              type: 'object',
-              properties: {
-                order_id: {
-                  type: 'string',
-                  description: 'Numero ordine (es: #1234 o 5678901234)'
-                },
-                customer_contact: {
-                  type: 'string',
-                  description: 'Email o telefono del cliente per verificare l\'ordine'
-                }
-              },
-              required: ['order_id', 'customer_contact']
-            }
-          }
-        }
-      ]
+      additional_instructions: additionalInstructions
     });
     
-    console.log('⏳ Run creato:', run.id);
+    if (!run || !run.id) {
+      console.error('❌ Errore creazione run:', run);
+      return NextResponse.json({ 
+        error: 'Errore avvio Assistant' 
+      }, { status: 500 });
+    }
     
-    // ===== POLLING PER COMPLETAMENTO =====
-    let runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+    const runId = run.id;
+    console.log('✅ Run creato:', runId);
+    
+    // ===== POLLING COMPLETAMENTO =====
+    let runStatus = await openai.beta.threads.runs.retrieve(threadId, runId);
     let attempts = 0;
-    const maxAttempts = 30; // 30 secondi max
+    const maxAttempts = 30;
     
     while (runStatus.status !== 'completed' && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Attendi 1 secondo
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
-      runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
-      console.log('🔄 Run status:', runStatus.status);
+      runStatus = await openai.beta.threads.runs.retrieve(threadId, runId);
+      console.log(`🔄 Run status (${attempts + 1}/${maxAttempts}):`, runStatus.status);
       
-      // ===== GESTISCI FUNCTION CALLS =====
+      // ===== GESTISCI RICHIESTA FUNCTION CALL =====
       if (runStatus.status === 'requires_action') {
-        const toolCalls = runStatus.required_action?.submit_tool_outputs?.tool_calls || [];
-        const toolOutputs = [];
+        console.log('🔧 Run richiede azione (function call)');
         
-        for (const toolCall of toolCalls) {
-          if (toolCall.function.name === 'get_order_status') {
-            const args = JSON.parse(toolCall.function.arguments);
-            console.log('📞 Function call: get_order_status', args);
+        const toolCalls = runStatus.required_action?.submit_tool_outputs?.tool_calls || [];
+        
+        if (toolCalls.length > 0) {
+          const toolOutputs = [];
+          
+          for (const toolCall of toolCalls) {
+            console.log('📞 Function call:', toolCall.function.name);
             
-            // Chiama il nostro endpoint get-order
-            try {
-              const orderRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'https://ehi-lab.it'}/api/get-order`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  order_id: args.order_id,
-                  customer_contact: args.customer_contact || customer_phone,
-                  merchant_id: merchant_id
-                })
-              });
-              
-              const orderData = await orderRes.json();
-              
-              toolOutputs.push({
-                tool_call_id: toolCall.id,
-                output: JSON.stringify(orderData)
-              });
-              
-              // ===== APRI TICKET SE ORDINE IN RITARDO =====
-              if (orderData.found && orderData.is_delayed) {
-                console.log('⚠️ Ordine in ritardo, apertura ticket automatico');
+            if (toolCall.function.name === 'get_order_status') {
+              try {
+                const args = JSON.parse(toolCall.function.arguments);
+                console.log('📦 Richiesta ordine:', args);
                 
-                try {
-                  await addDoc(collection(db, 'tickets'), {
-                    merchant_id: merchant_id,
-                    customer_phone: customer_phone,
-                    customer_name: customer_name || 'Cliente',
-                    order_id: orderData.order_id,
-                    subject: `Ordine in ritardo: ${orderData.order_id}`,
-                    description: `Il cliente ${customer_name} ha richiesto informazioni sull'ordine ${orderData.order_id} effettuato ${orderData.days_since_order} giorni fa. L'ordine non ha ancora tracking number.`,
-                    status: 'open',
-                    priority: 'high',
-                    category: 'order_delay',
-                    created_at: new Date().toISOString(),
-                    auto_created: true,
-                    ai_context: {
-                      customer_message: message,
-                      order_details: orderData
-                    }
+                // Chiama API get-order
+                const shopifyConfig = userData.shopify_config;
+                
+                if (!shopifyConfig || !shopifyConfig.admin_token) {
+                  toolOutputs.push({
+                    tool_call_id: toolCall.id,
+                    output: JSON.stringify({
+                      found: false,
+                      message: 'Shopify non configurato per questo merchant'
+                    })
                   });
-                  
-                  console.log('✅ Ticket automatico creato');
-                } catch (ticketErr) {
-                  console.error('❌ Errore creazione ticket:', ticketErr);
+                  continue;
                 }
+                
+                // Chiama Shopify API direttamente
+                const storeUrl = shopifyConfig.store_url;
+                const token = shopifyConfig.admin_token;
+                const orderId = args.order_id.replace(/[#\s]/g, '');
+                
+                const shopifyRes = await fetch(
+                  `https://${storeUrl}/admin/api/2024-10/orders.json?name=${orderId}&status=any`,
+                  {
+                    headers: {
+                      'X-Shopify-Access-Token': token,
+                      'Content-Type': 'application/json'
+                    }
+                  }
+                );
+                
+                if (!shopifyRes.ok) {
+                  throw new Error(`Shopify API error: ${shopifyRes.status}`);
+                }
+                
+                const shopifyData = await shopifyRes.json();
+                
+                if (shopifyData.orders && shopifyData.orders.length > 0) {
+                  const order = shopifyData.orders[0];
+                  
+                  toolOutputs.push({
+                    tool_call_id: toolCall.id,
+                    output: JSON.stringify({
+                      found: true,
+                      order_number: order.name,
+                      status: order.financial_status,
+                      fulfillment_status: order.fulfillment_status || 'non ancora spedito',
+                      total: `€${order.total_price}`,
+                      customer_email: order.email,
+                      customer_name: `${order.customer?.first_name || ''} ${order.customer?.last_name || ''}`.trim(),
+                      line_items: order.line_items.map(item => ({
+                        name: item.name,
+                        quantity: item.quantity,
+                        price: `€${item.price}`
+                      })),
+                      created_at: order.created_at,
+                      tracking_number: order.fulfillments?.[0]?.tracking_number || null
+                    })
+                  });
+                } else {
+                  toolOutputs.push({
+                    tool_call_id: toolCall.id,
+                    output: JSON.stringify({
+                      found: false,
+                      message: `Ordine ${args.order_id} non trovato`
+                    })
+                  });
+                }
+                
+              } catch (err) {
+                console.error('❌ Errore get_order_status:', err);
+                toolOutputs.push({
+                  tool_call_id: toolCall.id,
+                  output: JSON.stringify({
+                    found: false,
+                    message: 'Errore recupero ordine: ' + err.message
+                  })
+                });
               }
-              
-            } catch (err) {
-              console.error('❌ Errore get-order:', err);
+            } else {
+              // Function non gestita
               toolOutputs.push({
                 tool_call_id: toolCall.id,
-                output: JSON.stringify({ found: false, message: 'Errore recupero ordine' })
+                output: JSON.stringify({
+                  error: 'Function non supportata'
+                })
               });
             }
           }
-        }
-        
-        // Invia tool outputs
-        if (toolOutputs.length > 0) {
-          await openai.beta.threads.runs.submitToolOutputs(thread.id, run.id, {
-            tool_outputs: toolOutputs
-          });
+          
+          // Invia tool outputs
+          if (toolOutputs.length > 0) {
+            console.log('📤 Invio tool outputs:', toolOutputs.length);
+            await openai.beta.threads.runs.submitToolOutputs(threadId, runId, {
+              tool_outputs: toolOutputs
+            });
+          }
         }
       }
       
+      // ===== GESTISCI ERRORI RUN =====
       if (runStatus.status === 'failed' || runStatus.status === 'cancelled' || runStatus.status === 'expired') {
         console.error('❌ Run fallito:', runStatus.status, runStatus.last_error);
         return NextResponse.json({ 
-          error: 'Errore generazione risposta AI',
-          details: runStatus.last_error 
+          error: 'Errore AI: ' + (runStatus.last_error?.message || runStatus.status)
         }, { status: 500 });
       }
       
       attempts++;
     }
     
+    // ===== TIMEOUT =====
     if (attempts >= maxAttempts) {
+      console.error('⏱️ Timeout AI');
       return NextResponse.json({ 
-        error: 'Timeout: l\'AI non ha risposto in tempo' 
+        error: 'Timeout: AI non ha risposto in tempo' 
       }, { status: 504 });
     }
     
     // ===== RECUPERA RISPOSTA =====
-    const messages = await openai.beta.threads.messages.list(thread.id);
+    console.log('📥 Recupero risposta...');
+    const messages = await openai.beta.threads.messages.list(threadId);
     const assistantMessages = messages.data.filter(m => m.role === 'assistant');
     
     if (assistantMessages.length === 0) {
+      console.error('❌ Nessuna risposta dall\'AI');
       return NextResponse.json({ 
-        error: 'Nessuna risposta dall\'AI' 
+        error: 'Nessuna risposta generata' 
       }, { status: 500 });
     }
     
@@ -223,12 +271,12 @@ Merchant ID: ${merchant_id}
       .map(c => c.text.value)
       .join('\n');
     
-    console.log('✅ Risposta AI generata:', responseText.slice(0, 100));
+    console.log('✅ Risposta AI:', responseText.slice(0, 100) + '...');
     
     return NextResponse.json({
       ai_enabled: true,
       response: responseText,
-      thread_id: thread.id,
+      thread_id: threadId,
       tokens_used: runStatus.usage?.total_tokens || 0
     });
     
