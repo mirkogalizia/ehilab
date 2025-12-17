@@ -128,7 +128,7 @@ export async function POST(req) {
     let estimatedDelivery = 'da definire';
     if (fulfillment?.created_at && normalizedStatus !== 'delivered') {
       const shipDate = new Date(fulfillment.created_at);
-      shipDate.setDate(shipDate.getDate() + 3); // +3 giorni dalla spedizione
+      shipDate.setDate(shipDate.getDate() + 3); // +3 giorni
       estimatedDelivery = shipDate.toLocaleDateString('it-IT', { 
         weekday: 'long',
         day: 'numeric', 
@@ -136,11 +136,10 @@ export async function POST(req) {
       });
     }
     
-    // ===== CALCOLA GIORNI DALL'ORDINE (importante per ritardi) =====
+    // ===== CALCOLA GIORNI DALL'ORDINE =====
     const orderDate = new Date(order.created_at);
     const daysAgo = Math.floor((Date.now() - orderDate.getTime()) / (1000 * 60 * 60 * 24));
     
-    // ===== RISPOSTA FORMATTATA PER AI =====
     return NextResponse.json({
       found: true,
       order_id: order.name || `#${order.order_number}`,
@@ -166,7 +165,6 @@ export async function POST(req) {
         ? `${order.shipping_address.city}, ${order.shipping_address.province || order.shipping_address.country}`
         : 'N/D',
       customer_email: order.email,
-      // Flag per ritardi (utile per AI)
       is_delayed: daysAgo > 7 && !trackingNumber
     });
     
@@ -178,3 +176,4 @@ export async function POST(req) {
     }, { status: 500 });
   }
 }
+
