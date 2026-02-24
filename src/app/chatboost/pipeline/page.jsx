@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { db } from '@/lib/firebase';
+import { db, storage } from '@/lib/firebase';
 import {
   collection,
   doc,
@@ -17,6 +17,7 @@ import {
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useAuth } from '@/lib/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,6 +55,10 @@ import {
   Users,
   Send,
   FileText,
+  MapPin,
+  ShoppingBag,
+  AlertTriangle,
+  FileDown,
 } from 'lucide-react';
 
 // ─── DEFAULT PIPELINE STAGES ───
@@ -137,6 +142,9 @@ export default function PipelinePage() {
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [approvedTemplates, setApprovedTemplates] = useState([]);
+  const [userProducts, setUserProducts] = useState([]);
+  const [userData, setUserData] = useState(null);
+  const [pendingMove, setPendingMove] = useState(null); // { leadId, newStage, oldStage, missingFields }
   const [showTemplatePicker, setShowTemplatePicker] = useState(null); // holds { phone, name } or null
 
   // New lead form
@@ -238,6 +246,32 @@ export default function PipelinePage() {
     loadTemplates();
   }, [user]);
 
+  // ─── FIRESTORE: LOAD USER PRODUCTS ───
+  useEffect(() => {
+    if (!user?.uid) return;
+    const q = query(collection(db, 'users', user.uid, 'products'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      const arr = [];
+      snap.forEach((d) => arr.push({ id: d.id, ...d.data() }));
+      setUserProducts(arr);
+    });
+    return () => unsub();
+  }, [user]);
+
+  // ─── FIRESTORE: LOAD USER DATA (per intestazione PDF) ───
+  useEffect(() => {
+    if (!user?.uid) return;
+    const loadUserData = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (snap.exists()) setUserData({ id: snap.id, ...snap.data() });
+      } catch (e) {
+        console.error('Errore caricamento userData:', e);
+      }
+    };
+    loadUserData();
+  }, [user]);
+
   // ─── ADD LEAD ───
   const handleAddLead = async (stageId) => {
     if (!newLead.name.trim()) return;
@@ -302,6 +336,30 @@ export default function PipelinePage() {
   // ─── MOVE LEAD TO STAGE ───
   const moveLeadToStage = async (leadId, newStage, oldStage) => {
     if (newStage === oldStage) return;
+    const lead = leads.find(l => l.id === leadId);
+    const targetStage = stages.find(s => s.id === newStage);
+
+    // ── CHECK: se lo stage ha trigger con PDF, verifica campi obbligatori ──
+    if (targetStage?.trigger?.enabled && targetStage.trigger.generate_pdf) {
+      const missing = [];
+      if (!lead?.contactName?.trim()) missing.push('Nome e cognome');
+      if (!lead?.address?.trim()) missing.push('Indirizzo');
+      if (!lead?.taxCode?.trim()) missing.push('Codice Fiscale');
+      if (!lead?.contactPhone?.trim()) missing.push('Telefono');
+      if (!lead?.products?.length) missing.push('Prodotti (nessun prodotto associato)');
+
+      if (missing.length > 0) {
+        setPendingMove({ leadId, newStage, oldStage, missingFields: missing });
+        return;
+      }
+    }
+
+    // Procedi con lo spostamento effettivo
+    await executeMoveToStage(leadId, newStage, oldStage);
+  };
+
+  // ─── EXECUTE MOVE (dopo validazione) ───
+  const executeMoveToStage = async (leadId, newStage, oldStage) => {
     try {
       const leadRef = doc(db, 'users', user.uid, 'leads', leadId);
       const lead = leads.find(l => l.id === leadId);
@@ -314,9 +372,83 @@ export default function PipelinePage() {
         note: `Spostata da ${stages.find(s => s.id === oldStage)?.label || oldStage} a ${targetStage?.label || newStage}`,
       };
 
-      // ── TRIGGER: invia template WhatsApp se configurato ──
       let triggerResult = null;
-      if (targetStage?.trigger?.enabled && targetStage.trigger.template_name && lead?.contactPhone) {
+
+      // ── TRIGGER con PDF ──
+      if (targetStage?.trigger?.enabled && targetStage.trigger.generate_pdf && lead?.contactPhone && lead?.products?.length) {
+        try {
+          // 1. Genera PDF via API
+          const pdfRes = await fetch('/api/generate-quote-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_uid: user.uid,
+              lead: {
+                name: lead.contactName || lead.name,
+                address: lead.address || '',
+                taxCode: lead.taxCode || '',
+                phone: lead.contactPhone || '',
+                email: lead.contactEmail || '',
+                company: lead.company || '',
+              },
+              products: lead.products,
+              notes: lead.quoteNotes || '',
+            }),
+          });
+
+          if (!pdfRes.ok) throw new Error('Errore generazione PDF');
+          const pdfData = await pdfRes.json();
+          const pdfUrl = pdfData.url;
+
+          // 2. Invia template con PDF allegato
+          const triggerRes = await fetch('/api/send-template', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: lead.contactPhone,
+              template_name: targetStage.trigger.template_name,
+              language: targetStage.trigger.template_language || 'it',
+              user_uid: user.uid,
+              components: [{
+                type: 'header',
+                parameters: [{ type: 'document', document: { link: pdfUrl, filename: `Preventivo_${lead.contactName || lead.name}.pdf` } }]
+              }],
+            }),
+          });
+          const triggerData = await triggerRes.json();
+
+          if (triggerData.success) {
+            triggerResult = {
+              action: 'trigger_sent',
+              timestamp: new Date().toISOString(),
+              note: `✅ Preventivo PDF inviato a ${lead.contactPhone}`,
+              template: targetStage.trigger.template_name,
+              pdfUrl,
+            };
+            await addDoc(collection(db, 'messages'), {
+              text: `[Pipeline] Preventivo PDF inviato (stage: ${targetStage.label})`,
+              to: lead.contactPhone,
+              from: 'operator',
+              timestamp: Date.now(),
+              createdAt: serverTimestamp(),
+              type: 'template',
+              user_uid: user.uid,
+              read: true,
+              message_id: triggerData.data?.messages?.[0]?.id || '',
+              pipeline_trigger: true,
+              pdfUrl,
+            });
+          } else {
+            const errMsg = triggerData.error?.message || JSON.stringify(triggerData.error);
+            triggerResult = { action: 'trigger_failed', timestamp: new Date().toISOString(), note: `❌ Invio fallito: ${errMsg}`, template: targetStage.trigger.template_name };
+          }
+        } catch (pdfErr) {
+          triggerResult = { action: 'trigger_failed', timestamp: new Date().toISOString(), note: `❌ Errore PDF/invio: ${pdfErr.message}`, template: targetStage.trigger.template_name };
+          console.error('Errore trigger PDF:', pdfErr);
+        }
+      }
+      // ── TRIGGER senza PDF (template normale) ──
+      else if (targetStage?.trigger?.enabled && targetStage.trigger.template_name && !targetStage.trigger.generate_pdf && lead?.contactPhone) {
         try {
           const triggerRes = await fetch('/api/send-template', {
             method: 'POST',
@@ -329,56 +461,24 @@ export default function PipelinePage() {
             }),
           });
           const triggerData = await triggerRes.json();
-
           if (triggerData.success) {
-            triggerResult = {
-              action: 'trigger_sent',
-              timestamp: new Date().toISOString(),
-              note: `✅ Template "${targetStage.trigger.template_name}" inviato a ${lead.contactPhone}`,
-              template: targetStage.trigger.template_name,
-            };
-            // Salva anche in messages per tracciabilità nella chat
+            triggerResult = { action: 'trigger_sent', timestamp: new Date().toISOString(), note: `✅ Template "${targetStage.trigger.template_name}" inviato a ${lead.contactPhone}`, template: targetStage.trigger.template_name };
             await addDoc(collection(db, 'messages'), {
               text: `[Pipeline Trigger] Template "${targetStage.trigger.template_name}" inviato (stage: ${targetStage.label})`,
-              to: lead.contactPhone,
-              from: 'operator',
-              timestamp: Date.now(),
-              createdAt: serverTimestamp(),
-              type: 'template',
-              user_uid: user.uid,
-              read: true,
-              message_id: triggerData.data?.messages?.[0]?.id || '',
-              pipeline_trigger: true,
+              to: lead.contactPhone, from: 'operator', timestamp: Date.now(), createdAt: serverTimestamp(),
+              type: 'template', user_uid: user.uid, read: true, message_id: triggerData.data?.messages?.[0]?.id || '', pipeline_trigger: true,
             });
           } else {
-            const errMsg = triggerData.error?.message || triggerData.error?.error_data?.details || JSON.stringify(triggerData.error);
-            triggerResult = {
-              action: 'trigger_failed',
-              timestamp: new Date().toISOString(),
-              note: `❌ Trigger fallito: ${errMsg}`,
-              template: targetStage.trigger.template_name,
-            };
-            console.error('Trigger fallito:', errMsg);
+            const errMsg = triggerData.error?.message || JSON.stringify(triggerData.error);
+            triggerResult = { action: 'trigger_failed', timestamp: new Date().toISOString(), note: `❌ Trigger fallito: ${errMsg}`, template: targetStage.trigger.template_name };
           }
         } catch (trigErr) {
-          triggerResult = {
-            action: 'trigger_failed',
-            timestamp: new Date().toISOString(),
-            note: `❌ Errore trigger: ${trigErr.message}`,
-            template: targetStage.trigger.template_name,
-          };
-          console.error('Errore trigger:', trigErr);
+          triggerResult = { action: 'trigger_failed', timestamp: new Date().toISOString(), note: `❌ Errore trigger: ${trigErr.message}`, template: targetStage.trigger.template_name };
         }
       } else if (targetStage?.trigger?.enabled && !lead?.contactPhone) {
-        triggerResult = {
-          action: 'trigger_skipped',
-          timestamp: new Date().toISOString(),
-          note: `⚠️ Trigger saltato: la lead non ha un numero di telefono`,
-          template: targetStage.trigger.template_name,
-        };
+        triggerResult = { action: 'trigger_skipped', timestamp: new Date().toISOString(), note: `⚠️ Trigger saltato: la lead non ha un numero di telefono`, template: targetStage.trigger.template_name };
       }
 
-      // Costruisci la history aggiornata
       const updatedHistory = [...(lead?.history || []), historyEntry];
       if (triggerResult) updatedHistory.push(triggerResult);
 
@@ -388,13 +488,8 @@ export default function PipelinePage() {
         history: updatedHistory,
       });
 
-      // Update selected lead if open
       if (selectedLead?.id === leadId) {
-        setSelectedLead(prev => ({
-          ...prev,
-          stage: newStage,
-          history: updatedHistory,
-        }));
+        setSelectedLead(prev => ({ ...prev, stage: newStage, history: updatedHistory }));
       }
     } catch (e) {
       console.error('Errore spostamento lead:', e);
@@ -654,6 +749,7 @@ export default function PipelinePage() {
         <LeadDetailPanel
           lead={leads.find(l => l.id === selectedLead.id) || selectedLead}
           stages={stages}
+          products={userProducts}
           onClose={() => setSelectedLead(null)}
           onMoveStage={(newStage) => moveLeadToStage(selectedLead.id, newStage, selectedLead.stage)}
           onUpdateField={(field, value) => updateLeadField(selectedLead.id, field, value)}
@@ -695,6 +791,22 @@ export default function PipelinePage() {
           recipientPhone={showTemplatePicker.phone}
           recipientName={showTemplatePicker.name}
           onClose={() => setShowTemplatePicker(null)}
+        />
+      )}
+
+      {/* ═══ PENDING MOVE - MISSING FIELDS MODAL ═══ */}
+      {pendingMove && (
+        <MissingFieldsModal
+          lead={leads.find(l => l.id === pendingMove.leadId)}
+          missingFields={pendingMove.missingFields}
+          products={userProducts}
+          onUpdateField={(field, value) => updateLeadField(pendingMove.leadId, field, value)}
+          onRetry={async () => {
+            const { leadId, newStage, oldStage } = pendingMove;
+            setPendingMove(null);
+            await executeMoveToStage(leadId, newStage, oldStage);
+          }}
+          onCancel={() => setPendingMove(null)}
         />
       )}
     </div>
@@ -852,10 +964,12 @@ function LeadCard({ lead, stages, onClick, onDragStart, onDragEnd, isDragging })
 // ═══════════════════════════════════════════════════
 // LEAD DETAIL PANEL (Side panel like Kommo)
 // ═══════════════════════════════════════════════════
-function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, onDelete, onSendTemplate }) {
+function LeadDetailPanel({ lead, stages, products, onClose, onMoveStage, onUpdateField, onDelete, onSendTemplate }) {
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [noteText, setNoteText] = useState('');
+  const [showProductPicker, setShowProductPicker] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
   const panelRef = useRef(null);
 
   const style = getStageStyle(lead.stage, stages);
@@ -1007,6 +1121,8 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
             <EditableField label="Nome" field="contactName" value={lead.contactName} icon={User} />
             <EditableField label="Telefono" field="contactPhone" value={lead.contactPhone} icon={Phone} />
             <EditableField label="Email" field="contactEmail" value={lead.contactEmail} icon={Mail} />
+            <EditableField label="Indirizzo" field="address" value={lead.address} icon={MapPin} />
+            <EditableField label="Cod. Fiscale" field="taxCode" value={lead.taxCode} icon={FileText} />
             <EditableField label="Valore" field="sale" value={lead.sale ? formatCurrency(lead.sale) : ''} icon={DollarSign} />
           </div>
 
@@ -1017,7 +1133,132 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
               <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Azienda</span>
             </div>
             <EditableField label="Azienda" field="company" value={lead.company} icon={Building2} />
-            <EditableField label="Indirizzo" field="companyAddress" value={lead.companyAddress} />
+            <EditableField label="Indirizzo az." field="companyAddress" value={lead.companyAddress} />
+          </div>
+
+          {/* ═══ PRODOTTI / OFFERTA ═══ */}
+          <div className="px-5 py-4 border-b border-gray-100">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <ShoppingBag className="w-4 h-4 text-gray-400" />
+                <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Prodotti Offerta</span>
+              </div>
+              <button
+                onClick={() => setShowProductPicker(!showProductPicker)}
+                className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 transition"
+              >
+                <Plus className="w-3 h-3" /> Aggiungi
+              </button>
+            </div>
+
+            {/* Product Picker */}
+            {showProductPicker && (
+              <div className="mb-3 bg-gray-50 border border-gray-200 rounded-xl p-2">
+                <div className="relative mb-2">
+                  <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
+                  <input
+                    autoFocus
+                    type="text"
+                    placeholder="Cerca prodotto..."
+                    value={productSearch}
+                    onChange={e => setProductSearch(e.target.value)}
+                    className="w-full pl-7 pr-2 py-1.5 text-[11px] border border-gray-200 rounded-lg focus:border-emerald-300 focus:outline-none bg-white"
+                  />
+                </div>
+                <div className="max-h-36 overflow-y-auto space-y-1">
+                  {(products || [])
+                    .filter(p => !productSearch || p.name?.toLowerCase().includes(productSearch.toLowerCase()) || p.sku?.toLowerCase().includes(productSearch.toLowerCase()))
+                    .map(p => {
+                      const alreadyAdded = (lead.products || []).some(lp => lp.productId === p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          disabled={alreadyAdded}
+                          onClick={() => {
+                            const newProducts = [...(lead.products || []), { productId: p.id, name: p.name, price: p.price, taxRate: p.taxRate || 22, unit: p.unit || 'pz', qty: 1 }];
+                            onUpdateField('products', newProducts);
+                            // Aggiorna anche il valore totale della lead
+                            const total = newProducts.reduce((s, item) => s + (item.price * item.qty), 0);
+                            onUpdateField('sale', total);
+                            setProductSearch('');
+                          }}
+                          className={`w-full text-left px-2 py-1.5 rounded-lg text-[11px] flex items-center justify-between transition ${
+                            alreadyAdded ? 'opacity-40 cursor-not-allowed bg-gray-100' : 'hover:bg-emerald-50'
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <span className="font-semibold text-gray-800">{p.name}</span>
+                            {p.sku && <span className="text-gray-400 ml-1">({p.sku})</span>}
+                          </div>
+                          <span className="font-bold text-emerald-700 ml-2">{formatCurrency(p.price)}</span>
+                        </button>
+                      );
+                    })}
+                  {(products || []).length === 0 && (
+                    <p className="text-[10px] text-gray-400 text-center py-2">Nessun prodotto nel catalogo</p>
+                  )}
+                </div>
+                <button onClick={() => { setShowProductPicker(false); setProductSearch(''); }} className="text-[10px] text-gray-400 hover:text-gray-600 mt-1 w-full text-center">
+                  Chiudi
+                </button>
+              </div>
+            )}
+
+            {/* Products List */}
+            {(lead.products || []).length > 0 ? (
+              <div className="space-y-1.5">
+                {lead.products.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2 group">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-gray-800 truncate">{item.name}</div>
+                      <div className="text-[10px] text-gray-400">{formatCurrency(item.price)} / {item.unit || 'pz'} · IVA {item.taxRate || 22}%</div>
+                    </div>
+                    {/* Qty */}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          const newProducts = lead.products.map((p, i) => i === idx ? { ...p, qty: Math.max(1, (p.qty || 1) - 1) } : p);
+                          onUpdateField('products', newProducts);
+                          onUpdateField('sale', newProducts.reduce((s, p) => s + (p.price * p.qty), 0));
+                        }}
+                        className="w-5 h-5 rounded bg-gray-200 hover:bg-gray-300 text-gray-600 text-xs font-bold flex items-center justify-center"
+                      >-</button>
+                      <span className="text-xs font-bold text-gray-800 w-6 text-center">{item.qty || 1}</span>
+                      <button
+                        onClick={() => {
+                          const newProducts = lead.products.map((p, i) => i === idx ? { ...p, qty: (p.qty || 1) + 1 } : p);
+                          onUpdateField('products', newProducts);
+                          onUpdateField('sale', newProducts.reduce((s, p) => s + (p.price * p.qty), 0));
+                        }}
+                        className="w-5 h-5 rounded bg-gray-200 hover:bg-gray-300 text-gray-600 text-xs font-bold flex items-center justify-center"
+                      >+</button>
+                    </div>
+                    {/* Row total */}
+                    <span className="text-xs font-bold text-gray-700 w-16 text-right">{formatCurrency(item.price * (item.qty || 1))}</span>
+                    {/* Remove */}
+                    <button
+                      onClick={() => {
+                        const newProducts = lead.products.filter((_, i) => i !== idx);
+                        onUpdateField('products', newProducts);
+                        onUpdateField('sale', newProducts.reduce((s, p) => s + (p.price * p.qty), 0));
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-red-50 rounded transition"
+                    >
+                      <X className="w-3 h-3 text-gray-400 hover:text-red-500" />
+                    </button>
+                  </div>
+                ))}
+                {/* Totale */}
+                <div className="flex justify-between items-center pt-2 border-t border-gray-200 mt-2">
+                  <span className="text-xs font-bold text-gray-500">Totale (netto)</span>
+                  <span className="text-sm font-extrabold text-emerald-700">
+                    {formatCurrency(lead.products.reduce((s, p) => s + (p.price * (p.qty || 1)), 0))}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-[10px] text-gray-400 italic">Nessun prodotto associato. Clicca "Aggiungi" per selezionare dal catalogo.</p>
+            )}
           </div>
 
           {/* Activity / History (Kommo-style timeline) */}
@@ -1435,6 +1676,25 @@ function PipelineEditorModal({ stages: initialStages, leads, templates, onSave, 
                             <X className="w-3 h-3 text-amber-400 hover:text-red-500" />
                           </button>
                         </div>
+                        {/* Toggle Genera PDF */}
+                        <label className="flex items-center gap-2 mt-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={stage.trigger?.generate_pdf || false}
+                            onChange={e => {
+                              setEditStages(prev => prev.map(s =>
+                                s.id === stage.id
+                                  ? { ...s, trigger: { ...s.trigger, generate_pdf: e.target.checked } }
+                                  : s
+                              ));
+                            }}
+                            className="w-3.5 h-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          <span className="text-[10px] text-gray-600 font-medium flex items-center gap-1">
+                            <FileDown className="w-3 h-3 text-emerald-500" />
+                            Genera e invia PDF preventivo
+                          </span>
+                        </label>
                       ) : (
                         <button
                           onClick={() => setEditingTriggerId(editingTriggerId === stage.id ? null : stage.id)}
@@ -2140,6 +2400,147 @@ function TemplateSendModal({ userUid, recipientPhone, recipientName, onClose }) 
             </span>
             <Button variant="outline" size="sm" className="text-xs font-medium" onClick={onClose}>
               Chiudi
+            </Button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// MISSING FIELDS MODAL (quando trigger PDF ma mancano dati)
+// ═══════════════════════════════════════════════════
+function MissingFieldsModal({ lead, missingFields, products, onUpdateField, onRetry, onCancel }) {
+  const [localFields, setLocalFields] = useState({
+    contactName: lead?.contactName || '',
+    address: lead?.address || '',
+    taxCode: lead?.taxCode || '',
+    contactPhone: lead?.contactPhone || '',
+  });
+  const [showProductPicker, setShowProductPicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const handleSaveAndRetry = async () => {
+    setSaving(true);
+    // Salva i campi aggiornati
+    for (const [field, value] of Object.entries(localFields)) {
+      if (value?.trim()) {
+        await onUpdateField(field, value.trim());
+      }
+    }
+    // Piccola attesa per Firestore
+    await new Promise(r => setTimeout(r, 500));
+    await onRetry();
+    setSaving(false);
+  };
+
+  const allFieldsFilled = () => {
+    const checks = [];
+    if (missingFields.includes('Nome e cognome')) checks.push(!!localFields.contactName?.trim());
+    if (missingFields.includes('Indirizzo')) checks.push(!!localFields.address?.trim());
+    if (missingFields.includes('Codice Fiscale')) checks.push(!!localFields.taxCode?.trim());
+    if (missingFields.includes('Telefono')) checks.push(!!localFields.contactPhone?.trim());
+    // Products check: se mancavano, controlliamo se ora ne ha
+    if (missingFields.includes('Prodotti (nessun prodotto associato)')) checks.push((lead?.products?.length || 0) > 0);
+    return checks.every(Boolean);
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 z-[60]" onClick={onCancel} />
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onCancel}>
+        <div
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden"
+          onClick={e => e.stopPropagation()}
+          style={{ animation: 'modalIn 0.25s ease-out' }}
+        >
+          {/* Header */}
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-gray-100 bg-amber-50">
+            <AlertTriangle className="w-6 h-6 text-amber-500 flex-shrink-0" />
+            <div>
+              <h2 className="text-base font-extrabold text-gray-900">Dati mancanti</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Completa i campi per generare il preventivo PDF</p>
+            </div>
+          </div>
+
+          {/* Missing fields form */}
+          <div className="px-6 py-4 space-y-3 max-h-[50vh] overflow-y-auto">
+            {missingFields.includes('Nome e cognome') && (
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">Nome e Cognome *</label>
+                <input
+                  type="text"
+                  value={localFields.contactName}
+                  onChange={e => setLocalFields(prev => ({ ...prev, contactName: e.target.value }))}
+                  placeholder="Mario Rossi"
+                  className="w-full text-sm px-3 py-2 border border-gray-200 rounded-xl focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            )}
+            {missingFields.includes('Indirizzo') && (
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">Indirizzo *</label>
+                <input
+                  type="text"
+                  value={localFields.address}
+                  onChange={e => setLocalFields(prev => ({ ...prev, address: e.target.value }))}
+                  placeholder="Via Roma 1, 00100 Roma (RM)"
+                  className="w-full text-sm px-3 py-2 border border-gray-200 rounded-xl focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            )}
+            {missingFields.includes('Codice Fiscale') && (
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">Codice Fiscale *</label>
+                <input
+                  type="text"
+                  value={localFields.taxCode}
+                  onChange={e => setLocalFields(prev => ({ ...prev, taxCode: e.target.value.toUpperCase() }))}
+                  placeholder="RSSMRA80A01H501Z"
+                  maxLength={16}
+                  className="w-full text-sm px-3 py-2 border border-gray-200 rounded-xl focus:border-amber-400 focus:outline-none font-mono uppercase"
+                />
+              </div>
+            )}
+            {missingFields.includes('Telefono') && (
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">Telefono *</label>
+                <input
+                  type="tel"
+                  value={localFields.contactPhone}
+                  onChange={e => setLocalFields(prev => ({ ...prev, contactPhone: e.target.value }))}
+                  placeholder="+393331234567"
+                  className="w-full text-sm px-3 py-2 border border-gray-200 rounded-xl focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+            )}
+            {missingFields.includes('Prodotti (nessun prodotto associato)') && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+                <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                  <ShoppingBag className="w-4 h-4" />
+                  Nessun prodotto associato alla lead
+                </p>
+                <p className="text-[10px] text-red-500 mt-1">
+                  Torna al dettaglio lead e aggiungi almeno un prodotto dall'offerta prima di procedere.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50/60">
+            <Button variant="outline" size="sm" className="text-xs" onClick={onCancel}>
+              Annulla
+            </Button>
+            <Button
+              size="sm"
+              className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"
+              onClick={handleSaveAndRetry}
+              disabled={saving || !allFieldsFilled()}
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              Salva e Procedi
             </Button>
           </div>
         </div>
