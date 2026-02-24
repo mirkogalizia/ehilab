@@ -136,6 +136,7 @@ export default function PipelinePage() {
   const [showContactPicker, setShowContactPicker] = useState(null); // stageId or null
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
+  const [approvedTemplates, setApprovedTemplates] = useState([]);
   const [showTemplatePicker, setShowTemplatePicker] = useState(null); // holds { phone, name } or null
 
   // New lead form
@@ -216,6 +217,27 @@ export default function PipelinePage() {
     return () => unsub();
   }, [user]);
 
+  // ─── LOAD APPROVED TEMPLATES ───
+  useEffect(() => {
+    if (!user?.uid) return;
+    const loadTemplates = async () => {
+      try {
+        const res = await fetch('/api/list-templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_uid: user.uid }),
+        });
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setApprovedTemplates(data.filter(t => t.status === 'APPROVED' && !t.name.startsWith('sample_')));
+        }
+      } catch (e) {
+        console.error('Errore caricamento templates:', e);
+      }
+    };
+    loadTemplates();
+  }, [user]);
+
   // ─── ADD LEAD ───
   const handleAddLead = async (stageId) => {
     if (!newLead.name.trim()) return;
@@ -283,24 +305,95 @@ export default function PipelinePage() {
     try {
       const leadRef = doc(db, 'users', user.uid, 'leads', leadId);
       const lead = leads.find(l => l.id === leadId);
+      const targetStage = stages.find(s => s.id === newStage);
       const historyEntry = {
         action: 'stage_change',
         from: oldStage,
         to: newStage,
         timestamp: new Date().toISOString(),
-        note: `Spostata da ${stages.find(s => s.id === oldStage)?.label || oldStage} a ${stages.find(s => s.id === newStage)?.label || newStage}`,
+        note: `Spostata da ${stages.find(s => s.id === oldStage)?.label || oldStage} a ${targetStage?.label || newStage}`,
       };
+
+      // ── TRIGGER: invia template WhatsApp se configurato ──
+      let triggerResult = null;
+      if (targetStage?.trigger?.enabled && targetStage.trigger.template_name && lead?.contactPhone) {
+        try {
+          const triggerRes = await fetch('/api/send-template', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: lead.contactPhone,
+              template_name: targetStage.trigger.template_name,
+              language: targetStage.trigger.template_language || 'it',
+              user_uid: user.uid,
+            }),
+          });
+          const triggerData = await triggerRes.json();
+
+          if (triggerData.success) {
+            triggerResult = {
+              action: 'trigger_sent',
+              timestamp: new Date().toISOString(),
+              note: `✅ Template "${targetStage.trigger.template_name}" inviato a ${lead.contactPhone}`,
+              template: targetStage.trigger.template_name,
+            };
+            // Salva anche in messages per tracciabilità nella chat
+            await addDoc(collection(db, 'messages'), {
+              text: `[Pipeline Trigger] Template "${targetStage.trigger.template_name}" inviato (stage: ${targetStage.label})`,
+              to: lead.contactPhone,
+              from: 'operator',
+              timestamp: Date.now(),
+              createdAt: serverTimestamp(),
+              type: 'template',
+              user_uid: user.uid,
+              read: true,
+              message_id: triggerData.data?.messages?.[0]?.id || '',
+              pipeline_trigger: true,
+            });
+          } else {
+            const errMsg = triggerData.error?.message || triggerData.error?.error_data?.details || JSON.stringify(triggerData.error);
+            triggerResult = {
+              action: 'trigger_failed',
+              timestamp: new Date().toISOString(),
+              note: `❌ Trigger fallito: ${errMsg}`,
+              template: targetStage.trigger.template_name,
+            };
+            console.error('Trigger fallito:', errMsg);
+          }
+        } catch (trigErr) {
+          triggerResult = {
+            action: 'trigger_failed',
+            timestamp: new Date().toISOString(),
+            note: `❌ Errore trigger: ${trigErr.message}`,
+            template: targetStage.trigger.template_name,
+          };
+          console.error('Errore trigger:', trigErr);
+        }
+      } else if (targetStage?.trigger?.enabled && !lead?.contactPhone) {
+        triggerResult = {
+          action: 'trigger_skipped',
+          timestamp: new Date().toISOString(),
+          note: `⚠️ Trigger saltato: la lead non ha un numero di telefono`,
+          template: targetStage.trigger.template_name,
+        };
+      }
+
+      // Costruisci la history aggiornata
+      const updatedHistory = [...(lead?.history || []), historyEntry];
+      if (triggerResult) updatedHistory.push(triggerResult);
+
       await updateDoc(leadRef, {
         stage: newStage,
         updatedAt: serverTimestamp(),
-        history: [...(lead?.history || []), historyEntry],
+        history: updatedHistory,
       });
+
       // Update selected lead if open
       if (selectedLead?.id === leadId) {
         setSelectedLead(prev => ({
           ...prev,
           stage: newStage,
-          history: [...(prev?.history || []), historyEntry],
+          history: updatedHistory,
         }));
       }
     } catch (e) {
@@ -492,8 +585,11 @@ export default function PipelinePage() {
                     style={{ backgroundColor: style.bar }}
                   />
                   <div className="flex items-center justify-between px-1">
-                    <span className="text-[11px] font-bold tracking-widest uppercase text-gray-600">
+                    <span className="text-[11px] font-bold tracking-widest uppercase text-gray-600 flex items-center gap-1">
                       {stage.label}
+                      {stage.trigger?.enabled && (
+                        <Zap className="w-3 h-3 text-amber-500" title={`Trigger: ${stage.trigger.template_name}`} />
+                      )}
                     </span>
                     <span className="text-[11px] text-gray-400 font-medium">
                       {stageLeads.length} lead{stageLeads.length !== 1 ? 's' : ''} · {formatCurrency(totalSale)}
@@ -571,6 +667,7 @@ export default function PipelinePage() {
         <PipelineEditorModal
           stages={stages}
           leads={leads}
+          templates={approvedTemplates}
           onSave={(newStages) => {
             savePipelineConfig(newStages);
             setShowPipelineEditor(false);
@@ -958,12 +1055,19 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
                 const isStageChange = entry.action === 'stage_change';
                 const isNote = entry.action === 'note';
                 const isCreated = entry.action === 'created';
+                const isTriggerSent = entry.action === 'trigger_sent';
+                const isTriggerFailed = entry.action === 'trigger_failed';
+                const isTriggerSkipped = entry.action === 'trigger_skipped';
+                const isTrigger = isTriggerSent || isTriggerFailed || isTriggerSkipped;
 
                 return (
                   <div key={i} className="flex gap-3 py-2 relative">
                     {/* Dot */}
                     <div className={`w-[15px] h-[15px] rounded-full border-2 flex-shrink-0 z-10 mt-0.5 ${
                       isStageChange ? 'border-violet-400 bg-violet-100' :
+                      isTriggerSent ? 'border-amber-400 bg-amber-100' :
+                      isTriggerFailed ? 'border-red-400 bg-red-100' :
+                      isTriggerSkipped ? 'border-orange-300 bg-orange-50' :
                       isNote ? 'border-emerald-400 bg-emerald-100' :
                       'border-gray-300 bg-gray-100'
                     }`} />
@@ -979,6 +1083,21 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
                           <span className="text-gray-400 ml-1">
                             da {stages.find(s => s.id === entry.from)?.label || entry.from}
                           </span>
+                        </div>
+                      )}
+                      {isTrigger && (
+                        <div className={`text-xs px-2.5 py-1.5 rounded-lg border ${
+                          isTriggerSent ? 'text-amber-800 bg-amber-50 border-amber-200' :
+                          isTriggerFailed ? 'text-red-700 bg-red-50 border-red-200' :
+                          'text-orange-700 bg-orange-50 border-orange-200'
+                        }`}>
+                          <div className="flex items-center gap-1.5">
+                            <Zap className="w-3 h-3 flex-shrink-0" />
+                            <span className="font-semibold">{entry.note}</span>
+                          </div>
+                          {entry.template && (
+                            <span className="text-[9px] opacity-70 mt-0.5 block">Template: {entry.template}</span>
+                          )}
                         </div>
                       )}
                       {isNote && (
@@ -1063,15 +1182,17 @@ const PRESET_COLORS = [
   '#0EA5E9',
 ];
 
-function PipelineEditorModal({ stages: initialStages, leads, onSave, onClose }) {
+function PipelineEditorModal({ stages: initialStages, leads, templates, onSave, onClose }) {
   const [editStages, setEditStages] = useState(
-    initialStages.map((s, i) => ({ ...s, order: s.order ?? i }))
+    initialStages.map((s, i) => ({ ...s, order: s.order ?? i, trigger: s.trigger || null }))
   );
   const [editingLabelId, setEditingLabelId] = useState(null);
   const [editingColorId, setEditingColorId] = useState(null);
+  const [editingTriggerId, setEditingTriggerId] = useState(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [triggerSearch, setTriggerSearch] = useState('');
 
   // Track changes
   useEffect(() => {
@@ -1124,6 +1245,34 @@ function PipelineEditorModal({ stages: initialStages, leads, onSave, onClose }) 
     setConfirmDeleteId(null);
   };
 
+  // ─── TRIGGER HANDLERS ───
+  const setTriggerTemplate = (stageId, template) => {
+    setEditStages(prev => prev.map(s =>
+      s.id === stageId
+        ? {
+            ...s,
+            trigger: template
+              ? { enabled: true, template_name: template.name, template_language: template.language || 'it' }
+              : null
+          }
+        : s
+    ));
+    setEditingTriggerId(null);
+    setTriggerSearch('');
+  };
+
+  const removeTrigger = (stageId) => {
+    setEditStages(prev => prev.map(s =>
+      s.id === stageId ? { ...s, trigger: null } : s
+    ));
+  };
+
+  // Filtered templates for trigger picker
+  const filteredTemplates = (templates || []).filter(t => {
+    if (!triggerSearch) return true;
+    return t.name.toLowerCase().includes(triggerSearch.toLowerCase());
+  });
+
   const handleSave = async () => {
     setSaving(true);
     await onSave(editStages);
@@ -1152,7 +1301,7 @@ function PipelineEditorModal({ stages: initialStages, leads, onSave, onClose }) 
                 <Settings2 className="w-5 h-5 text-gray-500" />
                 Modifica Pipeline
               </h2>
-              <p className="text-xs text-gray-400 mt-0.5">Rinomina, riordina, cambia colore o aggiungi nuovi stage</p>
+              <p className="text-xs text-gray-400 mt-0.5">Rinomina, riordina, colore, trigger WhatsApp per ogni stage</p>
             </div>
             <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition">
               <X className="w-5 h-5 text-gray-400" />
@@ -1264,6 +1413,94 @@ function PipelineEditorModal({ stages: initialStages, leads, onSave, onClose }) 
                         {count} lead{count !== 1 ? 's' : ''} in questo stage
                       </span>
                     )}
+
+                    {/* ── TRIGGER ── */}
+                    <div className="mt-1.5">
+                      {stage.trigger?.enabled ? (
+                        <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                          <Zap className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                          <span className="text-[10px] text-amber-800 font-semibold truncate flex-1">
+                            {stage.trigger.template_name}
+                          </span>
+                          <button
+                            onClick={() => setEditingTriggerId(editingTriggerId === stage.id ? null : stage.id)}
+                            className="text-[9px] text-amber-600 hover:text-amber-800 font-bold flex-shrink-0"
+                          >
+                            Cambia
+                          </button>
+                          <button
+                            onClick={() => removeTrigger(stage.id)}
+                            className="p-0.5 hover:bg-amber-100 rounded flex-shrink-0"
+                          >
+                            <X className="w-3 h-3 text-amber-400 hover:text-red-500" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setEditingTriggerId(editingTriggerId === stage.id ? null : stage.id)}
+                          className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-amber-600 font-medium transition"
+                        >
+                          <Zap className="w-3 h-3" />
+                          Aggiungi trigger WhatsApp
+                        </button>
+                      )}
+
+                      {/* Trigger Template Picker dropdown */}
+                      {editingTriggerId === stage.id && (
+                        <div className="mt-1.5 bg-white border border-gray-200 rounded-xl shadow-lg p-2 z-20 relative max-h-52 flex flex-col">
+                          <div className="relative mb-1.5">
+                            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
+                            <input
+                              autoFocus
+                              type="text"
+                              placeholder="Cerca template..."
+                              value={triggerSearch}
+                              onChange={e => setTriggerSearch(e.target.value)}
+                              className="w-full pl-7 pr-2 py-1 text-[11px] border border-gray-200 rounded-lg focus:border-amber-300 focus:outline-none bg-gray-50"
+                            />
+                          </div>
+                          <div className="overflow-y-auto flex-1 space-y-0.5">
+                            {filteredTemplates.length === 0 ? (
+                              <p className="text-[10px] text-gray-400 py-2 text-center">
+                                {(templates || []).length === 0
+                                  ? 'Nessun template approvato'
+                                  : 'Nessun risultato'
+                                }
+                              </p>
+                            ) : (
+                              filteredTemplates.map(t => (
+                                <button
+                                  key={t.name}
+                                  onClick={() => setTriggerTemplate(stage.id, t)}
+                                  className={`w-full text-left px-2 py-1.5 rounded-lg text-[11px] transition flex items-center gap-2 ${
+                                    stage.trigger?.template_name === t.name
+                                      ? 'bg-amber-100 text-amber-800 font-bold'
+                                      : 'hover:bg-gray-50 text-gray-700'
+                                  }`}
+                                >
+                                  <MessageSquare className="w-3 h-3 text-emerald-500 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-semibold truncate">{t.name}</div>
+                                    <div className="text-[9px] text-gray-400 truncate">
+                                      {t.components?.find(c => c.type === 'BODY')?.text?.slice(0, 60) || 'Template WhatsApp'}
+                                    </div>
+                                  </div>
+                                  {stage.trigger?.template_name === t.name && (
+                                    <Check className="w-3 h-3 text-amber-600 flex-shrink-0" />
+                                  )}
+                                </button>
+                              ))
+                            )}
+                          </div>
+                          <button
+                            onClick={() => { setEditingTriggerId(null); setTriggerSearch(''); }}
+                            className="mt-1 text-[10px] text-gray-400 hover:text-gray-600 text-center w-full"
+                          >
+                            Chiudi
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Order number badge */}
