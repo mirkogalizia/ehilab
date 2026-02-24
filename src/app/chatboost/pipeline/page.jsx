@@ -51,6 +51,8 @@ import {
   Save,
   UserPlus,
   Contact,
+  Send,
+  FileText,
 } from 'lucide-react';
 
 // ─── DEFAULT PIPELINE STAGES ───
@@ -133,6 +135,7 @@ export default function PipelinePage() {
   const [showContactPicker, setShowContactPicker] = useState(null); // stageId or null
   const [contacts, setContacts] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(null); // holds { phone, name } or null
 
   // New lead form
   const [newLead, setNewLead] = useState({
@@ -558,6 +561,7 @@ export default function PipelinePage() {
           onMoveStage={(newStage) => moveLeadToStage(selectedLead.id, newStage, selectedLead.stage)}
           onUpdateField={(field, value) => updateLeadField(selectedLead.id, field, value)}
           onDelete={() => handleDeleteLead(selectedLead.id)}
+          onSendTemplate={(phone, contactName) => setShowTemplatePicker({ phone, name: contactName })}
         />
       )}
 
@@ -583,6 +587,16 @@ export default function PipelinePage() {
           stageName={stages.find(s => s.id === showContactPicker)?.label || showContactPicker}
           onSelect={(contact) => handleAddLeadFromContact(contact, showContactPicker)}
           onClose={() => setShowContactPicker(null)}
+        />
+      )}
+
+      {/* ═══ TEMPLATE SEND MODAL ═══ */}
+      {showTemplatePicker && (
+        <TemplateSendModal
+          userUid={user.uid}
+          recipientPhone={showTemplatePicker.phone}
+          recipientName={showTemplatePicker.name}
+          onClose={() => setShowTemplatePicker(null)}
         />
       )}
     </div>
@@ -740,7 +754,7 @@ function LeadCard({ lead, stages, onClick, onDragStart, onDragEnd, isDragging })
 // ═══════════════════════════════════════════════════
 // LEAD DETAIL PANEL (Side panel like Kommo)
 // ═══════════════════════════════════════════════════
-function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, onDelete }) {
+function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, onDelete, onSendTemplate }) {
   const [editingField, setEditingField] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [noteText, setNoteText] = useState('');
@@ -989,15 +1003,23 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
 
         {/* Quick Actions Footer */}
         <div className="flex-shrink-0 border-t border-gray-100 px-5 py-3 bg-gray-50/80">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {lead.contactPhone && (
+              <button
+                onClick={() => onSendTemplate(lead.contactPhone, lead.contactName || lead.name)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-3 py-1.5 rounded-lg transition"
+              >
+                <Send className="w-3.5 h-3.5" /> Invia Template
+              </button>
+            )}
             {lead.contactPhone && (
               <a
                 href={`https://wa.me/${lead.contactPhone.replace(/\D/g, '')}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-100 hover:bg-emerald-200 px-3 py-1.5 rounded-lg transition"
+                className="flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg transition"
               >
-                <MessageSquare className="w-3.5 h-3.5" /> WhatsApp
+                <MessageSquare className="w-3.5 h-3.5" /> Chat WA
               </a>
             )}
             {lead.contactEmail && (
@@ -1520,6 +1542,363 @@ function ContactPickerModal({ contacts, leads, loading, stageName, onSelect, onC
             <span className="text-xs text-gray-400">
               {contacts.length} contatt{contacts.length !== 1 ? 'i' : 'o'} totali
               {search && ` · ${sorted.length} risultat${sorted.length !== 1 ? 'i' : 'o'}`}
+            </span>
+            <Button variant="outline" size="sm" className="text-xs font-medium" onClick={onClose}>
+              Chiudi
+            </Button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// TEMPLATE SEND MODAL
+// ═══════════════════════════════════════════════════
+function TemplateSendModal({ userUid, recipientPhone, recipientName, onClose }) {
+  const [templates, setTemplates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [sending, setSending] = useState(null); // template name being sent
+  const [sentResult, setSentResult] = useState(null); // { success, error, templateName }
+  const [paramValues, setParamValues] = useState({}); // { templateName: { '1': 'val', '2': 'val' } }
+  const [selectedTemplate, setSelectedTemplate] = useState(null); // for parameter editing
+  const searchRef = useRef(null);
+
+  // Load approved templates
+  useEffect(() => {
+    if (!userUid) return;
+    const loadTemplates = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch('/api/list-templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_uid: userUid }),
+        });
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          // Only show APPROVED templates (non-sample)
+          setTemplates(data.filter(t => t.status === 'APPROVED' && !t.name.startsWith('sample_')));
+        }
+      } catch (e) {
+        console.error('Errore caricamento templates:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadTemplates();
+  }, [userUid]);
+
+  useEffect(() => {
+    if (!loading) searchRef.current?.focus();
+  }, [loading]);
+
+  // Extract body text and parameters from template
+  const getTemplateBody = (tpl) => {
+    const bodyComp = tpl.components?.find(c => c.type === 'BODY');
+    return bodyComp?.text || '';
+  };
+
+  const getTemplateHeader = (tpl) => {
+    const headerComp = tpl.components?.find(c => c.type === 'HEADER');
+    return headerComp || null;
+  };
+
+  // Count positional parameters {{1}}, {{2}}, etc.
+  const getParamCount = (tpl) => {
+    const body = getTemplateBody(tpl);
+    const matches = body.match(/\{\{(\d+)\}\}/g);
+    if (!matches) return 0;
+    const nums = matches.map(m => parseInt(m.replace(/[{}]/g, '')));
+    return Math.max(...nums);
+  };
+
+  // Preview body with params filled in
+  const getPreviewBody = (tpl) => {
+    let body = getTemplateBody(tpl);
+    const params = paramValues[tpl.name] || {};
+    // Replace {{1}}, {{2}} etc with values or placeholder
+    body = body.replace(/\{\{(\d+)\}\}/g, (match, num) => {
+      return params[num] || `[Parametro ${num}]`;
+    });
+    return body;
+  };
+
+  // Send template
+  const handleSend = async (tpl) => {
+    setSending(tpl.name);
+    setSentResult(null);
+
+    try {
+      // Build components array for parameters
+      const paramCount = getParamCount(tpl);
+      const components = [];
+
+      if (paramCount > 0) {
+        const params = paramValues[tpl.name] || {};
+        const parameters = [];
+        for (let i = 1; i <= paramCount; i++) {
+          parameters.push({
+            type: 'text',
+            text: params[String(i)] || '',
+          });
+        }
+        components.push({
+          type: 'body',
+          parameters,
+        });
+      }
+
+      // Check if header has media
+      const header = getTemplateHeader(tpl);
+      if (header && ['IMAGE', 'VIDEO', 'DOCUMENT'].includes(header.format)) {
+        // Header media requires a parameter - for now we skip it
+        // You can extend this with a file upload per-send
+      }
+
+      const res = await fetch('/api/send-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: recipientPhone,
+          template_name: tpl.name,
+          language: tpl.language,
+          components: components.length > 0 ? components : undefined,
+          user_uid: userUid,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setSentResult({ success: true, templateName: tpl.name });
+        // Auto close after 2s
+        setTimeout(() => onClose(), 2000);
+      } else {
+        const errMsg = data.error?.message || data.error?.error_data?.details || data.detail || JSON.stringify(data.error);
+        setSentResult({ success: false, templateName: tpl.name, error: errMsg });
+      }
+    } catch (e) {
+      setSentResult({ success: false, templateName: tpl.name, error: e.message });
+    } finally {
+      setSending(null);
+    }
+  };
+
+  // Filter templates
+  const filtered = templates.filter(t => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return t.name?.toLowerCase().includes(q) || getTemplateBody(t).toLowerCase().includes(q);
+  });
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/30 z-[60]" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+        <div
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
+          onClick={e => e.stopPropagation()}
+          style={{ animation: 'modalIn 0.25s ease-out' }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div>
+              <h2 className="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                <Send className="w-5 h-5 text-emerald-500" />
+                Invia Template WhatsApp
+              </h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                A: <span className="font-semibold text-gray-600">{recipientName}</span>
+                <span className="text-gray-300 mx-1">·</span>
+                <span className="font-mono text-gray-500">{recipientPhone}</span>
+              </p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition">
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+
+          {/* Success Banner */}
+          {sentResult?.success && (
+            <div className="px-5 py-3 bg-emerald-50 border-b border-emerald-200 flex items-center gap-2">
+              <Check className="w-5 h-5 text-emerald-600" />
+              <span className="text-sm font-semibold text-emerald-700">
+                Template "{sentResult.templateName}" inviato con successo!
+              </span>
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {sentResult && !sentResult.success && (
+            <div className="px-5 py-3 bg-red-50 border-b border-red-200">
+              <div className="flex items-center gap-2">
+                <X className="w-4 h-4 text-red-500" />
+                <span className="text-sm font-semibold text-red-700">Errore invio</span>
+              </div>
+              <p className="text-xs text-red-600 mt-1 break-all">{sentResult.error}</p>
+            </div>
+          )}
+
+          {/* Search */}
+          <div className="px-5 py-3 border-b border-gray-50">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                ref={searchRef}
+                type="text"
+                placeholder="Cerca template..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:border-emerald-400 focus:outline-none transition"
+              />
+            </div>
+          </div>
+
+          {/* Template List */}
+          <div className="flex-1 overflow-y-auto">
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="animate-spin w-6 h-6 text-gray-300" />
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                <p className="text-sm font-medium">
+                  {search ? 'Nessun template trovato' : 'Nessun template approvato disponibile'}
+                </p>
+                <p className="text-xs mt-1">
+                  {search ? 'Prova con un altro termine' : 'Crea e fai approvare un template dalla sezione Template'}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-50">
+                {filtered.map((tpl) => {
+                  const paramCount = getParamCount(tpl);
+                  const header = getTemplateHeader(tpl);
+                  const isSelected = selectedTemplate === tpl.name;
+                  const isSending = sending === tpl.name;
+
+                  return (
+                    <div key={tpl.id || tpl.name} className="px-5 py-3">
+                      {/* Template card */}
+                      <div
+                        className={`border rounded-xl p-3 transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-emerald-300 bg-emerald-50/50 shadow-sm'
+                            : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                        }`}
+                        onClick={() => setSelectedTemplate(isSelected ? null : tpl.name)}
+                      >
+                        {/* Top row */}
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-gray-900 capitalize">{tpl.name.replace(/_/g, ' ')}</span>
+                            <span className="text-[10px] font-medium bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">
+                              {tpl.language}
+                            </span>
+                            <span className="text-[10px] font-medium bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full capitalize">
+                              {tpl.category?.toLowerCase()}
+                            </span>
+                          </div>
+                          {header && header.format && header.format !== 'TEXT' && (
+                            <span className="text-[9px] font-semibold bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                              📎 {header.format}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Body preview */}
+                        <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2 font-mono leading-relaxed whitespace-pre-wrap">
+                          {isSelected && paramCount > 0 ? getPreviewBody(tpl) : getTemplateBody(tpl) || '— Nessun contenuto —'}
+                        </div>
+
+                        {/* Parameter inputs (expanded when selected) */}
+                        {isSelected && paramCount > 0 && (
+                          <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                              Parametri ({paramCount})
+                            </span>
+                            {Array.from({ length: paramCount }, (_, i) => i + 1).map(num => {
+                              const defaultVal = num === 1 ? (recipientName?.split(' ')[0] || '') :
+                                                 num === 2 ? (recipientName?.split(' ').slice(1).join(' ') || '') :
+                                                 num === 3 ? recipientPhone :
+                                                 '';
+                              // Auto-fill on first open
+                              if (!paramValues[tpl.name]?.[String(num)] && defaultVal) {
+                                setTimeout(() => {
+                                  setParamValues(prev => ({
+                                    ...prev,
+                                    [tpl.name]: {
+                                      ...(prev[tpl.name] || {}),
+                                      [String(num)]: defaultVal,
+                                    }
+                                  }));
+                                }, 0);
+                              }
+
+                              return (
+                                <div key={num} className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500 font-mono w-12 flex-shrink-0">{`{{${num}}}`}</span>
+                                  <input
+                                    type="text"
+                                    placeholder={`Parametro ${num}`}
+                                    value={paramValues[tpl.name]?.[String(num)] || ''}
+                                    onChange={e => {
+                                      setParamValues(prev => ({
+                                        ...prev,
+                                        [tpl.name]: {
+                                          ...(prev[tpl.name] || {}),
+                                          [String(num)]: e.target.value,
+                                        }
+                                      }));
+                                    }}
+                                    className="flex-1 text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:border-emerald-400 focus:outline-none bg-white"
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Send button */}
+                        {isSelected && (
+                          <div className="mt-3 flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSend(tpl);
+                              }}
+                              disabled={isSending}
+                            >
+                              {isSending ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Send className="w-3.5 h-3.5" />
+                              )}
+                              {isSending ? 'Invio...' : 'Invia a ' + (recipientName?.split(' ')[0] || recipientPhone)}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between px-5 py-3 border-t border-gray-100 bg-gray-50/60">
+            <span className="text-xs text-gray-400">
+              {templates.length} template approvati
             </span>
             <Button variant="outline" size="sm" className="text-xs font-medium" onClick={onClose}>
               Chiudi
