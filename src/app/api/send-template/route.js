@@ -30,10 +30,13 @@ export async function POST(req) {
       return NextResponse.json({ error: 'WA_ACCESS_TOKEN mancante nel server' }, { status: 500 });
     }
 
+    // Pulisci il numero (solo cifre)
+    const cleanNumber = to.replace(/[^0-9]/g, '');
+
     // Costruisci il payload per l'invio del template
     const payload = {
       messaging_product: 'whatsapp',
-      to: to.replace(/[^0-9]/g, ''), // pulisci il numero (solo cifre)
+      to: cleanNumber,
       type: 'template',
       template: {
         name: template_name,
@@ -43,13 +46,27 @@ export async function POST(req) {
       },
     };
 
-    // Se ci sono componenti (parametri header, body, buttons) aggiungili
+    // Aggiungi components SOLO se ce ne sono con parametri reali
     if (components && Array.isArray(components) && components.length > 0) {
-      payload.template.components = components;
+      // Filtra components vuoti (es. body senza parametri)
+      const validComponents = components.filter(c => {
+        if (!c || !c.type) return false;
+        // Se ha parameters, deve averne almeno uno non vuoto
+        if (c.parameters && Array.isArray(c.parameters)) {
+          return c.parameters.length > 0;
+        }
+        return true;
+      });
+      if (validComponents.length > 0) {
+        payload.template.components = validComponents;
+      }
     }
 
+    console.log('[send-template] Invio a:', cleanNumber, 'template:', template_name);
+    console.log('[send-template] Payload:', JSON.stringify(payload, null, 2));
+
     const res = await fetch(
-      `https://graph.facebook.com/v17.0/${phone_number_id}/messages`,
+      `https://graph.facebook.com/v19.0/${phone_number_id}/messages`,
       {
         method: 'POST',
         headers: {
@@ -63,16 +80,17 @@ export async function POST(req) {
     const data = await res.json();
 
     if (!res.ok || data.error) {
-      console.error('Errore invio template WhatsApp:', JSON.stringify(data));
+      console.error('[send-template] Errore Meta API:', JSON.stringify(data));
       return NextResponse.json(
         { error: data.error || data, detail: 'Errore invio template Meta API' },
         { status: res.status || 500 }
       );
     }
 
+    console.log('[send-template] Successo:', JSON.stringify(data));
     return NextResponse.json({ success: true, data });
   } catch (e) {
-    console.error('Errore send-template:', e);
+    console.error('[send-template] Errore server:', e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }

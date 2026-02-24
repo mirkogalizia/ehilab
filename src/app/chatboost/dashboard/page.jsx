@@ -636,54 +636,78 @@ export default function ChatPage() {
     if (!selectedPhone || !name || !userData) return;
     const template = templates.find(t => t.name === name);
     if (!template) return alert('Template non trovato!');
+
+    // Costruisci i components solo se necessari
     let components = [];
-    if (template.header && template.header.type !== 'NONE') {
-      if (template.header.type === 'TEXT') {
-        components.push({ type: 'HEADER', parameters: [{ type: 'text', text: template.header.text || '' }] });
-      } else if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(template.header.type)) {
-        if (!template.header.url) return alert('File header non trovato!');
-        components.push({
-          type: 'HEADER',
-          parameters: [{ type: template.header.type.toLowerCase(), [template.header.type.toLowerCase()]: { link: template.header.url } }]
-        });
+
+    // HEADER: solo se il template ha un header con parametri
+    const headerComp = template.components?.find(c => c.type === 'HEADER');
+    if (headerComp) {
+      if (headerComp.format === 'TEXT' && headerComp.text?.includes('{{')) {
+        // Header testuale con variabili — per ora manda vuoto
+        components.push({ type: 'header', parameters: [{ type: 'text', text: '' }] });
+      } else if (['IMAGE', 'DOCUMENT', 'VIDEO'].includes(headerComp.format)) {
+        const mediaType = headerComp.format.toLowerCase();
+        // Cerca l'URL dell'esempio se presente
+        const exampleUrl = headerComp.example?.header_handle?.[0] || '';
+        if (exampleUrl) {
+          components.push({
+            type: 'header',
+            parameters: [{
+              type: mediaType,
+              [mediaType]: { link: exampleUrl }
+            }]
+          });
+        }
       }
     }
-    components.push({ type: 'BODY', parameters: [] });
 
-    const payload = {
-      messaging_product: 'whatsapp',
-      to: selectedPhone,
-      type: 'template',
-      template: { name, language: { code: template.language || 'it' }, components }
-    };
+    // BODY: solo se ha variabili ({{1}}, {{2}}, ecc.)
+    const bodyComp = template.components?.find(c => c.type === 'BODY');
+    if (bodyComp?.text && /\{\{\d+\}\}/.test(bodyComp.text)) {
+      // Conta quante variabili ci sono e manda valori placeholder
+      const matches = bodyComp.text.match(/\{\{\d+\}\}/g) || [];
+      const bodyParams = matches.map(() => ({ type: 'text', text: '' }));
+      components.push({ type: 'body', parameters: bodyParams });
+    }
+    // NON aggiungere body con parameters vuoto se non ci sono variabili!
 
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-      {
+    setSending(true);
+    try {
+      const res = await fetch('/api/send-template', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-    const data = await res.json();
-    if (data.messages) {
-      await addDoc(collection(db, 'messages'), {
-        text: `Template inviato: ${name}`,
-        to: selectedPhone,
-        from: 'operator',
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: 'template',
-        user_uid: user.uid,
-        read: true,
-        message_id: data.messages[0].id,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: selectedPhone,
+          template_name: name,
+          language: template.language || 'it',
+          components: components.length > 0 ? components : undefined,
+          user_uid: user.uid,
+        }),
       });
-      setShowTemplates(false);
-    } else {
-      alert('Errore template: ' + JSON.stringify(data.error));
+      const data = await res.json();
+
+      if (data.success && data.data?.messages) {
+        await addDoc(collection(db, 'messages'), {
+          text: `Template inviato: ${name}`,
+          to: selectedPhone,
+          from: 'operator',
+          timestamp: Date.now(),
+          createdAt: serverTimestamp(),
+          type: 'template',
+          user_uid: user.uid,
+          read: true,
+          message_id: data.data.messages[0].id,
+        });
+        setShowTemplates(false);
+      } else {
+        const errMsg = data.error?.message || data.error?.error_data?.details || JSON.stringify(data.error);
+        alert('Errore template: ' + errMsg);
+      }
+    } catch (e) {
+      alert('Errore invio template: ' + e.message);
+    } finally {
+      setSending(false);
     }
   };
 
