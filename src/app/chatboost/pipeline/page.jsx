@@ -1658,43 +1658,45 @@ function PipelineEditorModal({ stages: initialStages, leads, templates, onSave, 
                     {/* ── TRIGGER ── */}
                     <div className="mt-1.5">
                       {stage.trigger?.enabled ? (
-                        <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-                          <Zap className="w-3 h-3 text-amber-500 flex-shrink-0" />
-                          <span className="text-[10px] text-amber-800 font-semibold truncate flex-1">
-                            {stage.trigger.template_name}
-                          </span>
-                          <button
-                            onClick={() => setEditingTriggerId(editingTriggerId === stage.id ? null : stage.id)}
-                            className="text-[9px] text-amber-600 hover:text-amber-800 font-bold flex-shrink-0"
-                          >
-                            Cambia
-                          </button>
-                          <button
-                            onClick={() => removeTrigger(stage.id)}
-                            className="p-0.5 hover:bg-amber-100 rounded flex-shrink-0"
-                          >
-                            <X className="w-3 h-3 text-amber-400 hover:text-red-500" />
-                          </button>
-                        </div>
-                        {/* Toggle Genera PDF */}
-                        <label className="flex items-center gap-2 mt-1.5 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={stage.trigger?.generate_pdf || false}
-                            onChange={e => {
-                              setEditStages(prev => prev.map(s =>
-                                s.id === stage.id
-                                  ? { ...s, trigger: { ...s.trigger, generate_pdf: e.target.checked } }
-                                  : s
-                              ));
-                            }}
-                            className="w-3.5 h-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                          />
-                          <span className="text-[10px] text-gray-600 font-medium flex items-center gap-1">
-                            <FileDown className="w-3 h-3 text-emerald-500" />
-                            Genera e invia PDF preventivo
-                          </span>
-                        </label>
+                        <>
+                          <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                            <Zap className="w-3 h-3 text-amber-500 flex-shrink-0" />
+                            <span className="text-[10px] text-amber-800 font-semibold truncate flex-1">
+                              {stage.trigger.template_name}
+                            </span>
+                            <button
+                              onClick={() => setEditingTriggerId(editingTriggerId === stage.id ? null : stage.id)}
+                              className="text-[9px] text-amber-600 hover:text-amber-800 font-bold flex-shrink-0"
+                            >
+                              Cambia
+                            </button>
+                            <button
+                              onClick={() => removeTrigger(stage.id)}
+                              className="p-0.5 hover:bg-amber-100 rounded flex-shrink-0"
+                            >
+                              <X className="w-3 h-3 text-amber-400 hover:text-red-500" />
+                            </button>
+                          </div>
+                          {/* Toggle Genera PDF */}
+                          <label className="flex items-center gap-2 mt-1.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={stage.trigger?.generate_pdf || false}
+                              onChange={e => {
+                                setEditStages(prev => prev.map(s =>
+                                  s.id === stage.id
+                                    ? { ...s, trigger: { ...s.trigger, generate_pdf: e.target.checked } }
+                                    : s
+                                ));
+                              }}
+                              className="w-3.5 h-3.5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                            />
+                            <span className="text-[10px] text-gray-600 font-medium flex items-center gap-1">
+                              <FileDown className="w-3 h-3 text-emerald-500" />
+                              Genera e invia PDF preventivo
+                            </span>
+                          </label>
+                        </>
                       ) : (
                         <button
                           onClick={() => setEditingTriggerId(editingTriggerId === stage.id ? null : stage.id)}
