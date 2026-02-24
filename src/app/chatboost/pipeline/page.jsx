@@ -10,6 +10,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  setDoc,
   query,
   where,
   orderBy,
@@ -42,6 +43,12 @@ import {
   MessageSquare,
   CalendarDays,
   Zap,
+  Settings2,
+  Palette,
+  ChevronUp,
+  ChevronDown,
+  Check,
+  Save,
 } from 'lucide-react';
 
 // ─── DEFAULT PIPELINE STAGES ───
@@ -66,7 +73,22 @@ const STAGE_COLORS = {
   closed_lost: { bg: 'bg-gray-50', text: 'text-gray-500', border: 'border-gray-300', bar: '#6B7280', badge: 'bg-gray-200 text-gray-600' },
 };
 
-const getStageStyle = (stageId) => STAGE_COLORS[stageId] || STAGE_COLORS.contacted;
+const getStageStyle = (stageId, stagesArr) => {
+  // Try hardcoded first
+  if (STAGE_COLORS[stageId]) return STAGE_COLORS[stageId];
+  // For custom stages, generate from the stage's color field
+  const stage = (stagesArr || []).find(s => s.id === stageId);
+  if (stage?.color) {
+    return {
+      bg: 'bg-gray-50',
+      text: 'text-gray-700',
+      border: 'border-gray-300',
+      bar: stage.color,
+      badge: 'bg-gray-100 text-gray-700',
+    };
+  }
+  return STAGE_COLORS.contacted;
+};
 
 // ─── FORMAT CURRENCY ───
 function formatCurrency(value) {
@@ -105,6 +127,7 @@ export default function PipelinePage() {
   const [draggedLead, setDraggedLead] = useState(null);
   const [dragOverStage, setDragOverStage] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showPipelineEditor, setShowPipelineEditor] = useState(false);
 
   // New lead form
   const [newLead, setNewLead] = useState({
@@ -128,6 +151,18 @@ export default function PipelinePage() {
     };
     loadPipeline();
   }, [user]);
+
+  // ─── SAVE PIPELINE CONFIG ───
+  const savePipelineConfig = async (newStages) => {
+    if (!user?.uid) return;
+    try {
+      const pipeRef = doc(db, 'users', user.uid, 'pipeline', 'config');
+      await setDoc(pipeRef, { stages: newStages, updatedAt: serverTimestamp() }, { merge: true });
+      setStages(newStages);
+    } catch (e) {
+      console.error('Errore salvataggio pipeline config:', e);
+    }
+  };
 
   // ─── FIRESTORE: REALTIME LEADS LISTENER ───
   useEffect(() => {
@@ -348,6 +383,17 @@ export default function PipelinePage() {
               Automate
             </Button>
 
+            {/* Edit Pipeline */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs font-semibold flex items-center gap-1.5 border-gray-200"
+              onClick={() => setShowPipelineEditor(true)}
+            >
+              <Settings2 className="w-3.5 h-3.5 text-gray-500" />
+              Modifica Pipeline
+            </Button>
+
             {/* New Lead - opens form in first stage */}
             <Button
               size="sm"
@@ -367,7 +413,7 @@ export default function PipelinePage() {
           {stages.map((stage) => {
             const stageLeads = getStageLeads(stage.id);
             const totalSale = getStageTotalSale(stage.id);
-            const style = getStageStyle(stage.id);
+            const style = getStageStyle(stage.id, stages);
             const isDragOver = dragOverStage === stage.id;
 
             return (
@@ -449,6 +495,19 @@ export default function PipelinePage() {
           onMoveStage={(newStage) => moveLeadToStage(selectedLead.id, newStage, selectedLead.stage)}
           onUpdateField={(field, value) => updateLeadField(selectedLead.id, field, value)}
           onDelete={() => handleDeleteLead(selectedLead.id)}
+        />
+      )}
+
+      {/* ═══ PIPELINE EDITOR MODAL ═══ */}
+      {showPipelineEditor && (
+        <PipelineEditorModal
+          stages={stages}
+          leads={leads}
+          onSave={(newStages) => {
+            savePipelineConfig(newStages);
+            setShowPipelineEditor(false);
+          }}
+          onClose={() => setShowPipelineEditor(false)}
         />
       )}
     </div>
@@ -612,7 +671,7 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
   const [noteText, setNoteText] = useState('');
   const panelRef = useRef(null);
 
-  const style = getStageStyle(lead.stage);
+  const style = getStageStyle(lead.stage, stages);
 
   const startEdit = (field, currentValue) => {
     setEditingField(field);
@@ -732,7 +791,7 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
                     }`}
                     style={{
                       backgroundColor: isActive || isPast
-                        ? getStageStyle(s.id).bar
+                        ? getStageStyle(s.id, stages).bar
                         : '#E5E7EB',
                     }}
                     title={s.label}
@@ -824,7 +883,7 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
                       {isStageChange && (
                         <div className="text-xs text-gray-600">
                           <span className="font-medium">Spostata a </span>
-                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${getStageStyle(entry.to).badge}`}>
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${getStageStyle(entry.to, stages).badge}`}>
                             {stages.find(s => s.id === entry.to)?.label || entry.to}
                           </span>
                           <span className="text-gray-400 ml-1">
@@ -890,6 +949,310 @@ function LeadDetailPanel({ lead, stages, onClose, onMoveStage, onUpdateField, on
         @keyframes slideInRight {
           from { transform: translateX(100%); }
           to { transform: translateX(0); }
+        }
+      `}</style>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════
+// PIPELINE EDITOR MODAL
+// ═══════════════════════════════════════════════════
+const PRESET_COLORS = [
+  '#3B82F6', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6',
+  '#059669', '#6B7280', '#EC4899', '#F97316', '#06B6D4',
+  '#84CC16', '#D946EF', '#14B8A6', '#E11D48', '#7C3AED',
+  '#0EA5E9',
+];
+
+function PipelineEditorModal({ stages: initialStages, leads, onSave, onClose }) {
+  const [editStages, setEditStages] = useState(
+    initialStages.map((s, i) => ({ ...s, order: s.order ?? i }))
+  );
+  const [editingLabelId, setEditingLabelId] = useState(null);
+  const [editingColorId, setEditingColorId] = useState(null);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  // Track changes
+  useEffect(() => {
+    const changed = JSON.stringify(editStages) !== JSON.stringify(initialStages.map((s, i) => ({ ...s, order: s.order ?? i })));
+    setHasChanges(changed);
+  }, [editStages, initialStages]);
+
+  // Count leads per stage
+  const leadsInStage = (stageId) => leads.filter(l => l.stage === stageId).length;
+
+  // ─── HANDLERS ───
+  const updateLabel = (id, label) => {
+    setEditStages(prev => prev.map(s => s.id === id ? { ...s, label } : s));
+  };
+
+  const updateColor = (id, color) => {
+    setEditStages(prev => prev.map(s => s.id === id ? { ...s, color } : s));
+    setEditingColorId(null);
+  };
+
+  const moveStage = (index, direction) => {
+    const newStages = [...editStages];
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= newStages.length) return;
+    [newStages[index], newStages[targetIndex]] = [newStages[targetIndex], newStages[index]];
+    setEditStages(newStages.map((s, i) => ({ ...s, order: i })));
+  };
+
+  const addStage = () => {
+    const newId = `stage_${Date.now()}`;
+    setEditStages(prev => [
+      ...prev,
+      {
+        id: newId,
+        label: 'Nuovo Stage',
+        color: PRESET_COLORS[prev.length % PRESET_COLORS.length],
+        order: prev.length,
+      },
+    ]);
+    setEditingLabelId(newId);
+  };
+
+  const removeStage = (id) => {
+    const count = leadsInStage(id);
+    if (count > 0 && confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setEditStages(prev => prev.filter(s => s.id !== id).map((s, i) => ({ ...s, order: i })));
+    setConfirmDeleteId(null);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    await onSave(editStages);
+    setSaving(false);
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black/30 z-50" onClick={onClose} />
+
+      {/* Modal */}
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        onClick={onClose}
+      >
+        <div
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[85vh] flex flex-col overflow-hidden"
+          onClick={e => e.stopPropagation()}
+          style={{ animation: 'modalIn 0.25s ease-out' }}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div>
+              <h2 className="text-lg font-extrabold text-gray-900 flex items-center gap-2">
+                <Settings2 className="w-5 h-5 text-gray-500" />
+                Modifica Pipeline
+              </h2>
+              <p className="text-xs text-gray-400 mt-0.5">Rinomina, riordina, cambia colore o aggiungi nuovi stage</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg transition">
+              <X className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+
+          {/* Stage List */}
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+            {editStages.map((stage, index) => {
+              const count = leadsInStage(stage.id);
+              const isConfirmDelete = confirmDeleteId === stage.id;
+
+              return (
+                <div
+                  key={stage.id}
+                  className={`group flex items-center gap-2 p-3 rounded-xl border transition-all ${
+                    isConfirmDelete
+                      ? 'border-red-300 bg-red-50'
+                      : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                  }`}
+                >
+                  {/* Order Arrows */}
+                  <div className="flex flex-col gap-0.5 flex-shrink-0">
+                    <button
+                      onClick={() => moveStage(index, -1)}
+                      disabled={index === 0}
+                      className="p-0.5 rounded hover:bg-gray-100 disabled:opacity-20 disabled:cursor-not-allowed transition"
+                    >
+                      <ChevronUp className="w-3.5 h-3.5 text-gray-500" />
+                    </button>
+                    <button
+                      onClick={() => moveStage(index, 1)}
+                      disabled={index === editStages.length - 1}
+                      className="p-0.5 rounded hover:bg-gray-100 disabled:opacity-20 disabled:cursor-not-allowed transition"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
+                    </button>
+                  </div>
+
+                  {/* Color Dot / Picker */}
+                  <div className="relative flex-shrink-0">
+                    <button
+                      onClick={() => setEditingColorId(editingColorId === stage.id ? null : stage.id)}
+                      className="w-7 h-7 rounded-full border-2 border-white shadow-md transition-transform hover:scale-110"
+                      style={{ backgroundColor: stage.color }}
+                      title="Cambia colore"
+                    />
+                    {editingColorId === stage.id && (
+                      <div className="absolute top-full left-0 mt-2 bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-10 w-48">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 block">Scegli colore</span>
+                        <div className="grid grid-cols-8 gap-1.5">
+                          {PRESET_COLORS.map(c => (
+                            <button
+                              key={c}
+                              onClick={() => updateColor(stage.id, c)}
+                              className={`w-5 h-5 rounded-full transition-transform hover:scale-125 ${
+                                stage.color === c ? 'ring-2 ring-offset-1 ring-gray-800 scale-110' : ''
+                              }`}
+                              style={{ backgroundColor: c }}
+                            />
+                          ))}
+                        </div>
+                        {/* Custom color */}
+                        <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100">
+                          <input
+                            type="color"
+                            value={stage.color}
+                            onChange={e => updateColor(stage.id, e.target.value)}
+                            className="w-6 h-6 rounded border-0 cursor-pointer"
+                          />
+                          <span className="text-[10px] text-gray-400">Personalizzato</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Color Bar Preview */}
+                  <div
+                    className="w-1 h-8 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: stage.color }}
+                  />
+
+                  {/* Label */}
+                  <div className="flex-1 min-w-0">
+                    {editingLabelId === stage.id ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={stage.label}
+                        onChange={e => updateLabel(stage.id, e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') setEditingLabelId(null);
+                          if (e.key === 'Escape') setEditingLabelId(null);
+                        }}
+                        onBlur={() => setEditingLabelId(null)}
+                        className="w-full text-sm font-bold px-2 py-1 border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setEditingLabelId(stage.id)}
+                        className="flex items-center gap-1.5 text-sm font-bold text-gray-800 hover:text-emerald-700 transition group/label"
+                      >
+                        {stage.label}
+                        <Edit3 className="w-3 h-3 text-gray-300 group-hover/label:text-emerald-500 transition" />
+                      </button>
+                    )}
+                    {count > 0 && (
+                      <span className="text-[10px] text-gray-400 mt-0.5 block">
+                        {count} lead{count !== 1 ? 's' : ''} in questo stage
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Order number badge */}
+                  <span className="text-[10px] font-mono text-gray-300 bg-gray-50 px-1.5 py-0.5 rounded flex-shrink-0">
+                    #{index + 1}
+                  </span>
+
+                  {/* Delete */}
+                  {isConfirmDelete ? (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <span className="text-[10px] text-red-600 font-semibold whitespace-nowrap">
+                        {count} lead! Sicuro?
+                      </span>
+                      <button
+                        onClick={() => removeStage(stage.id)}
+                        className="text-[10px] font-bold text-white bg-red-500 hover:bg-red-600 px-2 py-1 rounded-lg transition"
+                      >
+                        Elimina
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="text-[10px] font-bold text-gray-500 hover:text-gray-700 px-1.5 py-1 rounded-lg transition"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => removeStage(stage.id)}
+                      disabled={editStages.length <= 1}
+                      className="p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 disabled:opacity-20 disabled:cursor-not-allowed transition flex-shrink-0"
+                      title="Elimina stage"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add Stage Button */}
+            <button
+              onClick={addStage}
+              className="w-full py-3 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 text-sm font-semibold hover:border-emerald-300 hover:text-emerald-600 hover:bg-emerald-50/50 transition-all flex items-center justify-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Aggiungi Stage
+            </button>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 bg-gray-50/60">
+            <span className="text-xs text-gray-400">
+              {editStages.length} stage{editStages.length !== 1 ? 's' : ''}
+              {hasChanges && <span className="text-amber-600 font-semibold ml-2">• Modifiche non salvate</span>}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs font-medium"
+                onClick={onClose}
+              >
+                Annulla
+              </Button>
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                onClick={handleSave}
+                disabled={!hasChanges || saving || editStages.length === 0}
+              >
+                {saving ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
+                Salva Pipeline
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <style jsx global>{`
+        @keyframes modalIn {
+          from { opacity: 0; transform: scale(0.95) translateY(10px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
     </>
