@@ -16,6 +16,7 @@ import {
   Zap,
   CalendarDays,
   LayoutGrid,
+  ShoppingBag,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
@@ -103,7 +104,8 @@ export default function ChatBoostLayout({ children }) {
     { label: 'Template', icon: FileText, path: '/chatboost/templates' },
     { label: 'Contatti', icon: Users, path: '/chatboost/contacts' },
     { label: 'Pipeline', icon: LayoutGrid, path: '/chatboost/pipeline' },
-    { label: 'Calendario', icon: CalendarDays, path: '/chatboost/calendario' }, // ✅ calendario
+    { label: 'Prodotti', icon: ShoppingBag, path: '/chatboost/prodotti' },
+    { label: 'Calendario', icon: CalendarDays, path: '/chatboost/calendario' },
     { label: 'Impostaz.', icon: Settings, path: '/chatboost/impostazioni' },
   ];
 
