@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { db } from '@/firebase';
+import { db } from '@/lib/firebase';
 import { setDoc, getDoc, doc as fireDoc, deleteDoc } from 'firebase/firestore';
 
 // Utility: normalizza numeri telefono
@@ -169,11 +169,18 @@ export async function POST(req, { params }) {
         await setDoc(orderRef, undefinedToNull({ ...prevOrder, ...orderData }), { merge: true });
 
         if (isNowFulfilled && !wasFulfilled && !wasEvasioneInviata) {
-          fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/order-fulfilled`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderId, merchantId }),
-          });
+          try {
+            const autoRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/order-fulfilled`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ orderId, merchantId }),
+            });
+            if (!autoRes.ok) {
+              console.error(`[SHOPIFY] Automazione order-fulfilled fallita: ${autoRes.status}`);
+            }
+          } catch (err) {
+            console.error('[SHOPIFY] Errore trigger order-fulfilled:', err.message);
+          }
         }
 
         return NextResponse.json({ success: true, kind: "order", orderId, phone });
@@ -260,15 +267,29 @@ export async function POST(req, { params }) {
         const hasPhone = phone && phone.length > 5;
         const automation = merchantData?.automation?.abandoned_cart || {};
         if (isAbandoned && !wasRecoveryMessageSent && hasPhone && automation.enabled && automation.template_id) {
-          fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/abandoned-cart`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              checkoutId, 
-              merchantId,
-              delayMinutes: automation.delay_minutes || 60
-            }),
-          });
+          // Salva il timestamp di invio schedulato nel documento checkout
+          // invece di bloccare con setTimeout (che causa timeout su Vercel)
+          const delayMs = (automation.delay_minutes || 60) * 60 * 1000;
+          const sendAt = new Date(Date.now() + delayMs);
+          await setDoc(checkoutRef, {
+            scheduled_send_at: sendAt.toISOString(),
+            scheduled_template: automation.template_id,
+          }, { merge: true });
+          console.log(`[SHOPIFY] Abandoned cart ${checkoutId}: messaggio schedulato per ${sendAt.toISOString()}`);
+
+          // Trigger immediato dell'automation handler (che controllerà il timing)
+          try {
+            const autoRes = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/automation/abandoned-cart`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ checkoutId, merchantId, sendAt: sendAt.toISOString() }),
+            });
+            if (!autoRes.ok) {
+              console.error(`[SHOPIFY] Automazione abandoned-cart fallita: ${autoRes.status}`);
+            }
+          } catch (err) {
+            console.error('[SHOPIFY] Errore trigger abandoned-cart:', err.message);
+          }
         }
 
         return NextResponse.json({ success: true, kind: "checkout", checkoutId, phone });

@@ -38,7 +38,8 @@ export async function POST(req) {
     }
     
     // ===== COSTRUISCI SYSTEM PROMPT =====
-    let systemPrompt = `Sei l'assistente virtuale di un e-commerce italiano chiamato "NOT FOR RESALE".
+    const businessName = userData.company || userData.azienda || userData.business_name || 'il nostro negozio';
+    let systemPrompt = `Sei l'assistente virtuale di un e-commerce italiano chiamato "${businessName}".
 
 OBIETTIVO:
 - Dare al cliente informazioni chiare sullo stato dell'ordine.

@@ -1,9 +1,14 @@
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Forza Montserrat ovunque */
-html, body, button, input, textarea {
+/* ═══════════════════════════════════════════════════
+   EHI! Lab — Design System v2
+   Premium SaaS UI with refined palette & micro‑interactions
+   ═══════════════════════════════════════════════════ */
+
+/* ── Base font & smoothing ── */
+html, body, button, input, textarea, select {
   font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif !important;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -15,11 +20,11 @@ input, textarea, select, button {
   -webkit-text-size-adjust: 100%;
 }
 
-/* Gestione altezza dinamica per mobile con tastiera */
+/* ── Viewport & scroll ── */
 html, body {
   height: 100%;
   min-height: -webkit-fill-available;
-  overscroll-behavior-y: contain; /* evita rimbalzi */
+  overscroll-behavior-y: contain;
   background: var(--background);
   color: var(--foreground);
   margin: 0;
@@ -27,54 +32,102 @@ html, body {
   overflow-x: hidden;
 }
 
-/* Lock dello zoom e del pan */
 body {
   touch-action: manipulation;
 }
 
-/* Rimuove highlight blu al tap su iOS */
 * {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* ── Dark mode variant ── */
 @custom-variant dark (&:is(.dark *));
 
+/* ══════════════════════════════════════════
+   THEME — refined, cohesive SaaS palette
+   ══════════════════════════════════════════ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: 'Montserrat', sans-serif;
   --font-mono: var(--font-geist-mono);
 
-  --color-primary: #000; /* nero dominante */
-  --color-primary-foreground: #fff;
-  --color-secondary: oklch(0.97 0 0);
-  --color-secondary-foreground: oklch(0.205 0 0);
+  /* Brand primary — rich dark */
+  --color-primary: #0f172a;
+  --color-primary-foreground: #ffffff;
 
-  --color-muted: #f9f9f9;
-  --color-muted-foreground: #666;
+  /* Secondary — soft neutral */
+  --color-secondary: #f1f5f9;
+  --color-secondary-foreground: #1e293b;
 
-  --color-border: #e5e7eb;
-  --color-input: #f3f4f6;
-  --color-ring: #d1d5db;
+  /* Muted — subtle backgrounds */
+  --color-muted: #f8fafc;
+  --color-muted-foreground: #64748b;
 
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  /* Accent — brand emerald (WhatsApp identity) */
+  --color-accent: #059669;
+  --color-accent-foreground: #ffffff;
+
+  /* Border, input, ring */
+  --color-border: #e2e8f0;
+  --color-input: #f1f5f9;
+  --color-ring: #cbd5e1;
+
+  /* Card */
+  --color-card: #ffffff;
+  --color-card-foreground: #0f172a;
+
+  /* Destructive */
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: #ffffff;
-  --foreground: #111827;
+  --radius: 0.75rem;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+
+  /* Brand accent tokens */
+  --brand-emerald: #059669;
+  --brand-emerald-light: #d1fae5;
+  --brand-emerald-dark: #047857;
+  --brand-indigo: #6366f1;
+  --brand-indigo-light: #e0e7ff;
+  --brand-sky: #0ea5e9;
+
+  /* Surface hierarchy */
+  --surface-0: #ffffff;
+  --surface-1: #f8fafc;
+  --surface-2: #f1f5f9;
+  --surface-3: #e2e8f0;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.03);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.08), 0 8px 10px -6px rgb(0 0 0 / 0.04);
+  --shadow-glow: 0 0 20px rgb(5 150 105 / 0.15);
+  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.04), 0 6px 16px rgb(0 0 0 / 0.06);
+  --shadow-card-hover: 0 2px 8px rgb(0 0 0 / 0.06), 0 12px 28px rgb(0 0 0 / 0.1);
 }
 
 .dark {
-  --background: #111827;
-  --foreground: #f9fafb;
-  --color-border: #374151;
-  --color-input: #1f2937;
-  --color-ring: #4b5563;
+  --background: #0c1222;
+  --foreground: #f1f5f9;
+  --color-border: #1e293b;
+  --color-input: #1e293b;
+  --color-ring: #334155;
+  --surface-0: #111827;
+  --surface-1: #1e293b;
+  --surface-2: #334155;
+  --surface-3: #475569;
 }
 
 @layer base {
@@ -85,48 +138,344 @@ body {
     @apply bg-background text-foreground;
   }
 }
-/* ========== Chat mobile helpers ========== */
 
-/* blocca lo scroll del body quando sei nella vista chat */
+/* ══════════════════════════════════════════
+   GLOBAL ANIMATION UTILITIES
+   ══════════════════════════════════════════ */
+
+/* Fade + slide up — for content entering */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Fade + scale — for modals & cards */
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Subtle pulse glow */
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(5 150 105 / 0.3); }
+  50% { box-shadow: 0 0 16px 4px rgb(5 150 105 / 0.15); }
+}
+
+/* Shimmer for loading */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Slide drawer */
+@keyframes slideDrawer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+/* Slide in from right */
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Backdrop fade */
+@keyframes backdropFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Float */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease-out both;
+}
+
+.animate-fade-in-scale {
+  animation: fadeInScale 0.3s ease-out both;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2.5s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.35s ease-out both;
+}
+
+/* ══════════════════════════════════════════
+   PREMIUM COMPONENT UTILITIES
+   ══════════════════════════════════════════ */
+
+/* Glass card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.glass-card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+/* Premium surface card */
+.surface-card {
+  background: var(--surface-0);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s ease;
+}
+
+.surface-card:hover {
+  box-shadow: var(--shadow-md);
+}
+
+/* Gradient text utility */
+.gradient-text {
+  background: linear-gradient(135deg, #059669, #0ea5e9, #6366f1);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Premium badge */
+.badge-premium {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.025em;
+}
+
+/* Premium input override */
+.input-premium {
+  border-radius: var(--radius-lg) !important;
+  border: 1.5px solid var(--color-border) !important;
+  background: var(--surface-0) !important;
+  transition: all 0.2s ease !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+
+.input-premium:focus {
+  border-color: var(--brand-emerald) !important;
+  box-shadow: 0 0 0 3px rgb(5 150 105 / 0.1) !important;
+}
+
+/* Premium select */
+.select-premium {
+  appearance: none;
+  border-radius: var(--radius-lg);
+  border: 1.5px solid var(--color-border);
+  background: var(--surface-0) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center;
+  padding: 0.625rem 2.25rem 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--foreground);
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+}
+
+.select-premium:focus {
+  outline: none;
+  border-color: var(--brand-emerald);
+  box-shadow: 0 0 0 3px rgb(5 150 105 / 0.1);
+}
+
+/* Premium table */
+.table-premium {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table-premium thead th {
+  background: var(--surface-1);
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted-foreground);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table-premium thead th:first-child {
+  border-top-left-radius: var(--radius-lg);
+}
+
+.table-premium thead th:last-child {
+  border-top-right-radius: var(--radius-lg);
+}
+
+.table-premium tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+.table-premium tbody tr:hover {
+  background: var(--surface-1);
+}
+
+.table-premium tbody td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.875rem;
+}
+
+/* Premium modal overlay */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(15 23 42 / 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  animation: backdropFade 0.2s ease-out;
+}
+
+.modal-content {
+  background: var(--surface-0);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  padding: 2rem;
+  max-width: 32rem;
+  width: 100%;
+  animation: fadeInScale 0.25s ease-out;
+  border: 1px solid var(--color-border);
+}
+
+/* ══════════════════════════════════════════
+   SIDEBAR & NAVIGATION PREMIUM
+   ══════════════════════════════════════════ */
+
+.nav-item-active {
+  background: linear-gradient(135deg, #059669, #047857);
+  color: white;
+  box-shadow: 0 2px 8px rgb(5 150 105 / 0.3);
+}
+
+.nav-item-idle {
+  color: #64748b;
+  transition: all 0.2s ease;
+}
+
+.nav-item-idle:hover {
+  color: #0f172a;
+  background: var(--surface-2);
+}
+
+/* ══════════════════════════════════════════
+   WHATSAPP-STYLE CHAT BACKGROUND
+   ══════════════════════════════════════════ */
+
+.chat-bg {
+  background-color: #efeae2;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d5cec3' fill-opacity='0.15'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ══════════════════════════════════════════
+   CHAT MOBILE HELPERS
+   ══════════════════════════════════════════ */
+
 body.no-scroll {
   overflow: hidden;
   height: 100svh;
 }
 
-/* wrapper a pieno viewport, robusto su iOS/Android */
 .chat-shell {
   height: 100svh;
-  height: 100dvh; /* fallback moderno */
+  height: 100dvh;
 }
 
 @supports (-webkit-touch-callout: none) {
   .chat-shell { height: -webkit-fill-available; }
 }
 
-/* contenitori che DEVONO scrollare (lista chat / messaggi) */
 .chat-scroll {
   height: 100%;
   overflow-y: auto;
-  -webkit-overflow-scrolling: touch;  /* momentum iOS */
-  overscroll-behavior: contain;       /* non trascinare il body */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
-/* area messaggi con spazio per il composer sticky */
 .chat-scroll--with-composer {
-  padding-bottom: calc(max(env(safe-area-inset-bottom), 8px) + 72px); /* ~altezza composer */
+  padding-bottom: calc(max(env(safe-area-inset-bottom), 8px) + 72px);
 }
 
-/* composer sticky con safe-area iOS */
 .sticky-composer {
   position: sticky;
   bottom: 0;
   padding-bottom: max(env(safe-area-inset-bottom), 8px);
-  background: #fff;
+  background: var(--surface-0);
   z-index: 30;
   border-top: 1px solid var(--color-border);
 }
 
-/* micro-tweak */
 .chat-scroll, .chat-shell {
   overscroll-behavior-y: contain;
 }
+
+/* ══════════════════════════════════════════
+   SCROLLBAR STYLING
+   ══════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* ══════════════════════════════════════════
+   UTILITY: Stagger children animation
+   ══════════════════════════════════════════ */
+
+.stagger-children > * {
+  animation: fadeInUp 0.4s ease-out both;
+}
+
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
+.stagger-children > *:nth-child(7) { animation-delay: 360ms; }
+.stagger-children > *:nth-child(8) { animation-delay: 420ms; }

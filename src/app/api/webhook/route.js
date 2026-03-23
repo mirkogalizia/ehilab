@@ -5,6 +5,7 @@ import {
   doc,
   setDoc,
   getDoc,
+  updateDoc,
   serverTimestamp,
   query,
   where,
@@ -37,8 +38,54 @@ export async function POST(req) {
     const phone_number_id = value?.metadata?.phone_number_id;
     const messages = value?.messages || [];
     const contacts = value?.contacts || [];
+    const statuses = value?.statuses || [];
+
+    // ===== GESTIONE STATUS UPDATES (sent/delivered/read) =====
+    if (statuses.length > 0 && phone_number_id) {
+      for (const status of statuses) {
+        const messageId = status.id;
+        const statusValue = status.status; // 'sent' | 'delivered' | 'read' | 'failed'
+        const statusTimestamp = status.timestamp;
+
+        if (!messageId || !statusValue) continue;
+
+        try {
+          // Trova il messaggio in Firestore tramite message_id
+          const msgQuery = query(
+            collection(db, 'messages'),
+            where('message_id', '==', messageId)
+          );
+          const msgSnap = await getDocs(msgQuery);
+
+          if (!msgSnap.empty) {
+            const msgDoc = msgSnap.docs[0];
+            const updateData = {
+              wa_status: statusValue,
+              [`wa_status_${statusValue}_at`]: statusTimestamp
+                ? Number(statusTimestamp) * 1000
+                : Date.now(),
+            };
+
+            // Se failed, salva anche i dettagli dell'errore
+            if (statusValue === 'failed' && status.errors?.length > 0) {
+              updateData.wa_error = status.errors[0]?.title || 'Unknown error';
+              updateData.wa_error_code = status.errors[0]?.code || 0;
+            }
+
+            await updateDoc(doc(db, 'messages', msgDoc.id), updateData);
+            console.log(`📬 Status ${statusValue} aggiornato per msg ${messageId}`);
+          }
+        } catch (err) {
+          console.error('Errore aggiornamento status:', err);
+        }
+      }
+    }
 
     if (!phone_number_id || messages.length === 0) {
+      // Se ci sono solo status updates, rispondi OK
+      if (statuses.length > 0) {
+        return new Response("Status updates processati", { status: 200 });
+      }
       return new Response("No messages to process", { status: 200 });
     }
 

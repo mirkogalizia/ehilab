@@ -2,133 +2,196 @@
 
 import Image from 'next/image';
 import { motion } from 'framer-motion';
+import { ArrowRight, Globe, Zap, UtensilsCrossed, MessageCircle } from 'lucide-react';
 
 const services = [
   {
-    icon: '/icons/web.svg',
-    bg: 'from-[#5eead4] via-[#38bdf8] to-[#6366f1]',
+    icon: Globe,
+    gradient: 'from-emerald-400 via-teal-400 to-cyan-500',
+    iconBg: 'bg-emerald-500',
     title: 'Siti Web & E-commerce',
     text: 'Realizzazione siti professionali e store Shopify su misura. Design responsive, UX premium e conversioni garantite.',
   },
   {
-    icon: '/icons/robot.svg',
-    bg: 'from-[#fbbf24] via-[#fb7185] to-[#6366f1]',
+    icon: Zap,
+    gradient: 'from-amber-400 via-orange-400 to-rose-500',
+    iconBg: 'bg-amber-500',
     title: 'Automazioni & Dashboard',
     text: 'App web personalizzate, integrazione API e automazione processi aziendali. Tutto su misura, tutto automatizzato.',
   },
   {
-    icon: '/icons/menu.svg',
-    bg: 'from-[#a7f3d0] via-[#fde68a] to-[#60a5fa]',
+    icon: UtensilsCrossed,
+    gradient: 'from-lime-400 via-emerald-400 to-teal-500',
+    iconBg: 'bg-lime-500',
     title: 'Smart Menu & Prenotazioni',
     text: 'Menù digitali QR, ordini smart e sistemi per la gestione clienti. Esperienza moderna per ristoranti e locali.',
   },
   {
-    icon: '/icons/whatsapp.svg',
-    bg: 'from-[#4ade80] via-[#fbbf24] to-[#818cf8]',
+    icon: MessageCircle,
+    gradient: 'from-green-400 via-emerald-400 to-cyan-500',
+    iconBg: 'bg-green-500',
     title: 'EHI! Chat Boost',
-    text: (
-      <>
-        Automazione WhatsApp, CRM integrato e campagne marketing.<br />
-        <a
-          href="/wa/login"
-          className="inline font-semibold text-blue-600 hover:underline transition"
-        >
-          Accedi alla piattaforma
-        </a>
-      </>
-    ),
+    text: 'Automazione WhatsApp, CRM integrato e campagne marketing.',
+    cta: { label: 'Accedi alla piattaforma', href: '/wa/login' },
   },
 ];
 
+const containerVariants = {
+  hidden: {},
+  visible: {
+    transition: { staggerChildren: 0.12 },
+  },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 30 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] as const },
+  },
+};
+
 export default function Home() {
   return (
-    <main className="min-h-screen w-full flex flex-col items-center justify-center bg-gradient-to-br from-[#f5f6ff] via-[#e0e7ff] to-[#e0f2fe] font-[Montserrat]">
-      {/* Logo + headline */}
-      <motion.div
-        initial={{ opacity: 0, y: -30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.7, type: "spring" }}
-        className="flex flex-col items-center mt-8 mb-4"
-      >
-        <Image
-          src="/logo.png"
-          alt="EHI! Lab Logo"
-          width={600}
-          height={600}
-          className="mb-6"
-          priority
-        />
-        <motion.h1
-          className="text-4xl sm:text-5xl font-bold text-gray-900 tracking-tight mb-4 text-center"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.1, duration: 0.7 }}
-        >
-          L’automazione che si fa sentire.<br />
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-sky-400 to-purple-600">
-            Digitalizza il tuo business, con stile.
-          </span>
-        </motion.h1>
-        <p className="text-lg sm:text-xl text-neutral-700 text-center max-w-2xl mb-4">
-          Siamo la <span className="font-semibold text-sky-600">web agency</span> specializzata in soluzioni digitali, marketing, automazione e CRM WhatsApp per aziende che vogliono davvero distinguersi.
-        </p>
-        <motion.a
-          href="#servizi"
-          className="mt-2 px-6 py-3 rounded-full bg-black text-white font-semibold text-base shadow-lg hover:scale-105 hover:bg-sky-800 transition active:scale-95"
-          whileHover={{ scale: 1.05 }}
-        >
-          Scopri i nostri servizi
-        </motion.a>
-      </motion.div>
+    <main className="min-h-screen w-full flex flex-col items-center bg-[var(--surface-1)] font-[Montserrat] overflow-hidden relative">
+      {/* Background decorations */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-[500px] h-[500px] bg-gradient-to-br from-emerald-200/40 via-cyan-200/30 to-transparent rounded-full blur-3xl" />
+        <div className="absolute top-1/3 -left-32 w-[400px] h-[400px] bg-gradient-to-br from-indigo-200/30 via-purple-200/20 to-transparent rounded-full blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 w-[350px] h-[350px] bg-gradient-to-br from-amber-200/25 via-rose-200/15 to-transparent rounded-full blur-3xl" />
+      </div>
 
-      {/* Sezione servizi */}
+      {/* Hero Section */}
+      <div className="relative z-10 flex flex-col items-center w-full max-w-5xl mx-auto px-4 pt-12 pb-6">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
+          className="flex flex-col items-center"
+        >
+          <Image
+            src="/logo.png"
+            alt="EHI! Lab Logo"
+            width={280}
+            height={280}
+            className="mb-8 drop-shadow-lg"
+            priority
+          />
+
+          <motion.h1
+            className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-slate-900 tracking-tight mb-6 text-center leading-[1.1]"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15, duration: 0.6 }}
+          >
+            L&apos;automazione che
+            <br />
+            <span className="gradient-text">si fa sentire.</span>
+          </motion.h1>
+
+          <motion.p
+            className="text-lg sm:text-xl text-slate-600 text-center max-w-2xl mb-8 leading-relaxed"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.3, duration: 0.6 }}
+          >
+            Siamo la{' '}
+            <span className="font-semibold text-emerald-600">web agency</span>{' '}
+            specializzata in soluzioni digitali, marketing, automazione e CRM
+            WhatsApp per aziende che vogliono davvero distinguersi.
+          </motion.p>
+
+          <motion.a
+            href="#servizi"
+            className="group inline-flex items-center gap-2 px-8 py-3.5 rounded-full bg-slate-900 text-white font-semibold text-base shadow-lg hover:shadow-xl transition-all duration-300 hover:bg-slate-800"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.45, duration: 0.5 }}
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+          >
+            Scopri i nostri servizi
+            <ArrowRight size={18} className="transition-transform duration-300 group-hover:translate-x-1" />
+          </motion.a>
+        </motion.div>
+      </div>
+
+      {/* Services Section */}
       <section
         id="servizi"
-        className="w-full max-w-6xl mx-auto mt-12 px-2 flex-1"
+        className="relative z-10 w-full max-w-6xl mx-auto mt-16 px-4 flex-1 pb-8"
       >
-        <motion.h2
-          className="text-2xl sm:text-3xl font-bold text-center mb-10 tracking-tight"
-          initial={{ opacity: 0, y: 30 }}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ delay: 0.1, duration: 0.8 }}
+          transition={{ duration: 0.6 }}
+          className="text-center mb-14"
         >
-          I nostri servizi
-        </motion.h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-7">
-          {services.map(({ icon, bg, title, text }) => (
+          <span className="badge-premium bg-emerald-100 text-emerald-700 mb-4 inline-flex">
+            Servizi
+          </span>
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+            Tutto ciò di cui hai bisogno
+          </h2>
+          <p className="mt-3 text-slate-500 text-lg max-w-xl mx-auto">
+            Soluzioni digitali complete per far crescere il tuo business
+          </p>
+        </motion.div>
+
+        <motion.div
+          className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6"
+          variants={containerVariants}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true }}
+        >
+          {services.map(({ icon: Icon, gradient, iconBg, title, text, cta }) => (
             <motion.div
               key={title}
-              className={`flex flex-col items-center rounded-3xl shadow-xl border border-neutral-200 px-7 py-10 bg-gradient-to-br ${bg} hover:scale-[1.04] transition cursor-pointer min-h-[340px]`}
-              initial={{ opacity: 0, y: 40 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.7, type: "spring" }}
+              variants={cardVariants}
+              className="group relative flex flex-col rounded-2xl bg-white border border-slate-200/80 p-6 pt-8 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 cursor-pointer overflow-hidden"
             >
-              <div className="w-16 h-16 flex items-center justify-center mb-4 bg-white/70 rounded-full shadow-xl border border-white">
-                <Image
-                  src={icon}
-                  width={40}
-                  height={40}
-                  alt=""
-                  className="object-contain"
-                />
+              {/* Gradient top accent */}
+              <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${gradient} opacity-80 group-hover:opacity-100 transition-opacity`} />
+
+              {/* Icon */}
+              <div className={`w-12 h-12 flex items-center justify-center rounded-xl ${iconBg} text-white shadow-md mb-5`}>
+                <Icon size={24} strokeWidth={2} />
               </div>
-              <h3 className="font-semibold text-lg mb-3 text-neutral-900 text-center drop-shadow-sm">
+
+              {/* Content */}
+              <h3 className="font-bold text-lg mb-2 text-slate-900">
                 {title}
               </h3>
-              <div className="text-gray-800 text-[15px] text-center">{text}</div>
+              <p className="text-slate-500 text-sm leading-relaxed flex-1">
+                {text}
+              </p>
+
+              {/* CTA link */}
+              {cta && (
+                <a
+                  href={cta.href}
+                  className="inline-flex items-center gap-1.5 mt-4 text-sm font-semibold text-emerald-600 hover:text-emerald-700 transition-colors"
+                >
+                  {cta.label}
+                  <ArrowRight size={14} className="transition-transform group-hover:translate-x-1" />
+                </a>
+              )}
             </motion.div>
           ))}
-        </div>
+        </motion.div>
       </section>
 
       {/* Footer */}
-      <footer className="mt-20 mb-8 text-center text-neutral-500 text-sm w-full">
-        © {new Date().getFullYear()} <b>EHI! Lab</b> · Digital automation & web agency – P.IVA 03970420364
+      <footer className="relative z-10 w-full py-8 mt-12 border-t border-slate-200/60">
+        <div className="text-center text-slate-400 text-sm">
+          © {new Date().getFullYear()}{' '}
+          <span className="font-bold text-slate-600">EHI! Lab</span> · Digital
+          automation &amp; web agency – P.IVA 03970420364
+        </div>
       </footer>
     </main>
   );
 }
-
-

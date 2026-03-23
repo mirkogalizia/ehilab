@@ -1,17 +1,25 @@
 'use client';
 
 import { useEffect, useState } from "react";
-import { db } from "@/firebase";
+import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { useAuth } from "@/lib/useAuth";
 import { Button } from "@/components/ui/button";
-import { Copy, Loader2, Check } from "lucide-react";
+import {
+  Copy, Loader2, Check, ShoppingBag, Link2, AlertCircle,
+  ChevronRight, Shield, Webhook
+} from "lucide-react";
 
 function generateToken() {
   if (typeof window !== "undefined" && window.crypto?.randomUUID) {
     return window.crypto.randomUUID();
   }
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  // Fallback più sicuro di Math.random
+  const arr = new Uint8Array(16);
+  if (typeof window !== "undefined" && window.crypto) {
+    window.crypto.getRandomValues(arr);
+  }
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 export default function ShopifyIntegrationPage() {
@@ -26,7 +34,7 @@ export default function ShopifyIntegrationPage() {
 
   useEffect(() => {
     if (!user || authLoading) return;
-    async function fetchOrCreateToken() {
+    (async () => {
       setLoading(true);
       try {
         const ref = doc(db, "shopify_merchants", user.uid);
@@ -37,144 +45,172 @@ export default function ShopifyIntegrationPage() {
         } else {
           newToken = generateToken();
           await setDoc(ref, {
-            token: newToken,
-            attivo: true,
+            token: newToken, attivo: true,
             user_email: user.email || "",
-            createdAt: new Date()
+            createdAt: new Date().toISOString()
           });
         }
         setToken(newToken);
-        setWebhookUrl(
-          `${BASE_URL}/api/webhook/shopify/${user.uid}/${newToken}`
-        );
+        setWebhookUrl(`${BASE_URL}/api/webhook/shopify/${user.uid}/${newToken}`);
       } catch (err) {
         setError("Errore durante la generazione del link. Riprova.");
       } finally {
         setLoading(false);
       }
-    }
-    fetchOrCreateToken();
+    })();
   }, [user, authLoading]);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(webhookUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const el = document.createElement('textarea');
+      el.value = webhookUrl; document.body.appendChild(el);
+      el.select(); document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   if (authLoading) {
     return (
-      <div className="flex justify-center items-center h-32">
-        <Loader2 className="animate-spin text-gray-500" />
+      <div className="flex items-center justify-center h-64">
+        <Loader2 size={24} className="animate-spin text-emerald-600" />
       </div>
     );
   }
+
   if (!user) {
     return (
-      <div className="p-8 max-w-lg mx-auto text-center">
-        <p>Per generare il link devi effettuare il login.</p>
+      <div className="flex items-center justify-center h-64">
+        <p className="text-sm text-slate-400">Effettua il login per continuare.</p>
       </div>
     );
   }
 
+  const webhookEvents = [
+    { event: 'Ordine creato', code: 'orders/create' },
+    { event: 'Ordine aggiornato', code: 'orders/updated' },
+    { event: 'Ordine annullato', code: 'orders/cancelled' },
+    { event: 'Pagamento ricevuto', code: 'orders/paid' },
+    { event: 'Ordine evaso', code: 'fulfillments/create' },
+    { event: 'Carrello abbandonato', code: 'carts/update' },
+  ];
+
   return (
-    <div className="min-h-screen w-full bg-gradient-to-tr from-green-50 via-white to-blue-50 py-10 px-2 font-[Montserrat]">
+    <div className="max-w-3xl mx-auto px-4 py-8 font-[Montserrat]">
       {/* Header */}
-      <div className="max-w-2xl mx-auto mb-6 relative">
-        <div className="flex flex-col items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center rounded-xl bg-green-100 px-3 py-1 text-green-700 font-semibold tracking-wide shadow">
-              {/* LOGO SHOPIFY SVG INLINE */}
-              <svg width="28" height="28" viewBox="0 0 32 32" fill="none" className="mr-2">
-                <rect width="32" height="32" rx="6" fill="#96BF48"/>
-                <path d="M12.7 7.7c.2-1.5 1.3-2.9 2.6-2.9 1.5 0 2.3 1.3 2.5 2.7 1-.1 2.3.1 2.9.2.2.1.5.3.5.6l2.9 13.5c0 .2-.1.5-.4.5l-11.4-2.1c-.2 0-.4-.2-.4-.5l2.2-13.4c.1-.3.4-.5.6-.5zm3.5.5c-.1-.7-.6-1.8-1.6-1.8-1.2 0-1.6 1.5-1.7 2.1l3.3-.3zm-4.2 1.2l-2.2 13.5 10.7 2 2.9-13.6-11.4-2.1zm2.7 5.6c.4-.7.8-1.4 1.2-2.1.5-.8.9-1.6 1.3-2.3-.1-.1-.1-.3-.2-.3-.3.1-.6.2-.9.3-.2.1-.5.2-.7.4l-.2.1c-.3.4-.7.8-1.1 1.3-.3.5-.7 1-.9 1.5 0 .1.1.3.2.4.3-.2.6-.3.9-.5.3-.1.6-.3.9-.5.1 0 .1.1.1.1zm-1.6 1.5c-.2.3-.4.7-.6 1-.2.3-.3.7-.5 1 .2.1.3.3.5.4.3-.3.7-.7 1.1-1 .2-.1.4-.3.6-.4-.3-.2-.6-.4-.9-.6-.1-.1-.1-.2-.2-.3zm3.7 3.1c-.1-.1-.1-.2-.2-.3-.3.2-.6.4-.9.6.2.1.4.3.6.4.4.3.8.7 1.1 1-.1-.2-.2-.5-.4-.7-.1-.2-.2-.4-.2-.6zm-2.1 1.8c-.4.1-.8.2-1.2.3.2.3.5.6.7.9.3.3.7.7 1.2 1-.1-.2-.1-.5-.2-.8-.1-.2-.2-.5-.3-.7zm3.7-2.1c-.3.2-.6.3-.9.5.1.1.1.2.2.3.3-.2.6-.4.9-.6-.1-.1-.1-.2-.2-.2z" fill="#fff"/>
-              </svg>
-              Integrazione Shopify
-            </span>
+      <div className="mb-8">
+        <span className="badge-premium bg-emerald-100 text-emerald-700 mb-3 inline-flex">Integrazioni</span>
+        <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">Integrazione Shopify</h1>
+        <p className="text-sm text-slate-400 mt-1">Automatizza notifiche WhatsApp su ordini, spedizioni e pagamenti</p>
+      </div>
+
+      {/* Webhook URL Card */}
+      <div className="surface-card p-6 mb-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center">
+            <Webhook size={18} className="text-emerald-600" />
           </div>
-          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-gray-900 mt-2 mb-2 text-center drop-shadow-lg">
-            Collega il tuo Store in <span className="text-green-600">1 click</span>
-          </h1>
-          <p className="text-gray-600 max-w-xl text-center text-lg mb-3">
-            Automatizza notifiche WhatsApp su ordini, spedizioni e pagamenti in tempo reale su Chat Boost.<br />
-            Ricevi aggiornamenti istantanei e migliora l'esperienza dei tuoi clienti.
-          </p>
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Webhook personale</h2>
+            <p className="text-xs text-slate-400">Copia e incolla nel pannello Shopify</p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
+            <Loader2 size={16} className="animate-spin" /> Generazione link...
+          </div>
+        ) : (
+          <div className="flex gap-2 items-center">
+            <input
+              className="input-premium flex-1 font-mono text-xs px-3 py-2.5 bg-slate-50"
+              value={webhookUrl}
+              readOnly
+              spellCheck={false}
+              onClick={e => e.target.select()}
+            />
+            <button
+              onClick={handleCopy}
+              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+                copied
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+              }`}
+            >
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+            </button>
+          </div>
+        )}
+
+        {copied && (
+          <p className="text-xs text-emerald-600 font-medium mt-2">Link copiato negli appunti</p>
+        )}
+
+        {error && (
+          <div className="flex items-center gap-2 mt-3 p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs">
+            <AlertCircle size={14} /> {error}
+          </div>
+        )}
+
+        <div className="mt-4 flex items-center gap-2 p-2.5 rounded-lg bg-red-50/50 border border-red-100">
+          <Shield size={13} className="text-red-400 shrink-0" />
+          <p className="text-[11px] text-red-500 font-medium">Non condividere questo link pubblicamente</p>
         </div>
       </div>
 
-      {/* Card */}
-      <div className="max-w-2xl mx-auto shadow-2xl rounded-3xl bg-white/80 border border-gray-200 p-7 pb-5 flex flex-col gap-7">
-        {/* Webhook */}
-        <div>
-          <label className="block font-bold text-gray-700 mb-1 text-base">
-            Il tuo <span className="text-green-700">webhook personale</span>:
-          </label>
-          {loading ? (
-            <div className="flex items-center gap-2 text-gray-500">
-              <Loader2 className="animate-spin" /> Generazione link...
-            </div>
-          ) : (
-            <div className="flex gap-2 items-center">
-              <input
-                className="w-full border border-gray-300 bg-gray-100 rounded-lg px-3 py-2 text-sm font-mono tracking-wide outline-none select-all shadow"
-                value={webhookUrl}
-                readOnly
-                spellCheck={false}
-              />
-              <Button size="icon" variant={copied ? "success" : "outline"} onClick={handleCopy}>
-                {copied ? <Check className="w-5 h-5 text-green-700" /> : <Copy className="w-5 h-5" />}
-              </Button>
-              {copied && <span className="text-green-600 text-sm ml-1 font-bold">Copiato!</span>}
-            </div>
-          )}
-          {error && <div className="text-red-600 mt-2">{error}</div>}
+      {/* Setup Steps */}
+      <div className="surface-card p-6 mb-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center">
+            <ShoppingBag size={18} className="text-blue-600" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Configurazione Shopify</h2>
+            <p className="text-xs text-slate-400">Segui questi passaggi (1 minuto)</p>
+          </div>
         </div>
 
-        {/* Steps */}
-        <div className="bg-gradient-to-tr from-green-50 via-white to-blue-50 border border-green-200 rounded-xl shadow-inner px-5 py-5">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="bg-green-600/90 text-white font-bold text-xs px-2 py-1 rounded">Onboarding Shopify</span>
-            <span className="text-gray-400 text-xs ml-auto">1 min ⏱️</span>
-          </div>
-          <ol className="list-decimal pl-5 text-[15px] space-y-2 text-gray-800 font-medium">
-            <li>
-              Vai in <span className="font-semibold">Impostazioni &rarr; Notifiche &rarr; Webhook</span> nel pannello Shopify.
-            </li>
-            <li>
-              Clicca su <span className="font-semibold">Crea webhook</span>.
-            </li>
-            <li>
-              Incolla il link qui sopra come <span className="font-semibold text-blue-700">URL di consegna</span>.
-            </li>
-            <li>
-              Scegli l’<span className="font-semibold">evento</span> da collegare (puoi ripetere per tutti):<br />
-              <div className="bg-white/60 border border-gray-100 rounded-xl px-4 py-2 mt-2">
-                <ul className="space-y-1 font-normal">
-                  <li>🟢 <span className="font-mono">Ordine creato</span> <span className="text-gray-400 text-xs">(orders/create)</span></li>
-                  <li>🟢 <span className="font-mono">Ordine aggiornato</span> <span className="text-gray-400 text-xs">(orders/updated)</span></li>
-                  <li>🟢 <span className="font-mono">Ordine annullato</span> <span className="text-gray-400 text-xs">(orders/cancelled)</span></li>
-                  <li>🟢 <span className="font-mono">Pagamento ricevuto</span> <span className="text-gray-400 text-xs">(orders/paid)</span></li>
-                  <li>🟢 <span className="font-mono">Ordine evaso</span> <span className="text-gray-400 text-xs">(fulfillments/create)</span></li>
-                  <li>🟢 <span className="font-mono">Carrello abbandonato</span> <span className="text-gray-400 text-xs">(carts/update)</span></li>
-                </ul>
+        <div className="space-y-3">
+          {[
+            { step: 1, text: <>Vai in <strong>Impostazioni</strong> <ChevronRight size={12} className="inline" /> <strong>Notifiche</strong> <ChevronRight size={12} className="inline" /> <strong>Webhook</strong></> },
+            { step: 2, text: <>Clicca su <strong>Crea webhook</strong></> },
+            { step: 3, text: <>Incolla il link qui sopra come <strong className="text-emerald-600">URL di consegna</strong></> },
+            { step: 4, text: <>Scegli l&apos;evento da collegare (vedi lista sotto)</>, sub: true },
+            { step: 5, text: <>Formato dati: <strong>JSON</strong></> },
+            { step: 6, text: <>Versione API: <strong>2024-07</strong></> },
+            { step: 7, text: <>Clicca <strong>Salva webhook</strong></> },
+          ].map(({ step, text }) => (
+            <div key={step} className="flex items-start gap-3">
+              <span className="w-6 h-6 rounded-full bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                {step}
+              </span>
+              <p className="text-sm text-slate-700 leading-relaxed">{text}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Webhook Events */}
+      <div className="surface-card p-6">
+        <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Eventi supportati</h3>
+        <div className="space-y-2">
+          {webhookEvents.map(({ event, code }) => (
+            <div key={code} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="text-sm font-medium text-slate-700">{event}</span>
               </div>
-            </li>
-            <li>
-              Formato dati: <span className="font-semibold">JSON</span>
-            </li>
-            <li>
-              Versione API: <span className="font-semibold">2024-07 (ultima disponibile)</span>
-            </li>
-            <li>
-              Clicca <span className="font-semibold">Salva webhook</span>.
-            </li>
-          </ol>
+              <code className="text-[10px] font-mono text-slate-400 bg-white px-2 py-0.5 rounded-md border border-slate-200">{code}</code>
+            </div>
+          ))}
         </div>
-        <div className="text-xs text-gray-500 mt-1 leading-tight px-1">
-          Puoi riutilizzare questo link per più eventi webhook su Shopify.
-          <br />
-          <span className="text-rose-600 font-bold">Non condividere questo link pubblicamente!</span>
-        </div>
+        <p className="text-[11px] text-slate-400 mt-4">Puoi riutilizzare lo stesso link per tutti gli eventi.</p>
       </div>
     </div>
   );

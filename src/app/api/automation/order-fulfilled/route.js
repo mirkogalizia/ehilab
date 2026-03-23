@@ -1,4 +1,4 @@
-import { db } from '@/firebase';
+import { db } from '@/lib/firebase';
 import { getDoc, doc, setDoc, addDoc, collection } from 'firebase/firestore';
 
 // Invio del template WhatsApp

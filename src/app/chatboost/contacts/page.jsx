@@ -1,24 +1,27 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
-  collection, doc, setDoc, getDocs, writeBatch, onSnapshot, updateDoc, addDoc, serverTimestamp, where, query
+  collection, doc, setDoc, getDocs, writeBatch, onSnapshot, updateDoc, addDoc, serverTimestamp, where, query, orderBy
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import * as XLSX from 'xlsx';
 import {
-  Plus, Users, Send, X, Loader2, ArrowRight, Trash2, FolderSymlink, Info, Edit2, Save
+  Plus, Users, Send, X, Loader2, ArrowRight, Trash2, FolderSymlink,
+  Edit2, Save, Search, Upload, Tag, Download, MessageSquare,
+  CalendarDays, Clock, User, Phone, Mail, MapPin, ShoppingBag,
+  FileText, ChevronRight, MoreHorizontal, Hash, Globe, Zap,
+  StickyNote, ArrowUpRight, CheckCircle, XCircle
 } from 'lucide-react';
 import { useAuth } from '@/lib/useAuth';
+import { useRouter } from 'next/navigation';
+
+/* ═══════════ Helpers ═══════════ */
 
 function normalizePhone(phoneRaw) {
   if (!phoneRaw) return '';
-  let phone = phoneRaw.trim()
-    .replace(/^[+]+/, '')
-    .replace(/^00/, '')
-    .replace(/[\s\-().]/g, '');
+  let phone = phoneRaw.trim().replace(/^[+]+/, '').replace(/^00/, '').replace(/[\s\-().]/g, '');
   if (phone.startsWith('39') && phone.length >= 11) return '+' + phone;
   if (phone.startsWith('3') && phone.length === 10) return '+39' + phone;
   if (/^\d+$/.test(phone) && phone.length > 10) return '+' + phone;
@@ -26,142 +29,117 @@ function normalizePhone(phoneRaw) {
   return '';
 }
 
-/* =========================
-   Helpers ricerca avanzata
-   ========================= */
 function normalizeText(s) {
-  return (s || '')
-    .toString()
-    .toLowerCase()
-    .normalize('NFD')                 // separa accenti
-    .replace(/[\u0300-\u036f]/g, '') // rimuove accenti
-    .replace(/\s+/g, ' ')            // spazi multipli -> singolo
-    .trim();
+  return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Estrae token supportando virgolette: es.  name:"mario rossi"  tag:vip  rossi
-function parseSearch(query) {
-  const q = normalizeText(query);
+function parseSearch(q) {
+  const norm = normalizeText(q);
   const tokens = [];
   const re = /"([^"]+)"|(\S+)/g;
   let m;
-  while ((m = re.exec(q)) !== null) {
-    const piece = m[1] || m[2] || '';
-    tokens.push(piece);
-  }
-  // Trasforma key:value in {key, value}
+  while ((m = re.exec(norm)) !== null) tokens.push(m[1] || m[2] || '');
   return tokens.map(t => {
     const idx = t.indexOf(':');
-    if (idx > 0) {
-      const key = t.slice(0, idx).trim();
-      const value = t.slice(idx + 1).trim();
-      if (key && value) return { key, value };
-    }
+    if (idx > 0) { const key = t.slice(0, idx).trim(); const value = t.slice(idx+1).trim(); if (key && value) return { key, value }; }
     return { value: t };
   });
 }
 
-function contactFields(c) {
-  const first = normalizeText(c.firstName || c.name || '');
-  const last  = normalizeText(c.lastName  || c.surname || '');
-  const nameCombos = `${first} ${last} ${last} ${first}`.trim(); // entrambe le combinazioni
-  const phone  = normalizeText(c.phone || c.id || '');
-  const email  = normalizeText(c.email || '');
-  const tags   = Array.isArray(c.tags) ? normalizeText(c.tags.join(' ')) : '';
-  const city = normalizeText(c.city || '');
-  const province = normalizeText(c.province || '');
-  const country = normalizeText(c.country || '');
-  const zip = normalizeText(c.zip || '');
-  const addressLine = normalizeText(c.address || '');
-  const address = normalizeText([c.address, c.city, c.province, c.country, c.zip].filter(Boolean).join(' '));
-
-  return {
-    first, last, name: nameCombos,
-    phone, email,
-    tag: tags, tags, // alias
-    city, province, country, zip,
-    addressLine, address
-  };
-}
-
 function contactGlobalIndex(c) {
-  const f = contactFields(c);
-  return [
-    f.name, f.phone, f.email, f.tag, f.address
-  ].join(' ');
+  const f = [
+    c.firstName, c.name, c.lastName, c.surname, c.phone, c.id,
+    c.email, ...(c.tags || []), c.city, c.province, c.country, c.address
+  ].filter(Boolean).map(normalizeText).join(' ');
+  return f;
 }
 
 function matchesQuery(contact, specs) {
   if (!specs.length) return true;
   const idx = contactGlobalIndex(contact);
-  const f = contactFields(contact);
-
   return specs.every(spec => {
     const val = normalizeText(spec.value);
     if (!val) return true;
-
     if (spec.key) {
-      const key = spec.key.toLowerCase();
-      // mappa dei campi supportati
       const fieldMap = {
-        name: f.name,
-        first: f.first,
-        last: f.last,
-        phone: f.phone,
-        email: f.email,
-        tag: f.tag,
-        tags: f.tag,
-        city: f.city,
-        province: f.province,
-        country: f.country,
-        zip: f.zip,
-        address: f.address,
-        addressline: f.addressLine
+        name: normalizeText(`${contact.firstName||''} ${contact.lastName||''}`),
+        phone: normalizeText(contact.phone || contact.id || ''),
+        email: normalizeText(contact.email || ''),
+        tag: normalizeText((contact.tags||[]).join(' ')),
+        tags: normalizeText((contact.tags||[]).join(' ')),
+        city: normalizeText(contact.city || ''),
+        source: normalizeText(contact.source || ''),
       };
-      const fieldVal = fieldMap[key];
-      if (typeof fieldVal !== 'string') return false;
-      return fieldVal.includes(val);
-    } else {
-      // token generico → cerca nel global index
-      return idx.includes(val);
+      return (fieldMap[spec.key.toLowerCase()] || '').includes(val);
     }
+    return idx.includes(val);
   });
 }
 
+const SOURCE_CONFIG = {
+  manual: { label: 'Manuale', icon: User, color: 'bg-blue-50 text-blue-600 border-blue-200' },
+  import: { label: 'Import', icon: Upload, color: 'bg-amber-50 text-amber-600 border-amber-200' },
+  whatsapp: { label: 'WhatsApp', icon: MessageSquare, color: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
+  shopify: { label: 'Shopify', icon: ShoppingBag, color: 'bg-violet-50 text-violet-600 border-violet-200' },
+  'wa-auto': { label: 'WhatsApp', icon: MessageSquare, color: 'bg-emerald-50 text-emerald-600 border-emerald-200' },
+};
+
+function SourceBadge({ source }) {
+  const cfg = SOURCE_CONFIG[source] || SOURCE_CONFIG.manual;
+  const Icon = cfg.icon;
+  return (
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${cfg.color}`}>
+      <Icon size={10} /> {cfg.label}
+    </span>
+  );
+}
+
+/* ═══════════ Main ═══════════ */
+
 export default function ContactsPage() {
   const { user } = useAuth();
+  const router = useRouter();
+
+  // Data
+  const [allContacts, setAllContacts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [currentCat, setCurrentCat] = useState(null);
-  const [contacts, setContacts] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [showUnassigned, setShowUnassigned] = useState(false);
+  const [allMessages, setAllMessages] = useState([]);
 
+  // UI state
+  const [search, setSearch] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
+  const [newCat, setNewCat] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [detailContact, setDetailContact] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editData, setEditData] = useState({});
+  const [modalOpen, setModalOpen] = useState(false);
+  const [moveModalOpen, setMoveModalOpen] = useState(false);
+  const [bulkTagModal, setBulkTagModal] = useState(false);
+  const [bulkTagValue, setBulkTagValue] = useState('');
+  const [bulkTagAction, setBulkTagAction] = useState('add'); // 'add' | 'remove'
+  const [targetCategories, setTargetCategories] = useState([]);
+  const [noteText, setNoteText] = useState('');
+
+  // New contact form
   const [newContactName, setNewContactName] = useState('');
   const [newContactSurname, setNewContactSurname] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactTags, setNewContactTags] = useState('');
 
-  const [newCat, setNewCat] = useState('');
+  // Template sending
   const [templates, setTemplates] = useState([]);
-  const [modalOpen, setModalOpen] = useState(false);
   const [templateToSend, setTemplateToSend] = useState(null);
-
   const [sending, setSending] = useState(false);
   const [sendLog, setSendLog] = useState('');
   const [report, setReport] = useState([]);
-  const [moveModalOpen, setMoveModalOpen] = useState(false);
-  const [targetCategories, setTargetCategories] = useState([]);
   const [userData, setUserData] = useState(null);
-  const [tagFilter, setTagFilter] = useState('');
-  const [search, setSearch] = useState('');
 
-  const [selectedContact, setSelectedContact] = useState(null);
-  const [editMode, setEditMode] = useState(false);
-  const [editData, setEditData] = useState({});
-
-  // Carica dati utente by UID
+  /* ──── Load data ──── */
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
@@ -171,62 +149,104 @@ export default function ContactsPage() {
     })();
   }, [user]);
 
-  // Carica categorie realtime
+  // All contacts realtime
   useEffect(() => {
     if (!user?.uid) return;
-    const qCat = query(collection(db, 'categories'), where('createdBy', '==', user.uid));
-    const unsub = onSnapshot(qCat, snap => {
+    const q = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
+    const unsub = onSnapshot(q, snap => {
+      setAllContacts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, [user]);
+
+  // Categories realtime
+  useEffect(() => {
+    if (!user?.uid) return;
+    const q = query(collection(db, 'categories'), where('createdBy', '==', user.uid));
+    const unsub = onSnapshot(q, snap => {
       setCategories(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
   }, [user]);
 
-  // Carica contatti realtime (RICERCA combinata e intelligente)
+  // Messages for "last interaction"
   useEffect(() => {
     if (!user?.uid) return;
-    const qContacts = query(collection(db, 'contacts'), where('createdBy', '==', user.uid));
-    const unsub = onSnapshot(qContacts, snap => {
-      const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-      // 1) Applica prima filtri di contesto (categoria / senza categoria / tag filter)
-      let base = arr;
-      if (showUnassigned) {
-        base = base.filter(c => !c.categories || c.categories.length === 0);
-      } else if (currentCat) {
-        base = base.filter(c => c.categories?.includes(currentCat));
-      }
-      if (tagFilter) {
-        const tf = normalizeText(tagFilter);
-        base = base.filter(c => (c.tags || []).some(tag => normalizeText(tag) === tf));
-      }
-
-      // 2) Applica ricerca avanzata (multi-token, key:value, accenti, ecc.)
-      const specs = parseSearch(search);
-      const filtered = specs.length ? base.filter(c => matchesQuery(c, specs)) : base;
-
-      setContacts(filtered);
-      setSelected(new Set());
+    const q = query(collection(db, 'messages'), where('user_uid', '==', user.uid), orderBy('timestamp', 'desc'));
+    const unsub = onSnapshot(q, snap => {
+      setAllMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
-  }, [user, currentCat, showUnassigned, tagFilter, search]);
-
-  // Carica templates solo per user_uid
-  useEffect(() => {
-    async function loadTemplates() {
-      if (!user?.uid) return;
-      const res = await fetch('/api/list-templates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_uid: user.uid }),
-      });
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setTemplates(data.filter(tpl => tpl.status === 'APPROVED'));
-      }
-    }
-    if (user?.uid) loadTemplates();
   }, [user]);
 
+  // Templates
+  useEffect(() => {
+    if (!user?.uid) return;
+    (async () => {
+      const res = await fetch('/api/list-templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_uid: user.uid }) });
+      const data = await res.json();
+      if (Array.isArray(data)) setTemplates(data.filter(t => t.status === 'APPROVED'));
+    })();
+  }, [user]);
+
+  /* ──── Filtered contacts ──── */
+  const contacts = useMemo(() => {
+    let base = allContacts;
+    if (showUnassigned) base = base.filter(c => !c.categories || c.categories.length === 0);
+    else if (currentCat) base = base.filter(c => c.categories?.includes(currentCat));
+    if (tagFilter) {
+      const tf = normalizeText(tagFilter);
+      base = base.filter(c => (c.tags || []).some(tag => normalizeText(tag) === tf));
+    }
+    const specs = parseSearch(search);
+    return specs.length ? base.filter(c => matchesQuery(c, specs)) : base;
+  }, [allContacts, currentCat, showUnassigned, tagFilter, search]);
+
+  /* ──── Stats ──── */
+  const stats = useMemo(() => {
+    const bySource = {};
+    allContacts.forEach(c => {
+      const s = c.source || 'manual';
+      bySource[s] = (bySource[s] || 0) + 1;
+    });
+    return { total: allContacts.length, bySource, catCount: categories.length };
+  }, [allContacts, categories]);
+
+  /* ──── All tags ──── */
+  const allTags = useMemo(() => {
+    const set = new Set();
+    allContacts.forEach(c => (c.tags || []).forEach(t => set.add(t)));
+    return Array.from(set).sort();
+  }, [allContacts]);
+
+  /* ──── Category counts ──── */
+  const catCounts = useMemo(() => {
+    const m = {};
+    allContacts.forEach(c => (c.categories || []).forEach(cat => { m[cat] = (m[cat] || 0) + 1; }));
+    return m;
+  }, [allContacts]);
+
+  /* ──── Last message per contact ──── */
+  const lastMsgMap = useMemo(() => {
+    const m = new Map();
+    for (const msg of allMessages) {
+      const phone = msg.from === 'operator' ? normalizePhone(msg.to) : normalizePhone(msg.from);
+      if (!phone || m.has(phone)) continue;
+      m.set(phone, msg);
+    }
+    return m;
+  }, [allMessages]);
+
+  /* ──── Contact messages (for detail panel) ──── */
+  const contactMessages = useMemo(() => {
+    if (!detailContact) return [];
+    const phone = detailContact.phone || detailContact.id;
+    return allMessages.filter(m =>
+      normalizePhone(m.from) === phone || normalizePhone(m.to) === phone
+    ).slice(0, 20);
+  }, [detailContact, allMessages]);
+
+  /* ──── Actions ──── */
   const createCategory = async () => {
     const name = newCat.trim();
     if (!name) return;
@@ -237,95 +257,64 @@ export default function ContactsPage() {
   const addNewContact = async () => {
     const phone = normalizePhone(newContactPhone.trim());
     const firstName = newContactName.trim();
-    const lastName = newContactSurname.trim();
-    const email = newContactEmail.trim();
-    const tagsArr = newContactTags.split(',').map(s => s.trim()).filter(Boolean);
-
     if (!phone || !firstName) return alert('Compila nome e telefono validi!');
-
     await setDoc(doc(db, 'contacts', phone), {
-      id: phone,
-      phone,
-      firstName,
-      lastName,
-      email,
-      tags: tagsArr,
-      address: "",
-      city: "",
-      zip: "",
-      province: "",
-      country: "",
-      shop: "",
-      orderId: "",
+      id: phone, phone, firstName, lastName: newContactSurname.trim(),
+      email: newContactEmail.trim(),
+      tags: newContactTags.split(',').map(s => s.trim()).filter(Boolean),
+      address: '', city: '', zip: '', province: '', country: '', shop: '', orderId: '',
       categories: currentCat ? [currentCat] : [],
-      createdBy: user.uid,
-      source: "manual",
-      updatedAt: new Date(),
+      createdBy: user.uid, source: 'manual', updatedAt: new Date(),
     }, { merge: true });
-
-    setNewContactName('');
-    setNewContactSurname('');
-    setNewContactPhone('');
-    setNewContactEmail('');
-    setNewContactTags('');
-    setCreateModalOpen(false);
+    setNewContactName(''); setNewContactSurname(''); setNewContactPhone('');
+    setNewContactEmail(''); setNewContactTags(''); setCreateModalOpen(false);
   };
 
   const importFile = async f => {
     const data = await f.arrayBuffer();
     const wb = XLSX.read(data, { type: 'array' });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet);
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
     const batch = writeBatch(db);
     rows.forEach(r => {
-      const phone = normalizePhone(r.phone?.toString() || "");
+      const phone = normalizePhone(r.phone?.toString() || '');
       if (!phone) return;
-      const firstName = r.firstName || r.nome || r.name || "";
-      const lastName = r.lastName || r.cognome || r.surname || "";
-      const email = r.email || "";
-      const tags = [...new Set([...(r.tags ? r.tags.split(',').map(s => s.trim()) : []), 'import'])];
       batch.set(doc(db, 'contacts', phone), {
-        id: phone,
-        phone,
-        firstName,
-        lastName,
-        email,
-        tags,
-        address: r.address || "",
-        city: r.city || "",
-        zip: r.zip || "",
-        province: r.province || "",
-        country: r.country || "",
-        shop: r.shop || "",
-        orderId: r.orderId || "",
+        id: phone, phone,
+        firstName: r.firstName || r.nome || r.name || '',
+        lastName: r.lastName || r.cognome || r.surname || '',
+        email: r.email || '',
+        tags: [...new Set([...(r.tags ? r.tags.split(',').map(s => s.trim()) : []), 'import'])],
+        address: r.address || '', city: r.city || '', zip: r.zip || '',
+        province: r.province || '', country: r.country || '',
+        shop: r.shop || '', orderId: r.orderId || '',
         categories: currentCat ? [currentCat] : [],
-        createdBy: user.uid,
-        source: "import",
-        updatedAt: new Date(),
+        createdBy: user.uid, source: 'import', updatedAt: new Date(),
       }, { merge: true });
     });
     await batch.commit();
   };
 
-  const toggleSelect = id => {
-    const s = new Set(selected);
-    s.has(id) ? s.delete(id) : s.add(id);
-    setSelected(s);
+  const exportContacts = () => {
+    const data = contacts.map(c => ({
+      firstName: c.firstName || '', lastName: c.lastName || '',
+      phone: c.phone || c.id, email: c.email || '',
+      tags: (c.tags || []).join(', '), source: c.source || '',
+      city: c.city || '', address: c.address || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Contatti');
+    XLSX.writeFile(wb, `contatti_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
-  const toggleSelectAll = (checked) => {
-    if (checked) setSelected(new Set(contacts.map(c => c.phone || c.id)));
-    else setSelected(new Set());
-  };
+  const toggleSelect = id => { const s = new Set(selected); s.has(id) ? s.delete(id) : s.add(id); setSelected(s); };
+  const toggleSelectAll = checked => { if (checked) setSelected(new Set(contacts.map(c => c.phone || c.id))); else setSelected(new Set()); };
 
   const deleteSelectedContacts = async () => {
-    if (!window.confirm('Sei sicuro di voler eliminare i contatti selezionati?')) return;
+    if (!window.confirm(`Eliminare ${selected.size} contatti?`)) return;
     const batch = writeBatch(db);
-    contacts.forEach(c => {
-      if (selected.has(c.phone || c.id)) batch.delete(doc(db, 'contacts', c.phone || c.id));
-    });
-    await batch.commit();
-    setSelected(new Set());
+    contacts.forEach(c => { if (selected.has(c.phone || c.id)) batch.delete(doc(db, 'contacts', c.phone || c.id)); });
+    await batch.commit(); setSelected(new Set());
   };
 
   const moveContacts = async () => {
@@ -333,551 +322,620 @@ export default function ContactsPage() {
     const batch = writeBatch(db);
     contacts.forEach(c => {
       if (selected.has(c.phone || c.id)) {
-        let categoriesToSet = [...targetCategories];
-        if (!showUnassigned && currentCat) {
-          categoriesToSet = [...new Set([...(c.categories||[]).filter(cat=>cat!==currentCat), ...targetCategories])];
-        }
-        batch.update(doc(db, 'contacts', c.phone || c.id), { categories: categoriesToSet });
+        let cats = [...targetCategories];
+        if (!showUnassigned && currentCat) cats = [...new Set([...(c.categories||[]).filter(cat => cat !== currentCat), ...targetCategories])];
+        batch.update(doc(db, 'contacts', c.phone || c.id), { categories: cats });
       }
     });
-    await batch.commit();
-    setMoveModalOpen(false);
-    setSelected(new Set());
-    setTargetCategories([]);
+    await batch.commit(); setMoveModalOpen(false); setSelected(new Set()); setTargetCategories([]);
   };
 
   const removeSelectedFromCategory = async () => {
     if (!currentCat) return;
     const batch = writeBatch(db);
     contacts.forEach(c => {
-      if (selected.has(c.phone || c.id)) {
-        const updated = (c.categories||[]).filter(cat => cat !== currentCat);
-        batch.update(doc(db, 'contacts', c.phone || c.id), { categories: updated });
-      }
+      if (selected.has(c.phone || c.id)) batch.update(doc(db, 'contacts', c.phone || c.id), { categories: (c.categories||[]).filter(cat => cat !== currentCat) });
     });
-    await batch.commit();
-    setSelected(new Set());
+    await batch.commit(); setSelected(new Set());
+  };
+
+  const bulkTagApply = async () => {
+    if (!bulkTagValue.trim() || selected.size === 0) return;
+    const tag = bulkTagValue.trim();
+    const batch = writeBatch(db);
+    contacts.forEach(c => {
+      if (!selected.has(c.phone || c.id)) return;
+      const current = c.tags || [];
+      const updated = bulkTagAction === 'add'
+        ? [...new Set([...current, tag])]
+        : current.filter(t => t !== tag);
+      batch.update(doc(db, 'contacts', c.phone || c.id), { tags: updated });
+    });
+    await batch.commit(); setBulkTagModal(false); setBulkTagValue(''); setSelected(new Set());
   };
 
   const handleOpenContact = (contact) => {
     setEditData({
-      firstName: contact.firstName || '',
-      lastName: contact.lastName || '',
-      email: contact.email || '',
-      address: contact.address || '',
-      city: contact.city || '',
-      zip: contact.zip || '',
-      province: contact.province || '',
-      country: contact.country || '',
-      shop: contact.shop || '',
-      orderId: contact.orderId || '',
+      firstName: contact.firstName || '', lastName: contact.lastName || '',
+      email: contact.email || '', address: contact.address || '',
+      city: contact.city || '', zip: contact.zip || '',
+      province: contact.province || '', country: contact.country || '',
+      shop: contact.shop || '', orderId: contact.orderId || '',
       phone: contact.phone || contact.id || '',
       tags: Array.isArray(contact.tags) ? contact.tags : [],
     });
-    setSelectedContact(contact);
+    setDetailContact(contact);
     setEditMode(false);
+    setNoteText('');
   };
 
-  const handleEditField = (field, value) => {
-    setEditData((prev) => ({ ...prev, [field]: value }));
-  };
   const handleSaveEdit = async () => {
-    if (!selectedContact?.id && !selectedContact?.phone) return;
-    const phone = normalizePhone(editData.phone || selectedContact.phone || selectedContact.id);
-    const docId = selectedContact.id || selectedContact.phone;
-    const fullEditData = {
-      ...editData,
-      id: phone,
-      phone,
-      updatedAt: new Date()
-    };
+    if (!detailContact?.id && !detailContact?.phone) return;
+    const phone = normalizePhone(editData.phone || detailContact.phone || detailContact.id);
+    const docId = detailContact.id || detailContact.phone;
+    const fullEditData = { ...editData, id: phone, phone, updatedAt: new Date() };
     await updateDoc(doc(db, 'contacts', docId), fullEditData);
-    setSelectedContact({ ...selectedContact, ...fullEditData });
+    setDetailContact({ ...detailContact, ...fullEditData });
     setEditMode(false);
   };
 
+  const addNote = async () => {
+    if (!detailContact || !noteText.trim()) return;
+    const docId = detailContact.id || detailContact.phone;
+    const notes = detailContact.notes || [];
+    notes.push({ text: noteText.trim(), date: new Date().toISOString(), by: user.email });
+    await updateDoc(doc(db, 'contacts', docId), { notes });
+    setDetailContact({ ...detailContact, notes });
+    setNoteText('');
+  };
+
+  const openChat = (phone) => {
+    router.push('/chatboost/dashboard');
+    // The dashboard will pick up the phone from URL or we can use localStorage
+    if (typeof window !== 'undefined') localStorage.setItem('openChatWith', phone);
+  };
+
+  // Template sending (same logic as before)
   const sendTemplateToContact = async (phone, templateName) => {
     if (!user || !phone || !templateName || !userData) return false;
-    const payload = {
-      messaging_product: "whatsapp",
-      to: phone,
-      type: "template",
-      template: { name: templateName, language: { code: "it" } }
-    };
-    const res = await fetch(
-      `https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      }
-    );
+    const res = await fetch(`https://graph.facebook.com/v17.0/${userData.phone_number_id}/messages`, {
+      method: 'POST',headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_WA_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', to: phone, type: 'template', template: { name: templateName, language: { code: 'it' } } })
+    });
     const data = await res.json();
     if (data.messages) {
-      await addDoc(collection(db, "messages"), {
-        text: `Template inviato: ${templateName}`,
-        to: phone,
-        from: "operator",
-        timestamp: Date.now(),
-        createdAt: serverTimestamp(),
-        type: "template",
-        user_uid: user.uid,
-        message_id: data.messages[0].id
-      });
+      await addDoc(collection(db, 'messages'), { text: `Template inviato: ${templateName}`, to: phone, from: 'operator', timestamp: Date.now(), createdAt: serverTimestamp(), type: 'template', user_uid: user.uid, message_id: data.messages[0].id });
       return true;
-    } else {
-      return data.error ? data.error.message || 'Errore sconosciuto' : 'Errore sconosciuto';
     }
+    return data.error?.message || 'Errore';
   };
 
   const sendTemplateMassive = async () => {
-    if (!templateToSend) return alert('Seleziona un template.');
-    setSending(true);
-    setSendLog(`Invio template "${templateToSend.name}" ai contatti selezionati...\n`);
-    setReport([]);
-    try {
-      const contactsToSend = contacts.filter(c => selected.has(c.phone || c.id));
-      let reportArr = [];
-      for (let i = 0; i < contactsToSend.length; i++) {
-        const c = contactsToSend[i];
-        setSendLog(prev => prev + `Invio a ${c.firstName || c.name} (${c.phone || c.id})... `);
-        let res = await sendTemplateToContact(c.phone || c.id, templateToSend.name);
-        if (res === true) {
-          setSendLog(prev => prev + '✔️\n');
-          reportArr.push({ name: c.firstName || c.name, id: c.phone || c.id, status: 'OK' });
-        } else {
-          setSendLog(prev => prev + `❌ (${res})\n`);
-          reportArr.push({ name: c.firstName || c.name, id: c.phone || c.id, status: 'KO', error: res });
-        }
-        await new Promise(r => setTimeout(r, 200));
-      }
-      setReport(reportArr);
-      setSendLog(prev => prev + 'Invio completato!\n');
-    } catch (err) {
-      setSendLog(prev => prev + `Errore: ${err.message}\n`);
+    if (!templateToSend) return;
+    setSending(true); setSendLog(''); setReport([]);
+    const toSend = contacts.filter(c => selected.has(c.phone || c.id));
+    const reportArr = [];
+    for (const c of toSend) {
+      setSendLog(p => p + `${c.firstName || c.name} (${c.phone || c.id})... `);
+      const res = await sendTemplateToContact(c.phone || c.id, templateToSend.name);
+      if (res === true) { setSendLog(p => p + 'OK\n'); reportArr.push({ name: c.firstName, id: c.phone || c.id, status: 'OK' }); }
+      else { setSendLog(p => p + `Errore\n`); reportArr.push({ name: c.firstName, id: c.phone || c.id, status: 'KO', error: res }); }
+      await new Promise(r => setTimeout(r, 200));
     }
-    setSending(false);
+    setReport(reportArr); setSending(false);
     setTimeout(() => setModalOpen(false), 1200);
   };
 
-  // ----- RENDER -----
+  /* ════════════════════════════════════════════
+     RENDER
+     ════════════════════════════════════════════ */
   return (
-    <div className="h-screen flex flex-col md:flex-row font-[Montserrat]">
-      {/* Sidebar categorie */}
-      <aside className="w-full md:w-1/4 bg-white border-r p-4 overflow-y-auto">
-        <div className="flex items-center gap-2 mb-4">
-          <Users />
-          <span className="text-xl font-semibold">Categorie</span>
-          <Button
-            onClick={() => { setShowUnassigned(true); setCurrentCat(null); }}
-            variant={showUnassigned ? "default" : "outline"}
-            className={`ml-auto text-xs px-3 py-1 ${showUnassigned ? 'bg-blue-600 text-white' : ''}`}
-          >
-            Senza categoria
-          </Button>
-        </div>
-        <div className="flex flex-col gap-2 md:gap-2">
-          {categories.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => { setCurrentCat(cat.id); setShowUnassigned(false); }}
-              className={`flex items-center justify-between px-4 py-2 rounded-lg font-medium border transition
-                ${currentCat === cat.id && !showUnassigned ? 'bg-blue-100 border-blue-600 text-blue-900' : 'bg-white border-gray-200 text-gray-800 hover:bg-gray-100'}`}
-            >
-              <span className="flex-1 text-left">{cat.name}</span>
+    <div className="h-full flex flex-col lg:flex-row font-[Montserrat] overflow-hidden">
+
+      {/* ═══ LEFT SIDEBAR ═══ */}
+      <div className="w-full lg:w-72 bg-white border-r border-slate-200/60 flex flex-col shrink-0 overflow-hidden">
+        {/* Stats */}
+        <div className="px-4 pt-4 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
+              <Users size={16} className="text-slate-600" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">Contatti</h2>
+              <p className="text-[11px] text-slate-400">{stats.total} totali</p>
+            </div>
+          </div>
+          {/* Source mini-stats */}
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {Object.entries(stats.bySource).map(([src, count]) => {
+              const cfg = SOURCE_CONFIG[src] || SOURCE_CONFIG.manual;
+              return (
+                <span key={src} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium border ${cfg.color}`}>
+                  {count} {cfg.label}
+                </span>
+              );
+            })}
+          </div>
+          {/* Create category */}
+          <div className="flex gap-1.5 pr-1">
+            <input placeholder="Nuova categoria" value={newCat} onChange={e => setNewCat(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && createCategory()}
+              className="input-premium flex-1 min-w-0 text-xs h-8 px-2.5" />
+            <button onClick={createCategory} className="w-8 h-8 rounded-lg bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center shrink-0 transition-colors">
+              <Plus size={14} />
             </button>
-          ))}
+          </div>
         </div>
-        <div className="flex gap-2 mt-4">
-          <Input
-            placeholder="Nuova categoria"
-            value={newCat}
-            onChange={e => setNewCat(e.target.value)}
-          />
-          <Button onClick={createCategory} className="flex items-center gap-1">
-            <Plus />
-            Crea
-          </Button>
+
+        {/* Category list */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          <button
+            onClick={() => { setShowUnassigned(false); setCurrentCat(null); setSelected(new Set()); }}
+            className={`flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+              !currentCat && !showUnassigned ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Users size={14} /> Tutti <span className="ml-auto text-[10px] opacity-60">{stats.total}</span>
+          </button>
+          <button
+            onClick={() => { setShowUnassigned(true); setCurrentCat(null); setSelected(new Set()); }}
+            className={`flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+              showUnassigned ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'text-slate-600 hover:bg-slate-50 border border-transparent'
+            }`}
+          >
+            <Hash size={14} /> Senza categoria
+          </button>
+          {categories.map(cat => {
+            const active = currentCat === cat.id && !showUnassigned;
+            return (
+              <button key={cat.id}
+                onClick={() => { setCurrentCat(cat.id); setShowUnassigned(false); setSelected(new Set()); }}
+                className={`flex items-center gap-2 w-full px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                  active ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'text-slate-600 hover:bg-slate-50 border border-transparent'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                <span className="truncate flex-1 text-left">{cat.name}</span>
+                <span className="text-[10px] opacity-50">{catCounts[cat.id] || 0}</span>
+              </button>
+            );
+          })}
         </div>
-        {/* Filtro tag */}
-        <div className="mt-6">
-          <label className="text-sm text-gray-600 mr-2">Filtro per tag:</label>
-          <select value={tagFilter} onChange={e => setTagFilter(e.target.value)}>
-            <option value="">Tutti</option>
-            {[...new Set(contacts.flatMap(c => c.tags||[]))].map(tag => (
-              <option key={tag} value={tag}>{tag}</option>
-            ))}
+
+        {/* Tag filter */}
+        <div className="px-3 py-2.5 border-t border-slate-100">
+          <select value={tagFilter} onChange={e => setTagFilter(e.target.value)} className="select-premium w-full text-xs h-8 py-0">
+            <option value="">Tutti i tag</option>
+            {allTags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
           </select>
         </div>
-      </aside>
+      </div>
 
-      {/* Contatti e azioni */}
-      <main className="flex-1 p-4 overflow-y-auto flex flex-col">
-        {!currentCat && !showUnassigned ? (
-          <div className="text-gray-500">Seleziona una categoria o "senza categoria"</div>
-        ) : (
-          <>
-            {/* Barra ricerca, + e importa */}
-            <div className="mb-4 flex flex-wrap gap-4 items-center">
-              <Input
-                placeholder='Cerca (es. "mario rossi", tag:vip, phone:39123, city:modena)...'
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="w-64"
-              />
-              <Button
-                onClick={() => setCreateModalOpen(true)}
-                className="bg-green-700 text-white flex items-center gap-1"
-              >
-                <Plus size={18}/> Crea contatto
-              </Button>
-              <label className="inline-block bg-blue-600 text-white px-3 py-1 rounded cursor-pointer hover:bg-blue-700">
-                Importa Excel/CSV
-                <input
-                  type="file"
-                  accept=".xls,.xlsx,.csv"
-                  className="hidden"
-                  onChange={e => e.target.files[0] && importFile(e.target.files[0])}
-                />
-              </label>
-              {/* Azioni bulk */}
-              {selected.size > 0 && (
-                <>
-                  <Button
-                    onClick={() => setMoveModalOpen(true)}
-                    className="flex items-center gap-1 bg-yellow-600 hover:bg-yellow-700 text-white"
-                  >
-                    <FolderSymlink size={16} />
-                    Sposta ({selected.size})
-                  </Button>
-                  {currentCat &&
-                    <Button
-                      onClick={removeSelectedFromCategory}
-                      className="flex items-center gap-1 bg-orange-600 hover:bg-orange-700 text-white"
-                    >
-                      <ArrowRight size={16} />
-                      Rimuovi da categoria
-                    </Button>
-                  }
-                  <Button
-                    onClick={deleteSelectedContacts}
-                    className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white"
-                  >
-                    <Trash2 size={16} />
-                    Elimina
-                  </Button>
-                  <Button
-                    onClick={() => setModalOpen(true)}
-                    className="flex items-center gap-1 bg-blue-700 hover:bg-blue-900 text-white"
-                  >
-                    <Send size={16} />
-                    Invia template
-                  </Button>
-                </>
-              )}
+      {/* ═══ MAIN AREA ═══ */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-[var(--surface-1)]">
+        {/* Toolbar */}
+        <div className="sticky top-0 bg-white/95 backdrop-blur-md border-b border-slate-200/60 px-4 py-3 z-10 shrink-0">
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="relative flex-1 min-w-[180px] max-w-sm">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input placeholder='Cerca contatti...' value={search} onChange={e => setSearch(e.target.value)}
+                className="input-premium w-full pl-9 pr-3 py-2 text-sm" />
             </div>
 
-            {/* Tabella contatti */}
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-gray-100">
-                    <th className="p-2">
-                      <input
-                        type="checkbox"
-                        onChange={e => toggleSelectAll(e.target.checked)}
-                        checked={selected.size === contacts.length && contacts.length > 0}
-                      />
-                    </th>
-                    <th className="p-2 text-left">Nome</th>
-                    <th className="p-2 text-left">Cognome</th>
-                    <th className="p-2 text-left">Telefono</th>
-                    <th className="p-2 text-left">Email</th>
-                    <th className="p-2 text-left">Tag</th>
-                    <th className="p-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contacts.map(c => (
-                    <tr key={c.phone || c.id} className="hover:bg-gray-50">
-                      <td className="p-2">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(c.phone || c.id)}
-                          onChange={() => toggleSelect(c.phone || c.id)}
-                        />
-                      </td>
-                      <td className="p-2">{c.firstName || c.name}</td>
-                      <td className="p-2">{c.lastName || c.surname}</td>
-                      <td className="p-2">{c.phone || c.id}</td>
-                      <td className="p-2">{c.email || '-'}</td>
-                      <td className="p-2">
-                        {(c.tags||[]).map(tag =>
-                          <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        <button
-                          onClick={() => handleOpenContact(c)}
-                          className="text-blue-600 hover:text-blue-900"
-                          title="Dettagli contatto"
-                        >
-                          <Info size={18} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </main>
+            <button onClick={() => setCreateModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition-colors shadow-sm">
+              <Plus size={14} /> Nuovo
+            </button>
+            <label className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium cursor-pointer transition-colors">
+              <Upload size={14} /> Importa
+              <input type="file" accept=".xls,.xlsx,.csv" className="hidden" onChange={e => e.target.files[0] && importFile(e.target.files[0])} />
+            </label>
+            <button onClick={exportContacts}
+              className="inline-flex items-center gap-1.5 px-3 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition-colors">
+              <Download size={14} /> Esporta
+            </button>
 
-      {/* --- MODAL NUOVO CONTATTO --- */}
-      {createModalOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-7 max-w-lg w-full relative">
-            <button
-              className="absolute top-3 right-4 text-gray-400 hover:text-gray-700 text-2xl"
-              onClick={() => setCreateModalOpen(false)}
-            >×</button>
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <Plus className="text-green-600" /> Nuovo contatto
-            </h3>
-            <div className="space-y-4">
-              <Input
-                placeholder="Nome"
-                value={newContactName}
-                onChange={e => setNewContactName(e.target.value)}
-              />
-              <Input
-                placeholder="Cognome"
-                value={newContactSurname}
-                onChange={e => setNewContactSurname(e.target.value)}
-              />
-              <Input
-                placeholder="Telefono"
-                value={newContactPhone}
-                onChange={e => setNewContactPhone(e.target.value)}
-              />
-              <Input
-                placeholder="Email"
-                value={newContactEmail}
-                onChange={e => setNewContactEmail(e.target.value)}
-              />
-              <Input
-                placeholder="Tag (virgola separati)"
-                value={newContactTags}
-                onChange={e => setNewContactTags(e.target.value)}
-              />
-              <Button
-                onClick={addNewContact}
-                className="bg-green-600 hover:bg-green-700 text-white w-full"
-              >
-                Salva contatto
-              </Button>
-            </div>
+            {/* Bulk actions */}
+            {selected.size > 0 && (
+              <div className="flex gap-1.5 items-center ml-1 pl-3 border-l border-slate-200">
+                <span className="text-[11px] font-bold text-slate-500">{selected.size}</span>
+                <button onClick={() => setBulkTagModal(true)} className="w-8 h-8 rounded-lg bg-indigo-100 hover:bg-indigo-200 text-indigo-600 flex items-center justify-center transition-colors" title="Gestisci tag">
+                  <Tag size={14} />
+                </button>
+                <button onClick={() => setMoveModalOpen(true)} className="w-8 h-8 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-600 flex items-center justify-center transition-colors" title="Sposta">
+                  <FolderSymlink size={14} />
+                </button>
+                {currentCat && (
+                  <button onClick={removeSelectedFromCategory} className="w-8 h-8 rounded-lg bg-orange-100 hover:bg-orange-200 text-orange-600 flex items-center justify-center transition-colors" title="Rimuovi da cat.">
+                    <ArrowRight size={14} />
+                  </button>
+                )}
+                <button onClick={deleteSelectedContacts} className="w-8 h-8 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 flex items-center justify-center transition-colors" title="Elimina">
+                  <Trash2 size={14} />
+                </button>
+                <button onClick={() => setModalOpen(true)} className="w-8 h-8 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-600 flex items-center justify-center transition-colors" title="Invia template">
+                  <Send size={14} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
-      )}
 
-      {/* --- MODAL DETTAGLIO E MODIFICA --- */}
-      {selectedContact && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl p-7 max-w-lg w-full relative">
-            <button
-              className="absolute top-3 right-4 text-gray-400 hover:text-gray-700 text-2xl"
-              onClick={() => { setSelectedContact(null); setEditMode(false); }}
-            >×</button>
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <Info className="text-blue-600" /> {editMode ? 'Modifica contatto' : 'Dettagli contatto'}
-            </h3>
-            <div className="space-y-3 text-base">
-              {['firstName', 'lastName', 'email', 'address', 'city', 'zip', 'province', 'country', 'shop', 'orderId'].map((field) => (
-                <div key={field}>
-                  <b className="capitalize">{field}:</b>{' '}
+        {/* Contact list */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="divide-y divide-slate-100">
+            {/* Header row */}
+            <div className="grid grid-cols-[auto_1fr_auto] sm:grid-cols-[auto_1fr_minmax(120px,auto)_auto] md:grid-cols-[auto_1fr_minmax(120px,auto)_auto_auto] lg:grid-cols-[auto_1fr_minmax(120px,auto)_auto_auto_auto] items-center gap-x-4 px-4 py-2 bg-slate-50/80 text-[10px] font-bold text-slate-400 uppercase tracking-wider sticky top-0 z-[5]">
+              <div><input type="checkbox" onChange={e => toggleSelectAll(e.target.checked)}
+                checked={selected.size === contacts.length && contacts.length > 0} className="rounded border-slate-300 w-3.5 h-3.5" /></div>
+              <div>Contatto</div>
+              <div className="hidden sm:block">Telefono</div>
+              <div className="hidden md:block">Sorgente</div>
+              <div className="hidden lg:block">Ultimo msg</div>
+              <div></div>
+            </div>
+
+            {contacts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
+                  <Users size={28} className="text-slate-300" />
+                </div>
+                <p className="text-sm font-medium text-slate-500">Nessun contatto trovato</p>
+                <p className="text-xs text-slate-400 mt-1">Crea un nuovo contatto o cambia i filtri</p>
+              </div>
+            ) : (
+              contacts.map(c => {
+                const phone = c.phone || c.id;
+                const lastMsg = lastMsgMap.get(phone);
+                const lastTime = lastMsg ? new Date(
+                  typeof lastMsg.timestamp === 'number'
+                    ? (lastMsg.timestamp > 1e12 ? lastMsg.timestamp : lastMsg.timestamp * 1000)
+                    : Date.now()
+                ) : null;
+                const isSelected = selected.has(phone);
+
+                return (
+                  <div key={phone}
+                    className={`grid grid-cols-[auto_1fr_auto] sm:grid-cols-[auto_1fr_minmax(120px,auto)_auto] md:grid-cols-[auto_1fr_minmax(120px,auto)_auto_auto] lg:grid-cols-[auto_1fr_minmax(120px,auto)_auto_auto_auto] items-center gap-x-4 px-4 py-2.5 hover:bg-slate-50 transition-colors cursor-pointer group ${isSelected ? 'bg-emerald-50/50' : ''}`}
+                    onClick={() => handleOpenContact(c)}
+                  >
+                    <div onClick={e => { e.stopPropagation(); toggleSelect(phone); }}>
+                      <input type="checkbox" checked={isSelected} readOnly className="rounded border-slate-300 w-3.5 h-3.5 cursor-pointer" />
+                    </div>
+
+                    {/* Name + email + tags */}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-slate-900 truncate">{c.firstName || c.name || '—'} {c.lastName || ''}</span>
+                        {(c.tags||[]).slice(0, 2).map(tag => (
+                          <span key={tag} className="hidden md:inline px-1.5 py-0 rounded text-[9px] font-medium bg-slate-100 text-slate-500">{tag}</span>
+                        ))}
+                        {(c.tags||[]).length > 2 && <span className="hidden md:inline text-[9px] text-slate-400">+{(c.tags||[]).length - 2}</span>}
+                      </div>
+                      {c.email && <p className="text-[11px] text-slate-400 truncate">{c.email}</p>}
+                    </div>
+
+                    {/* Phone */}
+                    <div className="hidden sm:block">
+                      <span className="text-xs text-slate-500 font-mono">{phone}</span>
+                    </div>
+
+                    {/* Source */}
+                    <div className="hidden md:block">
+                      <SourceBadge source={c.source} />
+                    </div>
+
+                    {/* Last message */}
+                    <div className="hidden lg:block">
+                      {lastTime ? (
+                        <span className="text-[10px] text-slate-400">{lastTime.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })}</span>
+                      ) : (
+                        <span className="text-[10px] text-slate-300">—</span>
+                      )}
+                    </div>
+
+                    {/* Arrow */}
+                    <div className="flex justify-end">
+                      <ChevronRight size={14} className="text-slate-300 group-hover:text-slate-500 transition-colors" />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer count */}
+          {contacts.length > 0 && (
+            <div className="px-4 py-3 bg-white border-t border-slate-100 text-[11px] text-slate-400 font-medium">
+              {contacts.length} contatt{contacts.length === 1 ? 'o' : 'i'}
+              {selected.size > 0 && ` · ${selected.size} selezionat${selected.size === 1 ? 'o' : 'i'}`}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ DETAIL PANEL (right side) ═══ */}
+      {detailContact && (
+        <div className="fixed inset-0 lg:relative lg:inset-auto lg:w-[400px] xl:w-[440px] bg-white border-l border-slate-200/60 flex flex-col z-40 lg:z-auto overflow-hidden shrink-0">
+          {/* Detail header */}
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 shrink-0">
+            <button onClick={() => { setDetailContact(null); setEditMode(false); }}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+              <X size={18} />
+            </button>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base font-bold text-slate-900 truncate">{detailContact.firstName} {detailContact.lastName}</h3>
+              <p className="text-xs text-slate-400 font-mono">{detailContact.phone || detailContact.id}</p>
+            </div>
+            <SourceBadge source={detailContact.source} />
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {/* Quick actions */}
+            <div className="px-5 py-4 border-b border-slate-100">
+              <div className="grid grid-cols-3 gap-2">
+                <button onClick={() => openChat(detailContact.phone || detailContact.id)}
+                  className="flex flex-col items-center gap-1.5 py-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors">
+                  <MessageSquare size={18} />
+                  <span className="text-[10px] font-semibold">Chat</span>
+                </button>
+                <a href={`tel:${detailContact.phone || detailContact.id}`}
+                  className="flex flex-col items-center gap-1.5 py-3 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors">
+                  <Phone size={18} />
+                  <span className="text-[10px] font-semibold">Chiama</span>
+                </a>
+                <a href={`mailto:${detailContact.email || ''}`}
+                  className={`flex flex-col items-center gap-1.5 py-3 rounded-xl transition-colors ${detailContact.email ? 'bg-violet-50 hover:bg-violet-100 text-violet-700' : 'bg-slate-50 text-slate-300 pointer-events-none'}`}>
+                  <Mail size={18} />
+                  <span className="text-[10px] font-semibold">Email</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Info fields */}
+            <div className="px-5 py-4 border-b border-slate-100">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Informazioni</h4>
+                <button onClick={() => setEditMode(!editMode)}
+                  className="text-xs font-medium text-emerald-600 hover:text-emerald-700 transition-colors">
+                  {editMode ? 'Annulla' : 'Modifica'}
+                </button>
+              </div>
+              <div className="space-y-2.5">
+                {[
+                  { key: 'firstName', label: 'Nome', icon: User },
+                  { key: 'lastName', label: 'Cognome', icon: User },
+                  { key: 'email', label: 'Email', icon: Mail },
+                  { key: 'phone', label: 'Telefono', icon: Phone },
+                  { key: 'address', label: 'Indirizzo', icon: MapPin },
+                  { key: 'city', label: 'Città', icon: MapPin },
+                  { key: 'province', label: 'Provincia', icon: Globe },
+                  { key: 'shop', label: 'Shop', icon: ShoppingBag },
+                ].map(({ key, label, icon: Icon }) => (
+                  <div key={key} className="flex items-center gap-3">
+                    <Icon size={13} className="text-slate-400 shrink-0" />
+                    {editMode ? (
+                      <input value={editData[key] || ''} onChange={e => setEditData(p => ({ ...p, [key]: e.target.value }))}
+                        placeholder={label} className="input-premium flex-1 text-xs h-8 px-2.5" />
+                    ) : (
+                      <span className="text-xs text-slate-700 truncate">{detailContact[key] || <span className="text-slate-300">—</span>}</span>
+                    )}
+                  </div>
+                ))}
+                {/* Tags */}
+                <div className="flex items-start gap-3">
+                  <Tag size={13} className="text-slate-400 shrink-0 mt-1" />
                   {editMode ? (
-                    <input
-                      type="text"
-                      value={editData[field] || ''}
-                      onChange={e => handleEditField(field, e.target.value)}
-                      className="border border-gray-300 rounded px-2 py-1 w-2/3"
-                    />
+                    <input value={Array.isArray(editData.tags) ? editData.tags.join(', ') : ''} placeholder="Tag (virgola sep.)"
+                      onChange={e => setEditData(p => ({ ...p, tags: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
+                      className="input-premium flex-1 text-xs h-8 px-2.5" />
                   ) : (
-                    <span>{selectedContact[field] || <span className="text-gray-400">–</span>}</span>
+                    <div className="flex flex-wrap gap-1">
+                      {(detailContact.tags || []).length > 0
+                        ? (detailContact.tags||[]).map(t => <span key={t} className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-medium">{t}</span>)
+                        : <span className="text-xs text-slate-300">—</span>}
+                    </div>
                   )}
                 </div>
-              ))}
-              <div>
-                <b>Telefono:</b>{' '}
-                {editMode ? (
-                  <input
-                    type="text"
-                    value={editData.phone || ''}
-                    onChange={e => handleEditField('phone', e.target.value)}
-                    className="border border-gray-300 rounded px-2 py-1 w-2/3"
-                  />
-                ) : (
-                  <span>{selectedContact.phone}</span>
-                )}
               </div>
-              <div>
-                <b>Tag:</b>{' '}
-                {editMode ? (
-                  <input
-                    type="text"
-                    value={Array.isArray(editData.tags) ? editData.tags.join(', ') : (editData.tags || '')}
-                    onChange={e => handleEditField('tags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                    className="border border-gray-300 rounded px-2 py-1 w-2/3"
-                  />
-                ) : (
-                  (selectedContact.tags || []).map(tag =>
-                    <span key={tag} className="inline-block bg-blue-200 text-blue-700 rounded px-2 py-0.5 text-xs mr-1">{tag}</span>
-                  )
-                )}
+              {editMode && (
+                <div className="flex gap-2 mt-4">
+                  <Button onClick={handleSaveEdit} size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs flex-1">
+                    <Save size={13} className="mr-1" /> Salva
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Notes */}
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Note CRM</h4>
+              {(detailContact.notes || []).length > 0 && (
+                <div className="space-y-2 mb-3">
+                  {(detailContact.notes || []).map((n, i) => (
+                    <div key={i} className="p-2.5 rounded-lg bg-amber-50 border border-amber-100">
+                      <p className="text-xs text-slate-700">{n.text}</p>
+                      <p className="text-[10px] text-slate-400 mt-1">{new Date(n.date).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Aggiungi nota..."
+                  onKeyDown={e => e.key === 'Enter' && addNote()}
+                  className="input-premium flex-1 text-xs h-8 px-2.5" />
+                <button onClick={addNote} disabled={!noteText.trim()}
+                  className="w-8 h-8 rounded-lg bg-amber-500 hover:bg-amber-600 text-white flex items-center justify-center transition-colors disabled:opacity-40 shrink-0">
+                  <StickyNote size={13} />
+                </button>
               </div>
             </div>
-            <div className="flex justify-end mt-6 gap-2">
-              {editMode ? (
-                <>
-                  <Button onClick={handleSaveEdit} className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-1">
-                    <Save size={16} /> Salva
-                  </Button>
-                  <Button onClick={() => setEditMode(false)} variant="outline">
-                    Annulla
-                  </Button>
-                </>
+
+            {/* Activity timeline */}
+            <div className="px-5 py-4">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Attività recente</h4>
+              {contactMessages.length === 0 ? (
+                <p className="text-xs text-slate-300 text-center py-4">Nessuna interazione</p>
               ) : (
-                <Button onClick={() => setEditMode(true)} className="bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1">
-                  <Edit2 size={16} /> Modifica
-                </Button>
+                <div className="space-y-2">
+                  {contactMessages.map((msg, i) => {
+                    const isOut = msg.from === 'operator' || msg.direction === 'outgoing';
+                    const ts = typeof msg.timestamp === 'number'
+                      ? (msg.timestamp > 1e12 ? msg.timestamp : msg.timestamp * 1000) : 0;
+                    return (
+                      <div key={i} className="flex items-start gap-2.5">
+                        <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                          isOut ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
+                        }`}>
+                          {isOut ? <ArrowUpRight size={10} /> : <MessageSquare size={10} />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] text-slate-700 truncate">{msg.text || `[${msg.type}]`}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {isOut ? 'Inviato' : 'Ricevuto'} · {ts ? new Date(ts).toLocaleDateString('it-IT', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal invio massivo */}
-      {modalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
-            <button
-              onClick={() => setModalOpen(false)}
-              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
-              title="Chiudi"
-            >
-              <X size={20} />
-            </button>
-            <h3 className="text-lg font-semibold mb-4">
-              Invia template ai selezionati ({selected.size})
-            </h3>
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">Seleziona template:</label>
-              <select
-                value={templateToSend?.name || ''}
-                onChange={e => {
-                  const tpl = templates.find(t => t.name === e.target.value);
-                  setTemplateToSend(tpl || null);
-                }}
-                className="w-full border border-gray-300 rounded px-3 py-2"
-              >
-                <option value="">-- Scegli un template --</option>
-                {templates.map(tpl => (
-                  <option key={tpl.name} value={tpl.name}>
-                    {tpl.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                onClick={sendTemplateMassive}
-                disabled={sending || !templateToSend}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                {sending && <Loader2 className="animate-spin" size={18} />}
-                Invia ai selezionati
-              </Button>
-              <Button onClick={() => setModalOpen(false)} variant="outline">
-                Annulla
-              </Button>
-            </div>
-            {sendLog && (
-              <pre className="mt-4 max-h-40 overflow-y-auto bg-gray-100 p-2 rounded text-xs whitespace-pre-wrap">
-                {sendLog}
-              </pre>
-            )}
-            {report.length > 0 && (
-              <div className="mt-3 bg-blue-50 rounded-lg p-2 max-h-32 overflow-y-auto text-xs">
-                <b>Report invio:</b>
-                <ul>
-                  {report.map(r =>
-                    <li key={r.id}>
-                      {r.name} ({r.id}): <span className={r.status === 'OK' ? 'text-green-700' : 'text-red-600'}>
-                        {r.status}{r.error && ` (${r.error})`}
-                      </span>
-                    </li>
-                  )}
-                </ul>
+      {/* ═══ MODAL: Nuovo contatto ═══ */}
+      {createModalOpen && (
+        <div className="modal-overlay" onClick={() => setCreateModalOpen(false)}>
+          <div className="modal-content max-w-lg" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center"><Plus size={18} className="text-emerald-600" /></div>
+                <h3 className="text-lg font-bold text-slate-900">Nuovo contatto</h3>
               </div>
-            )}
+              <button onClick={() => setCreateModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"><X size={18} /></button>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <input placeholder="Nome" value={newContactName} onChange={e => setNewContactName(e.target.value)} className="input-premium px-3 py-2.5 text-sm" />
+                <input placeholder="Cognome" value={newContactSurname} onChange={e => setNewContactSurname(e.target.value)} className="input-premium px-3 py-2.5 text-sm" />
+              </div>
+              <input placeholder="Telefono" value={newContactPhone} onChange={e => setNewContactPhone(e.target.value)} className="input-premium w-full px-3 py-2.5 text-sm" />
+              <input placeholder="Email" value={newContactEmail} onChange={e => setNewContactEmail(e.target.value)} className="input-premium w-full px-3 py-2.5 text-sm" />
+              <input placeholder="Tag (virgola separati)" value={newContactTags} onChange={e => setNewContactTags(e.target.value)} className="input-premium w-full px-3 py-2.5 text-sm" />
+              <Button onClick={addNewContact} className="bg-emerald-600 hover:bg-emerald-700 text-white w-full h-11 rounded-xl font-semibold mt-1">Salva contatto</Button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Modal sposta contatti */}
+      {/* ═══ MODAL: Bulk tag ═══ */}
+      {bulkTagModal && (
+        <div className="modal-overlay" onClick={() => setBulkTagModal(false)}>
+          <div className="modal-content max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center"><Tag size={18} className="text-indigo-600" /></div>
+                <h3 className="text-lg font-bold text-slate-900">Gestisci tag</h3>
+              </div>
+              <button onClick={() => setBulkTagModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100"><X size={18} /></button>
+            </div>
+            <div className="flex gap-2 mb-3">
+              <button onClick={() => setBulkTagAction('add')}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${bulkTagAction === 'add' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                Aggiungi
+              </button>
+              <button onClick={() => setBulkTagAction('remove')}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${bulkTagAction === 'remove' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                Rimuovi
+              </button>
+            </div>
+            <input value={bulkTagValue} onChange={e => setBulkTagValue(e.target.value)} placeholder="Nome tag..."
+              className="input-premium w-full px-3 py-2.5 text-sm mb-3" />
+            {allTags.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {allTags.slice(0, 15).map(t => (
+                  <button key={t} onClick={() => setBulkTagValue(t)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${bulkTagValue === t ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
+            <Button onClick={bulkTagApply} disabled={!bulkTagValue.trim()}
+              className={`w-full h-10 rounded-xl font-semibold ${bulkTagAction === 'add' ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}>
+              {bulkTagAction === 'add' ? 'Aggiungi' : 'Rimuovi'} tag a {selected.size} contatti
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ MODAL: Sposta ═══ */}
       {moveModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg max-w-md w-full p-6 relative">
-            <button
-              onClick={() => setMoveModalOpen(false)}
-              className="absolute top-3 right-3 text-gray-600 hover:text-gray-900"
-              title="Chiudi"
-            >
-              <X size={20} />
-            </button>
-            <h3 className="text-lg font-semibold mb-4">Sposta contatti selezionati</h3>
-            <div>
-              <label className="block mb-2">Categorie di destinazione:</label>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {categories.map(cat => (
-                  <label
-                    key={cat.id}
-                    className={`cursor-pointer px-3 py-2 rounded-lg border ${
-                      targetCategories.includes(cat.id)
-                        ? 'bg-blue-600 text-white border-blue-700'
-                        : 'bg-gray-100 text-gray-800 border-gray-300'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={targetCategories.includes(cat.id)}
-                      onChange={e => {
-                        if (e.target.checked) setTargetCategories([...targetCategories, cat.id]);
-                        else setTargetCategories(targetCategories.filter(id => id !== cat.id));
-                      }}
-                      className="mr-1"
-                    />
-                    {cat.name}
-                  </label>
-                ))}
+        <div className="modal-overlay" onClick={() => setMoveModalOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center"><FolderSymlink size={18} className="text-amber-600" /></div>
+                <h3 className="text-lg font-bold text-slate-900">Sposta contatti</h3>
               </div>
-              <Button
-                onClick={moveContacts}
-                className="bg-yellow-600 hover:bg-yellow-700 text-white"
-                disabled={targetCategories.length === 0}
-              >
-                Sposta
-              </Button>
+              <button onClick={() => setMoveModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100"><X size={18} /></button>
             </div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Categorie di destinazione</label>
+            <div className="flex flex-wrap gap-2 mb-5">
+              {categories.map(cat => (
+                <label key={cat.id} className={`cursor-pointer px-3.5 py-2 rounded-xl border text-sm font-medium transition-all ${
+                  targetCategories.includes(cat.id) ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}>
+                  <input type="checkbox" checked={targetCategories.includes(cat.id)} className="sr-only"
+                    onChange={e => { if (e.target.checked) setTargetCategories([...targetCategories, cat.id]); else setTargetCategories(targetCategories.filter(id => id !== cat.id)); }} />
+                  {cat.name}
+                </label>
+              ))}
+            </div>
+            <Button onClick={moveContacts} className="bg-amber-500 hover:bg-amber-600 text-white rounded-xl w-full h-11" disabled={targetCategories.length === 0}>
+              Sposta {selected.size} contatti
+            </Button>
           </div>
         </div>
       )}
 
+      {/* ═══ MODAL: Invio massivo ═══ */}
+      {modalOpen && (
+        <div className="modal-overlay p-4" onClick={() => setModalOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-bold text-slate-900">Invia template <span className="text-slate-400 font-normal">({selected.size})</span></h3>
+              <button onClick={() => setModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100"><X size={18} /></button>
+            </div>
+            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 block">Template</label>
+            <select value={templateToSend?.name || ''} onChange={e => setTemplateToSend(templates.find(t => t.name === e.target.value) || null)}
+              className="select-premium w-full mb-4">
+              <option value="">Scegli template...</option>
+              {templates.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+            </select>
+            <div className="flex gap-2">
+              <Button onClick={sendTemplateMassive} disabled={sending || !templateToSend}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl flex items-center gap-2">
+                {sending && <Loader2 size={14} className="animate-spin" />} Invia
+              </Button>
+              <Button onClick={() => setModalOpen(false)} variant="outline" className="rounded-xl">Annulla</Button>
+            </div>
+            {sendLog && <pre className="mt-3 max-h-32 overflow-y-auto bg-slate-50 border border-slate-200 p-3 rounded-xl text-[10px] font-mono text-slate-600 whitespace-pre-wrap">{sendLog}</pre>}
+            {report.length > 0 && (
+              <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs max-h-28 overflow-y-auto">
+                {report.map(r => (
+                  <div key={r.id} className="flex items-center gap-2">
+                    {r.status === 'OK' ? <CheckCircle size={12} className="text-emerald-500" /> : <XCircle size={12} className="text-red-500" />}
+                    <span>{r.name} ({r.id})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
